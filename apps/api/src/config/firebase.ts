@@ -56,3 +56,4 @@ export function initializeFirebase(): {
     return { app: null, db: null, auth: null, isMockMode: true };
   }
 }
+

@@ -31,3 +31,4 @@ healthRouter.get('/', (_req: Request, res: Response) => {
 
   res.json(response);
 });
+

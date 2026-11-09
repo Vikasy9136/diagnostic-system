@@ -18,3 +18,4 @@ export const config = {
     storageBucket: process.env.FIREBASE_STORAGE_BUCKET || 'sample-logistics-dev.appspot.com',
   },
 };
+

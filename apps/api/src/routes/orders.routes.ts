@@ -140,3 +140,4 @@ ordersRouter.post('/validate-specimen', (req: Request, res: Response, next) => {
 
   res.json(response);
 });
+
