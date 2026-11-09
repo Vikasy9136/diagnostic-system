@@ -41,12 +41,79 @@ export default function App() {
   const [otpValue, setOtpValue] = useState(['7', '4', '2', '9', '9']);
   const [scannedBarcode, setScannedBarcode] = useState('SMP-10456-CBC');
   const [showManualEntry, setShowManualEntry] = useState(false);
+  const [bookingHistoryFilter, setBookingHistoryFilter] = useState<'all' | 'active' | 'completed' | 'scheduled'>('all');
+  const [bookingSearchQuery, setBookingSearchQuery] = useState('');
+  const [dutyStatus, setDutyStatus] = useState<'ONLINE' | 'BREAK' | 'OFFLINE'>('ONLINE');
 
   const updateOtpDigit = (index: number, value: string) => {
     const updated = [...otpValue];
     updated[index] = value;
     setOtpValue(updated);
   };
+
+  // History bookings mock records
+  const MOCK_HISTORY_BOOKINGS = [
+    {
+      id: 'BK-10456',
+      patient: 'Ravi Sharma',
+      pickup: 'Sharma Diagnostic Lab, Bhandup (W)',
+      drop: 'Metro Diagnostics, Mulund (W)',
+      tests: 'CBC, LFT, KFT',
+      status: 'In Transit',
+      temp: '4.2°C (Safe)',
+      fee: '₹350',
+      time: '10:15 AM',
+      category: 'active',
+    },
+    {
+      id: 'BK-10455',
+      patient: 'Priya Desai',
+      pickup: 'City Health Lab, Mulund (W)',
+      drop: 'Metro Diagnostics, Mulund (W)',
+      tests: 'TSH, FT4',
+      status: 'Delivered',
+      temp: '4.5°C (Safe)',
+      fee: '₹300',
+      time: '09:40 AM',
+      category: 'completed',
+    },
+    {
+      id: 'BK-10454',
+      patient: 'Ajay Mehta',
+      pickup: 'LifeCare Clinic, Kanjurmarg',
+      drop: 'Metro Diagnostics, Mulund (W)',
+      tests: 'Lipid Profile, KFT',
+      status: 'Delivered',
+      temp: '4.1°C (Safe)',
+      fee: '₹400',
+      time: '08:50 AM',
+      category: 'completed',
+    },
+    {
+      id: 'BK-10453',
+      patient: 'Sneha Patil',
+      pickup: 'Bhandup Care Lab, Bhandup',
+      drop: 'Apex Reference Testing, Thane',
+      tests: 'HbA1c, Glucose Fasting',
+      status: 'Scheduled',
+      temp: 'Cooler Ready',
+      fee: '₹280',
+      time: '02:30 PM',
+      category: 'scheduled',
+    },
+    {
+      id: 'BK-10451',
+      patient: 'Sunita Rao',
+      pickup: 'Sharma Diagnostic Lab, Bhandup (W)',
+      drop: 'Metro Diagnostics, Mulund (W)',
+      tests: 'CBC, ESR',
+      status: 'Delivered',
+      temp: '4.3°C (Safe)',
+      fee: '₹250',
+      time: 'Yesterday',
+      category: 'completed',
+    },
+  ];
 
   // Active booking mock details
   const activeBooking = {
@@ -498,7 +565,10 @@ export default function App() {
         {/* View Earnings CTA */}
         <TouchableOpacity
           style={[styles.ctaButton, { marginTop: 28 }]}
-          onPress={() => setCurrentScreen('BOOKING_REQUESTS')}
+          onPress={() => {
+            setBottomTab('earnings');
+            setCurrentScreen('BOOKING_REQUESTS');
+          }}
         >
           <Text style={styles.ctaButtonText}>View Earnings</Text>
         </TouchableOpacity>
@@ -506,17 +576,451 @@ export default function App() {
     </View>
   );
 
+  /* =========================================================================
+   * TAB 2: MY BOOKINGS SCREEN
+   * ========================================================================= */
+  const renderBookingsHistoryScreen = () => {
+    const filtered = MOCK_HISTORY_BOOKINGS.filter((b) => {
+      const matchFilter = bookingHistoryFilter === 'all' || b.category === bookingHistoryFilter;
+      const matchQuery =
+        b.id.toLowerCase().includes(bookingSearchQuery.toLowerCase()) ||
+        b.patient.toLowerCase().includes(bookingSearchQuery.toLowerCase()) ||
+        b.tests.toLowerCase().includes(bookingSearchQuery.toLowerCase());
+      return matchFilter && matchQuery;
+    });
+
+    return (
+      <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
+        <View style={styles.appHeaderBar}>
+          <Text style={styles.appHeaderTitle}>My Bookings</Text>
+          <Text style={styles.appHeaderSubtitle}>Track active collections and pickup history</Text>
+        </View>
+
+        <View style={styles.bodyContainer}>
+          {/* Search Box */}
+          <View style={styles.searchBox}>
+            <Text style={{ fontSize: 16, marginRight: 8 }}>🔍</Text>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search by ID, patient, test..."
+              placeholderTextColor={COLORS.textSecondary}
+              value={bookingSearchQuery}
+              onChangeText={setBookingSearchQuery}
+            />
+            {bookingSearchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setBookingSearchQuery('')}>
+                <Text style={{ color: COLORS.textSecondary, fontSize: 14 }}>✕</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Filter Chips */}
+          <View style={styles.requestTabsRow}>
+            {(['all', 'active', 'completed', 'scheduled'] as const).map((key) => (
+              <TouchableOpacity
+                key={key}
+                style={[styles.tabButton, bookingHistoryFilter === key && styles.tabButtonActive]}
+                onPress={() => setBookingHistoryFilter(key)}
+              >
+                <Text
+                  style={[
+                    styles.tabButtonText,
+                    bookingHistoryFilter === key && styles.tabButtonTextActive,
+                  ]}
+                >
+                  {key === 'all'
+                    ? 'All (5)'
+                    : key === 'active'
+                    ? 'Active (1)'
+                    : key === 'completed'
+                    ? 'Completed (3)'
+                    : 'Scheduled (1)'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Bookings List */}
+          {filtered.map((item) => (
+            <View key={item.id} style={styles.historyCard}>
+              <View style={styles.historyCardHeader}>
+                <View>
+                  <Text style={styles.historyCardId}>{item.id}</Text>
+                  <Text style={styles.historyCardPatient}>{item.patient}</Text>
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={styles.historyCardFee}>{item.fee}</Text>
+                  <View
+                    style={[
+                      styles.statusPillBadge,
+                      {
+                        backgroundColor:
+                          item.status === 'In Transit'
+                            ? '#DBEAFE'
+                            : item.status === 'Delivered'
+                            ? '#DCFCE7'
+                            : '#FEF3C7',
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.statusPillText,
+                        {
+                          color:
+                            item.status === 'In Transit'
+                              ? '#2563EB'
+                              : item.status === 'Delivered'
+                              ? '#16A34A'
+                              : '#D97706',
+                        },
+                      ]}
+                    >
+                      ● {item.status}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              <View style={styles.routeItemRow}>
+                <View style={[styles.dotMarker, { backgroundColor: COLORS.primaryTeal }]} />
+                <Text style={styles.routeTextSm}>{item.pickup}</Text>
+              </View>
+              <View style={[styles.routeItemRow, { marginTop: 4 }]}>
+                <View style={[styles.dotMarker, { backgroundColor: COLORS.accentBlue }]} />
+                <Text style={styles.routeTextSm}>{item.drop}</Text>
+              </View>
+
+              <View style={styles.historyCardFooter}>
+                <Text style={styles.historyCardTests}>🧪 {item.tests}</Text>
+                <Text style={styles.historyCardTemp}>❄️ {item.temp}</Text>
+              </View>
+
+              {item.status === 'In Transit' && (
+                <TouchableOpacity
+                  style={[styles.btnPrimary, { marginTop: 12, paddingVertical: 8 }]}
+                  onPress={() => {
+                    setBottomTab('home');
+                    setCurrentScreen('BOOKING_DETAILS');
+                  }}
+                >
+                  <Text style={styles.btnPrimaryText}>Resume Active Trip</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ))}
+        </View>
+      </ScrollView>
+    );
+  };
+
+  /* =========================================================================
+   * TAB 3: EARNINGS & PAYOUTS SCREEN
+   * ========================================================================= */
+  const renderEarningsScreen = () => {
+    return (
+      <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
+        <View style={styles.heroHeader}>
+          <Text style={styles.greetingTitle}>Earnings & Payouts</Text>
+          <Text style={styles.greetingSubtitle}>Instant cold-chain logistics incentives & daily ledger</Text>
+
+          {/* Wallet Payout Card */}
+          <View style={[styles.summaryCard, { marginTop: 16 }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View>
+                <Text style={styles.summaryTitle}>AVAILABLE FOR WITHDRAWAL</Text>
+                <Text style={[styles.metricNumber, { fontSize: 28, color: COLORS.primaryDark }]}>
+                  ₹3,420
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.btnPrimary, { paddingHorizontal: 16, paddingVertical: 10 }]}
+                onPress={() =>
+                  Alert.alert(
+                    'Instant UPI Payout Requested',
+                    '₹3,420 will be credited directly to rahul.yadav@okhdfcbank within 60 seconds.'
+                  )
+                }
+              >
+                <Text style={styles.btnPrimaryText}>Withdraw to UPI</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={[styles.summaryDivider, { width: '100%', height: 1, marginVertical: 14 }]} />
+
+            <View style={styles.summaryMetricsRow}>
+              <View style={styles.summaryMetricCol}>
+                <Text style={styles.metricNumber}>₹1,240</Text>
+                <Text style={styles.metricLabel}>Today (5 Pickups)</Text>
+              </View>
+              <View style={styles.summaryDivider} />
+              <View style={styles.summaryMetricCol}>
+                <Text style={styles.metricNumber}>₹8,450</Text>
+                <Text style={styles.metricLabel}>This Week</Text>
+              </View>
+              <View style={styles.summaryDivider} />
+              <View style={styles.summaryMetricCol}>
+                <Text style={styles.metricNumber}>₹34,200</Text>
+                <Text style={styles.metricLabel}>This Month</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        <View style={[styles.bodyContainer, { paddingTop: 48 }]}>
+          {/* Weekly Performance Bar Chart */}
+          <View style={styles.chartCard}>
+            <Text style={styles.sectionHeaderTitle}>Weekly Earnings Overview</Text>
+            <View style={styles.barChartContainer}>
+              {[
+                { day: 'Mon', amount: '₹1,100', heightPct: 65 },
+                { day: 'Tue', amount: '₹1,350', heightPct: 82 },
+                { day: 'Wed', amount: '₹950', heightPct: 56 },
+                { day: 'Thu', amount: '₹1,400', heightPct: 85 },
+                { day: 'Fri', amount: '₹1,200', heightPct: 72 },
+                { day: 'Sat', amount: '₹1,650', heightPct: 100, active: true },
+                { day: 'Sun', amount: '₹800', heightPct: 48 },
+              ].map((bar) => (
+                <View key={bar.day} style={styles.chartBarCol}>
+                  <Text style={styles.chartBarAmount}>{bar.amount.replace('₹', '')}</Text>
+                  <View style={styles.chartBarTrack}>
+                    <View
+                      style={[
+                        styles.chartBarFill,
+                        {
+                          height: `${bar.heightPct}%`,
+                          backgroundColor: bar.active ? COLORS.primaryTeal : '#94A3B8',
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text
+                    style={[
+                      styles.chartBarDay,
+                      bar.active && { color: COLORS.primaryDark, fontWeight: '700' },
+                    ]}
+                  >
+                    {bar.day}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </View>
+
+          {/* Incentive Boosters */}
+          <View style={styles.incentiveCard}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Text style={{ fontSize: 24 }}>🎯</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.incentiveTitle}>Cold-Chain Quality Bonus</Text>
+                <Text style={styles.incentiveSubtitle}>
+                  100% compliant temp logs today! +₹250 added to your balance.
+                </Text>
+              </View>
+            </View>
+            <View style={styles.progressBarTrack}>
+              <View style={[styles.progressBarFill, { width: '100%' }]} />
+            </View>
+          </View>
+
+          {/* Recent Trip Earnings */}
+          <Text style={[styles.sectionHeaderTitle, { marginTop: 20, marginBottom: 10 }]}>
+            Recent Trip Breakdown
+          </Text>
+
+          {[
+            { id: 'BK-10456', fee: '₹350', base: '₹250 base + ₹100 chilled bonus', time: 'Today, 11:48 AM', lab: 'Metro Diagnostics' },
+            { id: 'BK-10455', fee: '₹300', base: '₹250 base + ₹50 distance', time: 'Today, 10:15 AM', lab: 'Metro Diagnostics' },
+            { id: 'BK-10454', fee: '₹400', base: '₹250 base + ₹150 STAT surge', time: 'Today, 09:30 AM', lab: 'Metro Diagnostics' },
+            { id: 'BK-10452', fee: '₹190', base: 'Standard Routine Pickup', time: 'Today, 08:45 AM', lab: 'Apex Lab' },
+          ].map((trip) => (
+            <View key={trip.id} style={styles.tripLedgerRow}>
+              <View>
+                <Text style={styles.tripLedgerId}>{trip.id}</Text>
+                <Text style={styles.tripLedgerLab}>{trip.lab} • {trip.time}</Text>
+                <Text style={styles.tripLedgerBase}>{trip.base}</Text>
+              </View>
+              <Text style={styles.tripLedgerFee}>+{trip.fee}</Text>
+            </View>
+          ))}
+
+          {/* Linked Bank Card */}
+          <View style={styles.bankAccountCard}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <Text style={{ fontSize: 24 }}>🏦</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.bankName}>HDFC Bank (Linked UPI)</Text>
+                <Text style={styles.bankNumber}>A/c •••• 4092 • rahul.yadav@okhdfcbank</Text>
+              </View>
+              <Text style={{ color: COLORS.successGreen, fontWeight: '700', fontSize: 12 }}>
+                ✓ VERIFIED
+              </Text>
+            </View>
+          </View>
+        </View>
+      </ScrollView>
+    );
+  };
+
+  /* =========================================================================
+   * TAB 4: PHLEBOTOMIST PROFILE & HARDWARE COMPLIANCE
+   * ========================================================================= */
+  const renderProfileScreen = () => {
+    return (
+      <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
+        <View style={styles.heroHeader}>
+          <View style={{ alignItems: 'center', paddingVertical: 10 }}>
+            <View style={[styles.avatarCircle, { width: 68, height: 68, borderRadius: 34 }]}>
+              <Text style={[styles.avatarText, { fontSize: 26 }]}>R</Text>
+            </View>
+            <Text style={[styles.greetingTitle, { fontSize: 20, marginTop: 8 }]}>Rahul Yadav</Text>
+            <Text style={styles.greetingSubtitle}>Phlebotomist ID: PHL-204 • Blood Group: O+</Text>
+            <View style={[styles.onlinePill, { backgroundColor: '#064E3B', marginTop: 10 }]}>
+              <Text style={styles.onlinePillText}>⭐ 4.9 Rating (428 Pickups)</Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.bodyContainer}>
+          {/* Shift Status Selector */}
+          <Text style={styles.sectionHeaderTitle}>Shift Status</Text>
+          <View style={styles.shiftSelectorRow}>
+            {[
+              { status: 'ONLINE', label: '🟢 On Duty', bg: '#DCFCE7', text: '#16A34A' },
+              { status: 'BREAK', label: '🟡 On Break', bg: '#FEF3C7', text: '#D97706' },
+              { status: 'OFFLINE', label: '🔴 Off Duty', bg: '#FEE2E2', text: '#DC2626' },
+            ].map((s) => (
+              <TouchableOpacity
+                key={s.status}
+                style={[
+                  styles.shiftButton,
+                  dutyStatus === s.status && { backgroundColor: s.bg, borderColor: s.text, borderWidth: 1.5 },
+                ]}
+                onPress={() => {
+                  setDutyStatus(s.status as any);
+                  setIsOnline(s.status === 'ONLINE');
+                  Alert.alert('Shift Status Updated', `You are now ${s.label}`);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.shiftButtonText,
+                    dutyStatus === s.status && { color: s.text, fontWeight: '700' },
+                  ]}
+                >
+                  {s.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Assigned Cold-Chain Logistics Kit */}
+          <Text style={[styles.sectionHeaderTitle, { marginTop: 20 }]}>
+            Assigned Cold-Chain Equipment
+          </Text>
+          <View style={styles.equipmentCard}>
+            <View style={styles.equipmentRow}>
+              <Text style={{ fontSize: 20 }}>🧊</Text>
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={styles.equipmentTitle}>IoT Smart Chiller Box #CB-408</Text>
+                <Text style={styles.equipmentSub}>Internal Sensor: 4.2°C (Calibrated NABL) • Battery: 94%</Text>
+              </View>
+              <Text style={{ color: COLORS.successGreen, fontWeight: '700', fontSize: 12 }}>ONLINE</Text>
+            </View>
+
+            <View style={[styles.equipmentRow, { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderColor: COLORS.borderLight }]}>
+              <Text style={{ fontSize: 20 }}>🏍️</Text>
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={styles.equipmentTitle}>Logistics Bike</Text>
+                <Text style={styles.equipmentSub}>Hero Electric • MH-03-BW-4921</Text>
+              </View>
+              <Text style={{ color: COLORS.primaryTeal, fontWeight: '600', fontSize: 12 }}>ASSIGNED</Text>
+            </View>
+
+            <View style={[styles.equipmentRow, { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderColor: COLORS.borderLight }]}>
+              <Text style={{ fontSize: 20 }}>📱</Text>
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={styles.equipmentTitle}>Barcode Scanner & Logger</Text>
+                <Text style={styles.equipmentSub}>BLE 5.2 Handheld Accession Wand • Paired</Text>
+              </View>
+              <Text style={{ color: COLORS.successGreen, fontWeight: '700', fontSize: 12 }}>PAIRED</Text>
+            </View>
+          </View>
+
+          {/* Verified Qualifications */}
+          <Text style={[styles.sectionHeaderTitle, { marginTop: 20 }]}>
+            Certifications & Verification
+          </Text>
+          <View style={styles.complianceCard}>
+            {[
+              { title: 'DMLT Pathology Diploma', auth: 'Maharashtra Paramedical Council', exp: 'Permanent' },
+              { title: 'Cold-Chain Biological Handling', auth: 'LabSetu Standards Institute', exp: 'Valid till Nov 2027' },
+              { title: 'Police Background Verification', auth: 'Mumbai City Police', exp: 'Clear (Verified 2026)' },
+            ].map((doc, idx) => (
+              <View
+                key={doc.title}
+                style={[
+                  styles.docItemRow,
+                  idx > 0 && { borderTopWidth: 1, borderColor: COLORS.borderLight, paddingTop: 10, marginTop: 10 },
+                ]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.docTitle}>{doc.title}</Text>
+                  <Text style={styles.docAuth}>{doc.auth} • {doc.exp}</Text>
+                </View>
+                <Text style={{ color: COLORS.successGreen, fontSize: 16 }}>✓</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* Support and SOS */}
+          <View style={{ marginTop: 24, gap: 10 }}>
+            <TouchableOpacity
+              style={styles.sosButton}
+              onPress={() =>
+                Alert.alert(
+                  'Emergency Cold-Chain SOS Triggered',
+                  'Central Dispatch Operations & nearest backup phlebotomist have been notified of your location.'
+                )
+              }
+            >
+              <Text style={styles.sosButtonText}>🚨 EMERGENCY COLD-CHAIN SOS</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.helpHotlineButton}
+              onPress={() => Alert.alert('LabSetu Hotline', 'Dialing Operations Control Center: 1800-889-SETU')}
+            >
+              <Text style={styles.helpHotlineText}>📞 Call Central Dispatch Hotline (24x7)</Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.versionFootnote}>
+            LabSetu Phlebotomist Companion v2.4.0 (Build 108) • Android Protected
+          </Text>
+        </View>
+      </ScrollView>
+    );
+  };
+
   return (
     <SafeAreaView style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.primaryDark} />
 
       {/* Screen Router */}
       <View style={{ flex: 1 }}>
-        {currentScreen === 'BOOKING_REQUESTS' && renderBookingRequestsScreen()}
-        {currentScreen === 'BOOKING_DETAILS' && renderBookingDetailsScreen()}
-        {currentScreen === 'COLLECT_SAMPLE' && renderCollectSampleScreen()}
-        {currentScreen === 'DROP_SAMPLE' && renderDropSampleScreen()}
-        {currentScreen === 'COMPLETED' && renderCompletedScreen()}
+        {bottomTab === 'home' && (
+          <>
+            {currentScreen === 'BOOKING_REQUESTS' && renderBookingRequestsScreen()}
+            {currentScreen === 'BOOKING_DETAILS' && renderBookingDetailsScreen()}
+            {currentScreen === 'COLLECT_SAMPLE' && renderCollectSampleScreen()}
+            {currentScreen === 'DROP_SAMPLE' && renderDropSampleScreen()}
+            {currentScreen === 'COMPLETED' && renderCompletedScreen()}
+          </>
+        )}
+        {bottomTab === 'bookings' && renderBookingsHistoryScreen()}
+        {bottomTab === 'earnings' && renderEarningsScreen()}
+        {bottomTab === 'profile' && renderProfileScreen()}
       </View>
 
       {/* Persistent Bottom Tab Bar */}
@@ -543,7 +1047,6 @@ export default function App() {
           style={styles.bottomTabItem}
           onPress={() => {
             setBottomTab('bookings');
-            setCurrentScreen('BOOKING_DETAILS');
           }}
         >
           <Text style={{ fontSize: 18 }}>📋</Text>
@@ -1119,6 +1622,333 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: COLORS.textSecondary,
     marginTop: 2,
+  },
+
+  /* Inner Tabs Header */
+  appHeaderBar: {
+    backgroundColor: COLORS.primaryDark,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 20,
+  },
+  appHeaderTitle: {
+    color: 'white',
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  appHeaderSubtitle: {
+    color: '#A7F3D0',
+    fontSize: 13,
+    marginTop: 4,
+  },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surfaceCard,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 14,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: COLORS.textPrimary,
+  },
+
+  /* History Card */
+  historyCard: {
+    backgroundColor: COLORS.surfaceCard,
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    marginBottom: 12,
+  },
+  historyCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  historyCardId: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  historyCardPatient: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    marginTop: 1,
+  },
+  historyCardFee: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.primaryDark,
+  },
+  statusPillBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    marginTop: 3,
+  },
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  routeItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  routeTextSm: {
+    fontSize: 12,
+    color: COLORS.textPrimary,
+    flex: 1,
+  },
+  historyCardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
+    borderColor: COLORS.borderLight,
+    paddingTop: 8,
+    marginTop: 10,
+  },
+  historyCardTests: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    fontWeight: '500',
+  },
+  historyCardTemp: {
+    fontSize: 12,
+    color: COLORS.successGreen,
+    fontWeight: '600',
+  },
+
+  /* Earnings & Charts */
+  sectionHeaderTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+    marginBottom: 10,
+  },
+  chartCard: {
+    backgroundColor: COLORS.surfaceCard,
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    marginBottom: 14,
+  },
+  barChartContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    height: 140,
+    paddingTop: 16,
+  },
+  chartBarCol: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  chartBarAmount: {
+    fontSize: 9,
+    color: COLORS.textSecondary,
+    marginBottom: 4,
+  },
+  chartBarTrack: {
+    width: 20,
+    height: 90,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 6,
+    justifyContent: 'flex-end',
+    overflow: 'hidden',
+  },
+  chartBarFill: {
+    width: '100%',
+    borderRadius: 6,
+  },
+  chartBarDay: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    marginTop: 6,
+    fontWeight: '500',
+  },
+  incentiveCard: {
+    backgroundColor: '#F0FDFA',
+    borderWidth: 1,
+    borderColor: '#CCFBF1',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 14,
+  },
+  incentiveTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.primaryDark,
+  },
+  incentiveSubtitle: {
+    fontSize: 12,
+    color: COLORS.primaryTeal,
+    marginTop: 2,
+  },
+  progressBarTrack: {
+    height: 6,
+    backgroundColor: '#CCFBF1',
+    borderRadius: 3,
+    marginTop: 10,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: COLORS.primaryTeal,
+  },
+  tripLedgerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: COLORS.surfaceCard,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    marginBottom: 8,
+  },
+  tripLedgerId: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  tripLedgerLab: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  tripLedgerBase: {
+    fontSize: 11,
+    color: COLORS.primaryTeal,
+    marginTop: 2,
+  },
+  tripLedgerFee: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.successGreen,
+  },
+  bankAccountCard: {
+    backgroundColor: COLORS.surfaceCard,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    borderRadius: 12,
+    padding: 14,
+    marginTop: 10,
+    marginBottom: 14,
+  },
+  bankName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  bankNumber: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+
+  /* Profile Styles */
+  shiftSelectorRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 14,
+  },
+  shiftButton: {
+    flex: 1,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  shiftButtonText: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    fontWeight: '600',
+  },
+  equipmentCard: {
+    backgroundColor: COLORS.surfaceCard,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    borderRadius: 14,
+    padding: 14,
+  },
+  equipmentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  equipmentTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  equipmentSub: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  complianceCard: {
+    backgroundColor: COLORS.surfaceCard,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    borderRadius: 14,
+    padding: 14,
+  },
+  docItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  docTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+  },
+  docAuth: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  sosButton: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1.5,
+    borderColor: COLORS.errorRed,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  sosButtonText: {
+    color: COLORS.errorRed,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  helpHotlineButton: {
+    backgroundColor: '#F0FDFA',
+    borderWidth: 1,
+    borderColor: COLORS.primaryTeal,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  helpHotlineText: {
+    color: COLORS.primaryDark,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  versionFootnote: {
+    textAlign: 'center',
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 18,
+    marginBottom: 10,
   },
 });
 
