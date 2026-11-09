@@ -1,0 +1,34 @@
+{
+  "name": "diagnostic-platform-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Healthcare Diagnostic Sample Pickup and Logistics Platform",
+  "workspaces": [
+    "packages/*",
+    "apps/web/*",
+    "apps/api",
+    "apps/phlebo-app"
+  ],
+  "scripts": {
+    "dev:api": "npm --workspace=@diagnostic/api run dev",
+    "dev:small-lab": "npm --workspace=@diagnostic/small-lab run dev",
+    "dev:large-lab": "npm --workspace=@diagnostic/large-lab run dev",
+    "dev:admin": "npm --workspace=@diagnostic/admin run dev",
+    "dev:phlebo": "npm --workspace=@diagnostic/phlebo-app run start",
+    "build:shared": "npm --workspace=@diagnostic/shared run build",
+    "build:api": "npm --workspace=@diagnostic/api run build",
+    "build:web": "npm run build --workspaces --if-present",
+    "build:all": "npm run build:shared && npm run build:api && npm run build:web",
+    "lint": "npm run lint --workspaces --if-present"
+  },
+  "keywords": [
+    "healthcare",
+    "diagnostics",
+    "logistics",
+    "phlebotomy",
+    "cold-chain",
+    "firebase"
+  ],
+  "author": "Vikas",
+  "license": "UNLICENSED"
+}
