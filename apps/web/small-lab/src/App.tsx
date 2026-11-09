@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import {
   LABSETU_THEME,
   OrderStatus,
@@ -211,7 +211,7 @@ export function App() {
   const [selectedTest, setSelectedTest] = useState('CBC, LFT');
   const [pickupTime, setPickupTime] = useState('11:30 AM');
 
-  const handleCreateBooking = (e: React.FormEvent) => {
+  const handleCreateBooking = (e: FormEvent) => {
     e.preventDefault();
     if (!patientName.trim()) return;
 

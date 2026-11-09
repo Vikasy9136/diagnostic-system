@@ -7,6 +7,8 @@ import {
   SpecimenType,
   TubeType,
   StorageTemperature,
+  CustodyEventType,
+  UserRole,
   isValidSpecimenBarcode,
   isTemperatureCompliant,
 } from '@diagnostic/shared';
@@ -49,11 +51,11 @@ const STARTER_ORDERS: PickupOrder[] = [
       {
         id: 'EVT-001',
         orderId: 'ord_mock_001',
-        eventType: 'ORDER_CREATED' as any,
+        eventType: CustodyEventType.ORDER_CREATED,
         timestamp: new Date().toISOString(),
         operatorId: 'USR-SM-01',
         operatorName: 'Dr. A. Verma',
-        operatorRole: 'SMALL_LAB' as any,
+        operatorRole: UserRole.SMALL_LAB,
         notes: 'Specimen collected and packed with cold ice gel pack',
       },
     ],

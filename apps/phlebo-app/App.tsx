@@ -40,6 +40,13 @@ export default function App() {
   const [bottomTab, setBottomTab] = useState<'home' | 'bookings' | 'earnings' | 'profile'>('home');
   const [otpValue, setOtpValue] = useState(['7', '4', '2', '9', '9']);
   const [scannedBarcode, setScannedBarcode] = useState('SMP-10456-CBC');
+  const [showManualEntry, setShowManualEntry] = useState(false);
+
+  const updateOtpDigit = (index: number, value: string) => {
+    const updated = [...otpValue];
+    updated[index] = value;
+    setOtpValue(updated);
+  };
 
   // Active booking mock details
   const activeBooking = {
@@ -338,6 +345,29 @@ export default function App() {
           Align camera with the specimen vial barcode to link chain-of-custody.
         </Text>
 
+        {showManualEntry ? (
+          <View style={{ width: '100%', marginBottom: 20 }}>
+            <Text style={{ fontSize: 13, color: COLORS.textSecondary, marginBottom: 6 }}>
+              Enter Specimen Barcode:
+            </Text>
+            <TextInput
+              style={{
+                backgroundColor: 'white',
+                borderWidth: 1.5,
+                borderColor: COLORS.primaryTeal,
+                borderRadius: 8,
+                padding: 12,
+                fontSize: 15,
+                fontWeight: '600',
+                color: COLORS.textPrimary,
+              }}
+              value={scannedBarcode}
+              onChangeText={setScannedBarcode}
+              placeholder="e.g. SMP-10456-CBC"
+            />
+          </View>
+        ) : null}
+
         <TouchableOpacity
           style={styles.ctaButton}
           onPress={() => {
@@ -350,10 +380,10 @@ export default function App() {
 
         <TouchableOpacity
           style={{ marginTop: 16 }}
-          onPress={() => setCurrentScreen('DROP_SAMPLE')}
+          onPress={() => setShowManualEntry(!showManualEntry)}
         >
           <Text style={{ color: COLORS.primaryTeal, fontWeight: '600', fontSize: 14 }}>
-            Or Enter Manually
+            {showManualEntry ? 'Use Camera Scanner' : 'Or Enter Manually'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -395,7 +425,13 @@ export default function App() {
         <View style={styles.otpBoxesRow}>
           {otpValue.map((digit, idx) => (
             <View key={idx} style={styles.otpBox}>
-              <Text style={styles.otpDigit}>{digit}</Text>
+              <TextInput
+                style={styles.otpDigit}
+                value={digit}
+                maxLength={1}
+                keyboardType="numeric"
+                onChangeText={(val) => updateOtpDigit(idx, val)}
+              />
             </View>
           ))}
         </View>
@@ -1085,3 +1121,4 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 });
+
