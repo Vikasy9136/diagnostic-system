@@ -1,10 +1,30 @@
-# Healthcare Diagnostic Sample Pickup & Logistics Platform
+# LabSetu — Healthcare Diagnostic Sample Pickup & Logistics Platform
 
-An enterprise-grade, HIPAA-compliant diagnostic specimen pickup and cold-chain logistics platform connecting small diagnostic collection centers, certified phlebotomists, large reference/partner testing laboratories, and centralized operations administrators.
+An enterprise-grade diagnostic specimen pickup and cold-chain logistics platform connecting local diagnostic collection centers, certified phlebotomists, large reference testing laboratories, and platform dispatch administrators.
 
 ---
 
-## 1. System Architecture & Modules
+## 1. Visual Design System ("LabSetu" UI/UX Guidelines)
+
+The user interface follows the official **LabSetu Healthcare SaaS Design System**:
+
+* **Font Family:** `Inter` (Google Fonts: Regular 400, Medium 500, SemiBold 600, Bold 700)
+* **Color Palette:**
+  * **Primary Teal:** `#0D9488`
+  * **Primary Dark:** `#0F766E`
+  * **Accent Blue:** `#2563EB`
+  * **Success Green:** `#16A34A`
+  * **Warning Amber:** `#F59E0B`
+  * **Error Red:** `#DC2626`
+  * **Background Canvas:** `#F8FAFC`
+  * **Surface / Card:** `#FFFFFF`
+  * **Text Primary:** `#0F172A`
+  * **Text Secondary:** `#64748B`
+  * **Border Light:** `#E2E8F0`
+
+---
+
+## 2. Platform Architecture & Workspaces
 
 The platform is organized as a unified monorepo powered by **npm workspaces** and **TypeScript**:
 
@@ -12,56 +32,38 @@ The platform is organized as a unified monorepo powered by **npm workspaces** an
 diagnostic-platform/
 ├── apps/
 │   ├── web/
-│   │   ├── small-lab/      # Small Diagnostic Lab Portal (Booking, Barcoding, Manifests)
-│   │   ├── large-lab/      # Reference Lab Portal (Accessioning, Quality Check, Reports)
-│   │   └── admin/          # Centralized Logistics & Dispatch Command Center
-│   ├── phlebo-app/         # Phlebotomist Mobile App (Android/Expo: GPS, Barcode Scanner, Cold-Chain)
-│   └── api/                # Secure Node.js Backend API (Firebase Admin SDK, Express, TypeScript)
+│   │   ├── small-lab/      # Small Diagnostic Lab Portal (Port 3000)
+│   │   ├── large-lab/      # Large Partner Reference Lab Portal (Port 3001)
+│   │   └── admin/          # Admin Logistics & Dispatch Dashboard (Port 3002)
+│   ├── phlebo-app/         # Phlebotomist Mobile App (Android/Expo React Native)
+│   └── api/                # Secure Node.js Backend API (Port 5000)
 ├── packages/
-│   └── shared/             # Shared TypeScript types, status enums, validation schemas & utils
+│   └── shared/             # Shared TypeScript types, validation rules & LabSetu theme tokens
 ├── firebase/               # Firestore Security Rules, Storage Rules, and Index configurations
-├── docs/                   # Platform architecture, compliance, and module specifications
+├── docs/                   # Architectural & compliance documentation
 ├── .env.example            # Environment variables template
-├── .gitignore              # Monorepo git ignore rules
-└── package.json            # Root workspaces configuration
+├── .gitignore              # Git ignore rules
+└── package.json            # Root workspaces orchestrator
 ```
-
----
-
-## 2. Technology Stack
-
-* **Web Applications:** React.js, TypeScript, Vite, Tailwind CSS (or clean CSS systems).
-* **Mobile Application:** React Native, Expo SDK, TypeScript (Android-first).
-* **Backend Services:** Node.js, Express, TypeScript, Firebase Admin SDK.
-* **Database & Storage:** Google Cloud Firestore (NoSQL Document Store), Firebase Cloud Storage (Encrypted documents & reports).
-* **Identity & Access:** Firebase Authentication with Role-Based Access Control (RBAC) via Custom Claims.
-* **Notifications:** Firebase Cloud Messaging (FCM).
-* **Version Control:** Git.
 
 ---
 
 ## 3. Platform Modules Overview
 
-| Module | Target Users | Primary Responsibilities |
-| :--- | :--- | :--- |
-| **Small Lab Portal** | Clinic staff, local collection centers | Register test orders, generate barcode labels, request sample pickups, view digital manifests. |
-| **Large Partner Lab Portal** | Reference lab technicians & pathologists | Receive batches, verify barcode custody, accept/reject specimens, upload test reports. |
-| **Admin Dashboard** | Operations managers & dispatchers | Live map tracking, phlebotomist assignment, SLA alerts, cold-chain temperature telemetry, audit logs. |
-| **Phlebotomist App** | Field phlebotomists & couriers | Real-time pickup route, sample scanning, cold-chain status logging, digital handover signatures. |
-| **Backend API** | Internal system services | Secure business validation, barcode verification, notifications dispatcher, audit trail generator. |
+| Module | Role | Port | Key Features |
+| :--- | :--- | :--- | :--- |
+| **Small Lab Web Portal** | `SMALL_LAB` | `3000` | Booking requests, patient registration, recent bookings table, live courier GPS tracking with ETA. |
+| **Partner Reference Lab** | `LARGE_LAB` | `3001` | Batch accessioning, barcode scanning, temperature QC check, report upload modal. |
+| **Admin Command Dashboard**| `ADMIN` | `3002` | Platform overview KPIs, interactive live operations route map, telemetry grid (battery, temperature). |
+| **Phlebotomist Mobile App**| `PHLEBOTOMIST` | Expo (Android) | Dark teal header, online toggle, daily summary, 5-screen interactive flow (Requests, Details, Collect, Drop with OTP, Completed). |
+| **Node.js Backend API** | Services | `5000` | Health check, specimen validation, Firebase Admin SDK integration with local mock fallback. |
 
 ---
 
-## 4. Getting Started (Local Development)
-
-### Prerequisites
-* **Node.js:** v18+ (tested on Node v24.17.0)
-* **npm:** v9+ (tested on npm 11.13.0)
-* **Git:** v2.30+
-* **Java:** JDK 11+ (recommended JDK 17 for native Android builds)
+## 4. Local Development & Running Guide
 
 ### Quick Start
-1. **Clone & Navigate:**
+1. **Navigate to the workspace:**
    ```bash
    cd diagnostic-platform
    ```
@@ -70,29 +72,42 @@ diagnostic-platform/
    ```bash
    copy .env.example .env
    ```
-   *(Ensure placeholder values are reviewed. No real credentials or patient data should ever be committed).*
 
 3. **Install Dependencies:**
    ```bash
    npm install
    ```
 
-4. **Build Shared Packages:**
+4. **Build All Workspaces:**
    ```bash
-   npm run build:shared
+   npm run build:all
    ```
 
-5. **Run Applications:**
-   * Backend API: `npm run dev:api` (Port 5000)
-   * Small Lab Web: `npm run dev:small-lab` (Port 3000)
-   * Large Lab Web: `npm run dev:large-lab` (Port 3001)
-   * Admin Dashboard: `npm run dev:admin` (Port 3002)
-   * Phlebotomist App: `npm run dev:phlebo` (Expo Dev Server)
+5. **Run Applications Independently:**
+   * **Small Lab Web Portal (Port 3000):**
+     ```bash
+     npm run dev:small-lab
+     ```
+   * **Large Partner Lab Web Portal (Port 3001):**
+     ```bash
+     npm run dev:large-lab
+     ```
+   * **Admin Operations Dashboard (Port 3002):**
+     ```bash
+     npm run dev:admin
+     ```
+   * **Phlebotomist Mobile App (Expo / Android):**
+     ```bash
+     npm run dev:phlebo
+     ```
+   * **Backend API (Port 5000):**
+     ```bash
+     npm run dev:api
+     ```
 
 ---
 
 ## 5. Security & Privacy Rules
-* **No Real Patient Health Information (PHI):** Always use mock, synthesized records during development.
-* **Encrypted Storage:** All clinical reports and identity documents use signed, authenticated URLs.
-* **Immutable Audit Trail:** Every custody transfer (Small Lab -> Phlebotomist -> Large Lab) logs timestamp, GPS coordinates, temperature, and user signature.
-
+* **No Real Patient Data:** Development mode uses synthesized patient identifiers (e.g. `PT-9482`, `PT-101`).
+* **Role-Based Access Control (RBAC):** Firestore and API enforce user roles.
+* **Cold-Chain Audit Trail:** Every specimen transfer logs temperature, location, and immutable timestamps.
