@@ -30,3 +30,4 @@ export function isValidOrderNumber(orderNumber: string): boolean {
   const regex = /^ORD-[A-Z0-9]{4,16}$/i;
   return regex.test(orderNumber.trim());
 }
+

@@ -31,3 +31,4 @@ export interface UserProfile {
   createdAt: string; // ISO 8601 timestamp string
   updatedAt: string;
 }
+

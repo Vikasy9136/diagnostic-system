@@ -74,3 +74,4 @@ export interface PickupOrder {
   createdAt: string;
   updatedAt: string;
 }
+

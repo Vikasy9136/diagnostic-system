@@ -62,3 +62,4 @@ export interface SpecimenItem {
   qualityStatus?: SpecimenQualityStatus;
   notes?: string;
 }
+
