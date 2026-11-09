@@ -95,3 +95,4 @@ diagnostic-platform/
 * **No Real Patient Health Information (PHI):** Always use mock, synthesized records during development.
 * **Encrypted Storage:** All clinical reports and identity documents use signed, authenticated URLs.
 * **Immutable Audit Trail:** Every custody transfer (Small Lab -> Phlebotomist -> Large Lab) logs timestamp, GPS coordinates, temperature, and user signature.
+

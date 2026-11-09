@@ -39,3 +39,4 @@ Specimens fall into 3 strict temperature categories:
 * **Ambient (Room Temp):** 15°C to 25°C
 * **Refrigerated (Cold-Pack):** 2°C to 8°C
 * **Frozen (Dry Ice):** -20°C or below
+

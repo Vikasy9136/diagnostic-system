@@ -1,0 +1,97 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================================
+    // HELPER FUNCTIONS & RBAC CLAIMS
+    // =========================================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserRole() {
+      return request.auth.token.role;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && getUserRole() == 'ADMIN';
+    }
+
+    function isSmallLab() {
+      return isAuthenticated() && getUserRole() == 'SMALL_LAB';
+    }
+
+    function isLargeLab() {
+      return isAuthenticated() && getUserRole() == 'LARGE_LAB';
+    }
+
+    function isPhlebotomist() {
+      return isAuthenticated() && getUserRole() == 'PHLEBOTOMIST';
+    }
+
+    function getLabId() {
+      return request.auth.token.labId;
+    }
+
+    function getPhlebotomistId() {
+      return request.auth.token.phlebotomistId;
+    }
+
+    // =========================================================================
+    // 1. USERS COLLECTION (`users/{userId}`)
+    // =========================================================================
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // =========================================================================
+    // 2. REGISTERED LABS DIRECTORY (`labs/{labId}`)
+    // =========================================================================
+    match /labs/{labId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // =========================================================================
+    // 3. PICKUP ORDERS (`orders/{orderId}`)
+    // =========================================================================
+    match /orders/{orderId} {
+      // Admins have full access
+      allow read, write: if isAdmin();
+
+      // Small Lab: Can create orders for their own lab, and read orders originating from their lab
+      allow create: if isSmallLab() && request.resource.data.smallLabId == getLabId();
+      allow read: if isSmallLab() && resource.data.smallLabId == getLabId();
+      // Small Lab can cancel an order if it is still in CREATED or READY_FOR_PICKUP
+      allow update: if isSmallLab() 
+        && resource.data.smallLabId == getLabId() 
+        && resource.data.status in ['CREATED', 'READY_FOR_PICKUP']
+        && request.resource.data.status in ['READY_FOR_PICKUP', 'CANCELLED'];
+
+      // Large Partner Lab: Can read orders targeted to them and update accessioning/report status
+      allow read: if isLargeLab() && resource.data.targetLabId == getLabId();
+      allow update: if isLargeLab() 
+        && resource.data.targetLabId == getLabId()
+        && request.resource.data.status in ['UNDER_ANALYSIS', 'REPORT_UPLOADED', 'COMPLETED', 'REJECTED'];
+
+      // Phlebotomist: Can read orders assigned to them and update status during pickup/transit
+      allow read: if isPhlebotomist() && resource.data.phlebotomistId == getPhlebotomistId();
+      allow update: if isPhlebotomist() 
+        && resource.data.phlebotomistId == getPhlebotomistId()
+        && request.resource.data.status in ['PICKED_UP', 'IN_TRANSIT', 'DELIVERED_TO_LAB'];
+    }
+
+    // =========================================================================
+    // 4. IMMUTABLE CHAIN-OF-CUSTODY AUDIT EVENTS (`custody_events/{eventId}`)
+    // Chain-of-custody logs are strictly append-only. No edits or deletes!
+    // =========================================================================
+    match /custody_events/{eventId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() 
+        && request.resource.data.operatorId == request.auth.uid;
+      allow update, delete: if false; // Strict immutability for compliance
+    }
+  }
+}

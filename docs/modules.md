@@ -40,3 +40,4 @@ The platform enforces strict authorization mapped to Firebase Authentication Cus
 * **Secure Firebase Admin Proxy:** Verify Firebase JWTs and enforce custom role claims.
 * **Business Validation Rules:** Enforce valid state transitions (e.g., cannot deliver without pickup).
 * **Push Notifications:** Send FCM notifications for pickup assignments and status updates.
+

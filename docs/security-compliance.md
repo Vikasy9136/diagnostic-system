@@ -22,3 +22,4 @@
   * Geolocation coordinates (`latitude`, `longitude`)
   * Temperature reading (`temperatureCelsius`)
   * Verification method (`BARCODE_SCAN` or `DIGITAL_SIGNATURE`)
+

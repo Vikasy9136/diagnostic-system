@@ -1,0 +1,33 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.role == 'ADMIN';
+    }
+
+    // Diagnostic Reports: reports/{orderId}/{fileName}
+    match /reports/{orderId}/{fileName} {
+      // Must be authenticated to read or write
+      allow read: if isAuthenticated();
+      // Only Admin or Large Partner Lab can upload final test reports
+      allow write: if isAdmin() || (isAuthenticated() && request.auth.token.role == 'LARGE_LAB');
+    }
+
+    // Custody Handover Digital Signatures: signatures/{orderId}/{fileName}
+    match /signatures/{orderId}/{fileName} {
+      allow read: if isAuthenticated();
+      // Phlebotomist or Lab staff can record digital signature
+      allow write: if isAuthenticated() && (request.auth.token.role in ['PHLEBOTOMIST', 'SMALL_LAB', 'ADMIN']);
+    }
+
+    // Deny all other unrestricted access by default
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
