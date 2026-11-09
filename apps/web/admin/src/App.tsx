@@ -68,47 +68,61 @@ const MOCK_LAB_DIRECTORY = [
   { id: 'LAB-LG-101', name: 'Apex Reference Center', type: 'Partner Reference Testing Hub', city: 'Thane', ordersMTD: 420, status: 'Active Verified', nabl: 'NABL Certified' },
 ];
 
-const MOCK_GLOBAL_BOOKINGS = [
-  { id: 'BK-10456', origin: 'Bhandup Care Lab', target: 'Metro Diagnostics', phlebo: 'Rahul Yadav', tests: 'CBC, LFT', time: '10:15 AM', status: 'In Transit', priority: 'Urgent' },
-  { id: 'BK-10455', origin: 'City Health Lab', target: 'Metro Diagnostics', phlebo: 'Rahul Yadav', tests: 'TSH, FT4', time: '10:30 AM', status: 'In Transit', priority: 'Routine' },
-  { id: 'BK-10454', origin: 'LifeCare Clinic', target: 'Metro Diagnostics', phlebo: 'Amit Salunkhe', tests: 'Lipid Profile', time: '08:00 AM', status: 'Delivered', priority: 'Routine' },
-  { id: 'BK-10453', origin: 'Apex Care Clinic', target: 'Apex Reference', phlebo: 'Vikram Shinde', tests: 'HbA1c', time: '08:30 AM', status: 'Under Analysis', priority: 'STAT' },
-  { id: 'BK-10452', origin: 'Kalyan Diagnostics', target: 'Metro Diagnostics', phlebo: 'Deepak More', tests: 'D-Dimer', time: '07:45 AM', status: 'Report Ready', priority: 'Urgent' },
+const RECENT_BOOKINGS = [
+  { id: 'BK-10456', lab: 'Bhandup Care Lab', tests: 'CBC, LFT, KFT', phlebo: 'Rahul Yadav', status: 'In Progress', statusClass: 'status-pill-blue', time: '10:24 AM' },
+  { id: 'BK-10455', lab: 'City Health Lab', tests: 'TSH, FT4', phlebo: 'Priya Desai', status: 'Sample Picked', statusClass: 'status-pill-green', time: '10:16 AM' },
+  { id: 'BK-10454', lab: 'LifeCare Lab', tests: 'KFT, Electrolytes', phlebo: 'Ajay Mehta', status: 'Report Ready', statusClass: 'status-pill-purple', time: '09:58 AM' },
+  { id: 'BK-10453', lab: 'Sharma Diagnostics', tests: 'CBC, Lipid', phlebo: 'Sneha Patil', status: 'Completed', statusClass: 'status-pill-green', time: '09:41 AM' },
+  { id: 'BK-10452', lab: 'Metro Health Lab', tests: 'HbA1c', phlebo: 'Rohit Kumar', status: 'Assigned', statusClass: 'status-pill-amber', time: '09:27 AM' },
 ];
 
 type AdminTab =
   | 'dashboard'
-  | 'labs'
-  | 'phlebotomists'
   | 'bookings'
+  | 'labs'
+  | 'labs-small'
+  | 'labs-large'
+  | 'labs-verify'
+  | 'phlebotomists'
   | 'samples'
   | 'reports'
   | 'payments'
   | 'commission'
   | 'analytics'
+  | 'master-data'
   | 'settings';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
+  const [labsMenuOpen, setLabsMenuOpen] = useState(true);
   const [selectedCourier, setSelectedCourier] = useState<ActiveCourier | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [dateRange, setDateRange] = useState('Last 30 Days');
+  const [quickActionModal, setQuickActionModal] = useState<string | null>(null);
 
   return (
     <div className="app-shell">
-      {/* 1. Left Sidebar Navigation */}
-      <aside className="sidebar">
-        <div className="logo-container">
-          <div className="logo-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2v20M2 12h20" />
+      {/* -------------------------------------------------------------
+       * 1. LEFT SIDEBAR (Dark Slate Teal - Matching Reference Image)
+       * ------------------------------------------------------------- */}
+      <aside className="sidebar-dark">
+        {/* Brand Header */}
+        <div className="brand-header">
+          <div className="brand-logo-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10 2v7.31M14 2v7.31M8.5 2h7M14 9.3a6.5 6.5 0 1 1-4 0" />
             </svg>
           </div>
-          <span className="logo-text">{LABSETU_THEME.brand.name}</span>
+          <div className="brand-title-wrap">
+            <span className="brand-title">{LABSETU_THEME.brand.name}</span>
+            <span className="brand-subtitle">Diagnostics Network Platform</span>
+          </div>
         </div>
 
-        <ul className="nav-list">
+        {/* Navigation Menu List */}
+        <ul className="sidebar-nav">
           <li
-            className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`}
+            className={`sidebar-nav-item ${activeTab === 'dashboard' ? 'active' : ''}`}
             onClick={() => setActiveTab('dashboard')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -117,22 +131,62 @@ export function App() {
               <rect x="14" y="14" width="7" height="7" rx="1" />
               <rect x="3" y="14" width="7" height="7" rx="1" />
             </svg>
-            Dashboard
+            <span>Admin Dashboard</span>
           </li>
 
           <li
-            className={`nav-item ${activeTab === 'labs' ? 'active' : ''}`}
-            onClick={() => setActiveTab('labs')}
+            className={`sidebar-nav-item ${activeTab === 'bookings' ? 'active' : ''}`}
+            onClick={() => setActiveTab('bookings')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-              <polyline points="9 22 9 12 15 12 15 22" />
+              <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
+              <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
             </svg>
-            Labs
+            <span>Bookings</span>
+            <span className="nav-badge-red">24</span>
           </li>
 
+          {/* Labs & Partners Dropdown */}
           <li
-            className={`nav-item ${activeTab === 'phlebotomists' ? 'active' : ''}`}
+            className={`sidebar-nav-item ${activeTab.startsWith('labs') ? 'active' : ''}`}
+            onClick={() => {
+              setLabsMenuOpen(!labsMenuOpen);
+              setActiveTab('labs');
+            }}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 21h18M3 7v14M21 7v14M6 11h4M6 15h4M14 11h4M14 15h4M9 3l3-2 3 2v4H9V3z" />
+            </svg>
+            <span>Labs & Partners</span>
+            <span className="chevron-icon">{labsMenuOpen ? '▴' : '▾'}</span>
+          </li>
+
+          {labsMenuOpen && (
+            <ul className="sidebar-submenu">
+              <li
+                className={`sidebar-subitem ${activeTab === 'labs-small' ? 'active' : ''}`}
+                onClick={() => setActiveTab('labs-small')}
+              >
+                <span>• Small Labs</span>
+              </li>
+              <li
+                className={`sidebar-subitem ${activeTab === 'labs-large' ? 'active' : ''}`}
+                onClick={() => setActiveTab('labs-large')}
+              >
+                <span>• Large Labs</span>
+              </li>
+              <li
+                className={`sidebar-subitem ${activeTab === 'labs-verify' ? 'active' : ''}`}
+                onClick={() => setActiveTab('labs-verify')}
+              >
+                <span>• Verification</span>
+                <span className="nav-badge-green">8</span>
+              </li>
+            </ul>
+          )}
+
+          <li
+            className={`sidebar-nav-item ${activeTab === 'phlebotomists' ? 'active' : ''}`}
             onClick={() => setActiveTab('phlebotomists')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -141,66 +195,58 @@ export function App() {
               <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
               <path d="M16 3.13a4 4 0 0 1 0 7.75" />
             </svg>
-            Phlebotomists
+            <span>Phlebotomists</span>
+            <span className="chevron-icon">▾</span>
           </li>
 
           <li
-            className={`nav-item ${activeTab === 'bookings' ? 'active' : ''}`}
-            onClick={() => setActiveTab('bookings')}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
-              <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
-            </svg>
-            Bookings
-          </li>
-
-          <li
-            className={`nav-item ${activeTab === 'samples' ? 'active' : ''}`}
+            className={`sidebar-nav-item ${activeTab === 'samples' ? 'active' : ''}`}
             onClick={() => setActiveTab('samples')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
+              <path d="M10 2v7.31M14 2v7.31M8.5 2h7M14 9.3a6.5 6.5 0 1 1-4 0" />
             </svg>
-            Samples
+            <span>Samples</span>
           </li>
 
           <li
-            className={`nav-item ${activeTab === 'reports' ? 'active' : ''}`}
+            className={`sidebar-nav-item ${activeTab === 'reports' ? 'active' : ''}`}
             onClick={() => setActiveTab('reports')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
               <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
             </svg>
-            Reports
+            <span>Reports</span>
           </li>
 
           <li
-            className={`nav-item ${activeTab === 'payments' ? 'active' : ''}`}
+            className={`sidebar-nav-item ${activeTab === 'payments' ? 'active' : ''}`}
             onClick={() => setActiveTab('payments')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
               <line x1="1" y1="10" x2="23" y2="10" />
             </svg>
-            Payments
+            <span>Payments & Settlements</span>
           </li>
 
           <li
-            className={`nav-item ${activeTab === 'commission' ? 'active' : ''}`}
+            className={`sidebar-nav-item ${activeTab === 'commission' ? 'active' : ''}`}
             onClick={() => setActiveTab('commission')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8" />
-              <path d="M12 18V6" />
+              <line x1="19" y1="5" x2="5" y2="19" />
+              <circle cx="6.5" cy="6.5" r="2.5" />
+              <circle cx="17.5" cy="17.5" r="2.5" />
             </svg>
-            Commission
+            <span>% Commissions</span>
           </li>
 
           <li
-            className={`nav-item ${activeTab === 'analytics' ? 'active' : ''}`}
+            className={`sidebar-nav-item ${activeTab === 'analytics' ? 'active' : ''}`}
             onClick={() => setActiveTab('analytics')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -208,237 +254,738 @@ export function App() {
               <line x1="12" y1="20" x2="12" y2="4" />
               <line x1="6" y1="20" x2="6" y2="14" />
             </svg>
-            Analytics
+            <span>Analytics</span>
           </li>
 
           <li
-            className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`}
-            style={{ marginTop: 'auto' }}
+            className={`sidebar-nav-item ${activeTab === 'master-data' ? 'active' : ''}`}
+            onClick={() => setActiveTab('master-data')}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <ellipse cx="12" cy="5" rx="9" ry="3" />
+              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+            </svg>
+            <span>Master Data</span>
+            <span className="chevron-icon">▾</span>
+          </li>
+
+          <li
+            className={`sidebar-nav-item ${activeTab === 'settings' ? 'active' : ''}`}
             onClick={() => setActiveTab('settings')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="3" />
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
             </svg>
-            Settings
+            <span>Settings</span>
           </li>
         </ul>
+
+        {/* Sidebar Footer Help Card */}
+        <div
+          className="sidebar-footer-card"
+          onClick={() => alert('LabSetu Admin 24x7 Support Desk opened.')}
+        >
+          <div className="sidebar-footer-icon">🎧</div>
+          <div>
+            <div className="sidebar-footer-title">Help & Support</div>
+            <div className="sidebar-footer-subtitle">Need assistance? We're here.</div>
+          </div>
+        </div>
       </aside>
 
-      {/* 2. Main Wrapper */}
+      {/* -------------------------------------------------------------
+       * 2. MAIN CONTENT AREA
+       * ------------------------------------------------------------- */}
       <div className="main-wrapper">
-        <header className="top-nav">
-          <div className="top-greeting">
-            <h2>Admin Dashboard</h2>
-            <p>Platform Operations Command Center</p>
+        {/* Top Navbar Header */}
+        <header className="top-navbar">
+          {/* Rounded Search Pill */}
+          <div className="top-search-pill">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="text"
+              placeholder="Search booking ID, lab, phlebotomist, patient, or sample..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
           </div>
 
-          <div className="top-actions">
-            <button className="icon-btn" aria-label="Notifications">
+          {/* Right Action Icons & Profile */}
+          <div className="top-nav-right">
+            {/* Notification Bell */}
+            <div className="nav-icon-circle" title="Notifications">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
                 <path d="M13.73 21a2 2 0 0 1-3.46 0" />
               </svg>
-            </button>
+              <span className="nav-alert-dot" />
+            </div>
 
-            <div className="user-pill">
-              <div className="user-avatar" style={{ background: '#0F766E' }}>A</div>
-              <span className="user-name">Platform Admin</span>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polyline points="6 9 12 15 18 9" />
+            {/* Help Question Icon */}
+            <div className="nav-icon-circle" title="Help / Documentation">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
               </svg>
+            </div>
+
+            {/* Admin User Profile */}
+            <div className="user-profile-badge">
+              <div className="user-photo-avatar">AD</div>
+              <div className="user-profile-info">
+                <span className="user-profile-name">Admin</span>
+                <span className="user-profile-role">Platform Owner</span>
+              </div>
             </div>
           </div>
         </header>
 
-        <main className="page-content">
-          {/* TAB 1: DASHBOARD */}
+        {/* Dashboard Content Container */}
+        <main className="dashboard-content">
+          {/* TAB 1: MAIN ADMIN DASHBOARD (MATCHING SCREENSHOT) */}
           {activeTab === 'dashboard' && (
             <>
-              {/* 4 Platform KPI Cards */}
-              <section className="kpi-row">
-                <div className="kpi-card">
-                  <div className="kpi-icon-box" style={{ background: '#EFF6FF', color: '#2563EB' }}>
+              {/* Page Title & Date Range Header */}
+              <div className="page-header-row">
+                <div className="page-title-group">
+                  <h1>Admin Dashboard</h1>
+                  <p>Welcome back! Here's the complete overview of your diagnostic network.</p>
+                </div>
+
+                <div
+                  className="date-range-pill"
+                  onClick={() => {
+                    const next = dateRange === 'Last 30 Days' ? 'Last 7 Days' : 'Last 30 Days';
+                    setDateRange(next);
+                  }}
+                >
+                  <span>📅</span>
+                  <span>{dateRange}</span>
+                  <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>▾</span>
+                </div>
+              </div>
+
+              {/* 5 KPI Metric Cards Row */}
+              <section className="kpi-5-row">
+                {/* 1. Total Bookings */}
+                <div className="kpi-card-modern">
+                  <div className="kpi-icon-box-mint">
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                      <line x1="16" y1="2" x2="16" y2="6" />
+                      <line x1="8" y1="2" x2="8" y2="6" />
+                      <line x1="3" y1="10" x2="21" y2="10" />
                     </svg>
                   </div>
-                  <div>
-                    <div className="kpi-val">124</div>
-                    <div className="kpi-label">Total Labs</div>
+                  <div className="kpi-body">
+                    <span className="kpi-title">Total Bookings</span>
+                    <span className="kpi-main-number">4,826</span>
+                    <span className="kpi-trend-text">
+                      ↑ +18.4% <span className="kpi-trend-muted">vs. previous 30 days</span>
+                    </span>
                   </div>
                 </div>
 
-                <div className="kpi-card">
-                  <div className="kpi-icon-box" style={{ background: '#FAF5FF', color: '#7E22CE' }}>
+                {/* 2. Total Samples */}
+                <div className="kpi-card-modern">
+                  <div className="kpi-icon-box-blue">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M10 2v7.31M14 2v7.31M8.5 2h7M14 9.3a6.5 6.5 0 1 1-4 0" />
+                    </svg>
+                  </div>
+                  <div className="kpi-body">
+                    <span className="kpi-title">Total Samples</span>
+                    <span className="kpi-main-number">4,692</span>
+                    <span className="kpi-trend-text">↑ +17.9%</span>
+                  </div>
+                </div>
+
+                {/* 3. Active Labs */}
+                <div className="kpi-card-modern">
+                  <div className="kpi-icon-box-indigo">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M3 21h18M3 7v14M21 7v14M6 11h4M6 15h4M14 11h4M14 15h4M9 3l3-2 3 2v4H9V3z" />
+                    </svg>
+                  </div>
+                  <div className="kpi-body">
+                    <span className="kpi-title">Active Labs</span>
+                    <span className="kpi-main-number">124</span>
+                    <span className="kpi-sub-split">98 Small &nbsp;|&nbsp; 26 Large</span>
+                  </div>
+                </div>
+
+                {/* 4. Active Phlebotomists */}
+                <div className="kpi-card-modern">
+                  <div className="kpi-icon-box-purple">
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
                       <circle cx="9" cy="7" r="4" />
+                      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
                     </svg>
                   </div>
-                  <div>
-                    <div className="kpi-val">312</div>
-                    <div className="kpi-label">Phlebotomists</div>
+                  <div className="kpi-body">
+                    <span className="kpi-title">Active Phlebotomists</span>
+                    <span className="kpi-main-number">312</span>
+                    <span className="kpi-trend-text">↑ +12.3%</span>
                   </div>
                 </div>
 
-                <div className="kpi-card">
-                  <div className="kpi-icon-box" style={{ background: '#FDF2F8', color: '#DB2777' }}>
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
-                      <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
-                    </svg>
+                {/* 5. Platform Revenue */}
+                <div className="kpi-card-modern">
+                  <div className="kpi-icon-box-mint">
+                    <span style={{ fontSize: '1.3rem', fontWeight: 800 }}>₹</span>
                   </div>
-                  <div>
-                    <div className="kpi-val">1,428</div>
-                    <div className="kpi-label">Total Bookings</div>
-                  </div>
-                </div>
-
-                <div className="kpi-card">
-                  <div className="kpi-icon-box" style={{ background: '#ECFDF5', color: '#16A34A' }}>
-                    <span style={{ fontSize: '1.3rem', fontWeight: 700 }}>₹</span>
-                  </div>
-                  <div>
-                    <div className="kpi-val">₹8,64,500</div>
-                    <div className="kpi-label">Revenue (MTD)</div>
+                  <div className="kpi-body">
+                    <span className="kpi-title">Platform Revenue</span>
+                    <span className="kpi-main-number">₹8,64,500</span>
+                    <span className="kpi-trend-text">↑ +21.8%</span>
                   </div>
                 </div>
               </section>
 
-              {/* Live Operations Dispatch Screen */}
-              <div className="surface-card">
-                <div className="card-header-flex">
-                  <h3 className="card-title">Live Operations</h3>
-                  <div className="ops-chips-bar">
-                    <span className="ops-chip ops-chip-blue">
-                      <span className="ops-dot" style={{ background: '#2563EB' }} />
-                      342 In Progress
-                    </span>
-                    <span className="ops-chip ops-chip-green">
-                      <span className="ops-dot" style={{ background: '#16A34A' }} />
-                      1,028 Completed
-                    </span>
-                    <span className="ops-chip ops-chip-red">
-                      <span className="ops-dot" style={{ background: '#DC2626' }} />
-                      58 Delayed
-                    </span>
+              {/* Middle Analytics Row (3 Columns) */}
+              <section className="analytics-3-row">
+                {/* 1. Bookings Trend Dual Line Chart */}
+                <div className="chart-card-modern">
+                  <div className="card-top-header">
+                    <span className="card-top-title">Bookings Trend</span>
+                    <div className="chart-legend-row">
+                      <span><span className="legend-dot-teal" /> Bookings</span>
+                      <span><span className="legend-dot-blue" /> Completed</span>
+                    </div>
+                  </div>
+
+                  <div style={{ height: '170px', position: 'relative' }}>
+                    <svg width="100%" height="100%" viewBox="0 0 460 170" preserveAspectRatio="none">
+                      {/* Grid Lines */}
+                      <line x1="30" y1="20" x2="450" y2="20" stroke="#F1F5F9" strokeWidth="1" />
+                      <line x1="30" y1="55" x2="450" y2="55" stroke="#F1F5F9" strokeWidth="1" />
+                      <line x1="30" y1="90" x2="450" y2="90" stroke="#F1F5F9" strokeWidth="1" />
+                      <line x1="30" y1="125" x2="450" y2="125" stroke="#F1F5F9" strokeWidth="1" />
+                      <line x1="30" y1="150" x2="450" y2="150" stroke="#E2E8F0" strokeWidth="1" />
+
+                      {/* Y-Axis Labels */}
+                      <text x="5" y="24" fontSize="10" fill="#94A3B8">300</text>
+                      <text x="5" y="59" fontSize="10" fill="#94A3B8">200</text>
+                      <text x="5" y="94" fontSize="10" fill="#94A3B8">100</text>
+                      <text x="5" y="129" fontSize="10" fill="#94A3B8">50</text>
+                      <text x="12" y="153" fontSize="10" fill="#94A3B8">0</text>
+
+                      {/* Bookings Line (Teal) */}
+                      <path
+                        d="M 35 125 C 70 115 110 80 150 95 C 190 110 230 85 270 90 C 310 95 350 70 390 65 L 435 50"
+                        fill="none"
+                        stroke="#0D9488"
+                        strokeWidth="2.5"
+                      />
+                      <circle cx="35" cy="125" r="3.5" fill="#0D9488" />
+                      <circle cx="150" cy="95" r="3.5" fill="#0D9488" />
+                      <circle cx="270" cy="90" r="3.5" fill="#0D9488" />
+                      <circle cx="390" cy="65" r="3.5" fill="#0D9488" />
+                      <circle cx="435" cy="50" r="3.5" fill="#0D9488" />
+
+                      {/* Completed Line (Blue) */}
+                      <path
+                        d="M 35 140 C 70 130 110 100 150 115 C 190 130 230 105 270 110 C 310 115 350 90 390 85 L 435 68"
+                        fill="none"
+                        stroke="#2563EB"
+                        strokeWidth="2.5"
+                      />
+                      <circle cx="35" cy="140" r="3.5" fill="#2563EB" />
+                      <circle cx="150" cy="115" r="3.5" fill="#2563EB" />
+                      <circle cx="270" cy="110" r="3.5" fill="#2563EB" />
+                      <circle cx="390" cy="85" r="3.5" fill="#2563EB" />
+                      <circle cx="435" cy="68" r="3.5" fill="#2563EB" />
+                    </svg>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '30px', fontSize: '10px', color: '#94A3B8', marginTop: '6px' }}>
+                    <span>1 Jan</span>
+                    <span>4 Jan</span>
+                    <span>7 Jan</span>
+                    <span>10 Jan</span>
+                    <span>13 Jan</span>
+                    <span>16 Jan</span>
+                    <span>19 Jan</span>
+                    <span>22 Jan</span>
+                    <span>25 Jan</span>
+                    <span>28 Jan</span>
                   </div>
                 </div>
 
-                {/* Interactive Live Route Network SVG Canvas */}
-                <div
-                  style={{
-                    background: '#F8FAFC',
-                    border: '1px solid #E2E8F0',
-                    borderRadius: '12px',
-                    height: '320px',
-                    position: 'relative',
-                    overflow: 'hidden',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
+                {/* 2. Booking Status Donut Chart */}
+                <div className="chart-card-modern">
+                  <div className="card-top-header">
+                    <span className="card-top-title">Booking Status</span>
+                  </div>
+
+                  <div className="donut-chart-layout">
+                    {/* SVG Donut */}
+                    <div className="donut-svg-wrap">
+                      <svg width="120" height="120" viewBox="0 0 120 120">
+                        {/* Background ring */}
+                        <circle cx="60" cy="60" r="48" fill="none" stroke="#F1F5F9" strokeWidth="18" />
+                        {/* Green slice (82.5%) */}
+                        <circle
+                          cx="60"
+                          cy="60"
+                          r="48"
+                          fill="none"
+                          stroke="#10B981"
+                          strokeWidth="18"
+                          strokeDasharray="248 301"
+                          strokeDashoffset="75"
+                        />
+                        {/* Blue slice (10.1%) */}
+                        <circle
+                          cx="60"
+                          cy="60"
+                          r="48"
+                          fill="none"
+                          stroke="#2563EB"
+                          strokeWidth="18"
+                          strokeDasharray="30 301"
+                          strokeDashoffset="-173"
+                        />
+                        {/* Amber slice (4.4%) */}
+                        <circle
+                          cx="60"
+                          cy="60"
+                          r="48"
+                          fill="none"
+                          stroke="#F59E0B"
+                          strokeWidth="18"
+                          strokeDasharray="14 301"
+                          strokeDashoffset="-203"
+                        />
+                        {/* Red slice (1.9%) */}
+                        <circle
+                          cx="60"
+                          cy="60"
+                          r="48"
+                          fill="none"
+                          stroke="#EF4444"
+                          strokeWidth="18"
+                          strokeDasharray="6 301"
+                          strokeDashoffset="-217"
+                        />
+                      </svg>
+                      <div className="donut-center-label">
+                        <div className="donut-center-number">4,826</div>
+                        <div className="donut-center-sub">Total</div>
+                      </div>
+                    </div>
+
+                    {/* Donut Legend List */}
+                    <div className="donut-legend-list">
+                      <div className="donut-legend-item">
+                        <span className="donut-label-group">
+                          <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10B981', display: 'inline-block' }} />
+                          Completed
+                        </span>
+                        <span className="donut-val-group">
+                          3,982 <span className="donut-pct-text">82.5%</span>
+                        </span>
+                      </div>
+
+                      <div className="donut-legend-item">
+                        <span className="donut-label-group">
+                          <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#2563EB', display: 'inline-block' }} />
+                          In Progress
+                        </span>
+                        <span className="donut-val-group">
+                          486 <span className="donut-pct-text">10.1%</span>
+                        </span>
+                      </div>
+
+                      <div className="donut-legend-item">
+                        <span className="donut-label-group">
+                          <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#F59E0B', display: 'inline-block' }} />
+                          Assigned
+                        </span>
+                        <span className="donut-val-group">
+                          214 <span className="donut-pct-text">4.4%</span>
+                        </span>
+                      </div>
+
+                      <div className="donut-legend-item">
+                        <span className="donut-label-group">
+                          <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#EF4444', display: 'inline-block' }} />
+                          Delayed
+                        </span>
+                        <span className="donut-val-group">
+                          92 <span className="donut-pct-text">1.9%</span>
+                        </span>
+                      </div>
+
+                      <div className="donut-legend-item">
+                        <span className="donut-label-group">
+                          <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#94A3B8', display: 'inline-block' }} />
+                          Cancelled
+                        </span>
+                        <span className="donut-val-group">
+                          52 <span className="donut-pct-text">1.1%</span>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Live Operations Card */}
+                <div className="chart-card-modern">
+                  <div className="card-top-header">
+                    <span className="card-top-title">Live Operations</span>
+                  </div>
+
+                  <div className="live-ops-split">
+                    {/* Mini SVG Radar Map */}
+                    <div className="mini-map-canvas">
+                      <svg width="100%" height="100%" viewBox="0 0 180 160" preserveAspectRatio="none">
+                        {/* City road vectors */}
+                        <path d="M 10 30 L 170 30 M 10 70 L 170 70 M 10 110 L 170 110 M 10 145 L 170 145" stroke="#E2E8F0" strokeWidth="1.5" />
+                        <path d="M 40 10 L 40 150 M 90 10 L 90 150 M 140 10 L 140 150" stroke="#E2E8F0" strokeWidth="1.5" />
+                        <path d="M 30 130 Q 90 100 135 60" fill="none" stroke="#0D9488" strokeWidth="2.5" strokeDasharray="4 3" />
+
+                        {/* Pulsing Radar Hub */}
+                        <circle cx="90" cy="70" r="18" fill="#2563EB" fillOpacity="0.15" />
+                        <circle cx="90" cy="70" r="9" fill="#2563EB" />
+                        <circle cx="90" cy="70" r="4" fill="#FFFFFF" />
+
+                        {/* Courier Markers */}
+                        <circle cx="40" cy="110" r="5" fill="#10B981" />
+                        <circle cx="140" cy="40" r="5" fill="#10B981" />
+                        <circle cx="135" cy="60" r="5" fill="#10B981" />
+                        <circle cx="50" cy="30" r="5" fill="#10B981" />
+                      </svg>
+                    </div>
+
+                    {/* Metrics List */}
+                    <div className="live-ops-metrics-list">
+                      <div className="ops-metric-item">
+                        <div className="ops-icon-circle" style={{ background: '#EFF6FF', color: '#2563EB' }}>👤</div>
+                        <div>
+                          <div className="ops-metric-val">312</div>
+                          <div className="ops-metric-label">Online Phlebotomists</div>
+                        </div>
+                      </div>
+
+                      <div className="ops-metric-item">
+                        <div className="ops-icon-circle" style={{ background: '#ECFDF5', color: '#059669' }}>📦</div>
+                        <div>
+                          <div className="ops-metric-val">486</div>
+                          <div className="ops-metric-label">Active Pickups</div>
+                        </div>
+                      </div>
+
+                      <div className="ops-metric-item">
+                        <div className="ops-icon-circle" style={{ background: '#FEF3C7', color: '#D97706' }}>⚠️</div>
+                        <div>
+                          <div className="ops-metric-val">214</div>
+                          <div className="ops-metric-label">In Transit</div>
+                        </div>
+                      </div>
+
+                      <div className="ops-metric-item">
+                        <div className="ops-icon-circle" style={{ background: '#ECFDF5', color: '#16A34A' }}>✅</div>
+                        <div>
+                          <div className="ops-metric-val">3,982</div>
+                          <div className="ops-metric-label">Completed Today</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {/* Quick Actions Shortcuts Bar (6 Cards) */}
+              <section className="quick-actions-bar">
+                <button
+                  type="button"
+                  className="action-card-btn"
+                  onClick={() => setQuickActionModal('Verify Lab')}
                 >
-                  <svg width="100%" height="100%" viewBox="0 0 800 320" preserveAspectRatio="none">
-                    <path d="M 50 80 L 750 80 M 50 160 L 750 160 M 50 240 L 750 240 M 150 20 L 150 300 M 300 20 L 300 300 M 450 20 L 450 300 M 600 20 L 600 300" stroke="#E2E8F0" strokeWidth="1.5" />
-                    <path d="M 150 160 Q 250 80 400 120 T 650 200" fill="none" stroke="#0D9488" strokeWidth="3" strokeDasharray="6 4" />
-                    <path d="M 220 240 Q 320 200 480 180 T 700 90" fill="none" stroke="#2563EB" strokeWidth="3" strokeDasharray="6 4" />
-                    <circle cx="150" cy="160" r="9" fill="#0D9488" />
-                    <circle cx="220" cy="240" r="9" fill="#0D9488" />
-                    <circle cx="320" cy="100" r="11" fill="#2563EB" cursor="pointer" />
-                    <circle cx="320" cy="100" r="20" fill="#2563EB" fillOpacity="0.25" />
-                    <circle cx="480" cy="180" r="11" fill="#2563EB" cursor="pointer" />
-                    <circle cx="480" cy="180" r="20" fill="#2563EB" fillOpacity="0.25" />
-                    <circle cx="650" cy="200" r="14" fill="#0F766E" />
-                    <circle cx="700" cy="90" r="14" fill="#0F766E" />
-                  </svg>
+                  <span className="action-btn-icon">🔬</span>
+                  <span className="action-btn-text">Verify Lab</span>
+                </button>
 
-                  <div
-                    style={{
-                      position: 'absolute',
-                      bottom: '16px',
-                      left: '16px',
-                      background: 'rgba(255, 255, 255, 0.95)',
-                      padding: '10px 14px',
-                      borderRadius: '8px',
-                      boxShadow: '0 2px 6px rgba(0,0,0,0.08)',
-                      fontSize: '0.825rem',
-                      display: 'flex',
-                      gap: '16px',
-                    }}
-                  >
-                    <div>● <strong>Teal:</strong> Small Lab Collection Centers</div>
-                    <div>● <strong>Blue:</strong> Phlebotomists In Transit</div>
-                    <div>● <strong>Dark Teal:</strong> Partner Testing Hubs</div>
+                <button
+                  type="button"
+                  className="action-card-btn"
+                  onClick={() => setQuickActionModal('Verify Phlebotomist')}
+                >
+                  <span className="action-btn-icon">👤+</span>
+                  <span className="action-btn-text">Verify Phlebotomist</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="action-card-btn"
+                  onClick={() => setQuickActionModal('Assign Booking')}
+                >
+                  <span className="action-btn-icon">📅+</span>
+                  <span className="action-btn-text">Assign Booking</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="action-card-btn"
+                  onClick={() => setQuickActionModal('Track Sample')}
+                >
+                  <span className="action-btn-icon">📍</span>
+                  <span className="action-btn-text">Track Sample</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="action-card-btn"
+                  onClick={() => setQuickActionModal('Reconciliation')}
+                >
+                  <span className="action-btn-icon">₹</span>
+                  <span className="action-btn-text">Reconciliation</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="action-card-btn"
+                  onClick={() => setQuickActionModal('Download Reports')}
+                >
+                  <span className="action-btn-icon">📥</span>
+                  <span className="action-btn-text">Download Reports</span>
+                </button>
+              </section>
+
+              {/* Bottom Row (3 Columns: Recent Bookings, Network Overview, Today's Highlights) */}
+              <section className="bottom-3-row">
+                {/* 1. Recent Bookings Table */}
+                <div className="chart-card-modern">
+                  <div className="card-top-header">
+                    <span className="card-top-title">Recent Bookings</span>
+                    <button
+                      type="button"
+                      style={{ background: 'none', border: 'none', color: '#2563EB', fontWeight: 600, fontSize: '0.825rem', cursor: 'pointer' }}
+                      onClick={() => setActiveTab('bookings')}
+                    >
+                      View All →
+                    </button>
+                  </div>
+
+                  <div className="data-table-container">
+                    <table className="modern-data-table">
+                      <thead>
+                        <tr>
+                          <th>Booking ID</th>
+                          <th>Lab (Source)</th>
+                          <th>Test(s)</th>
+                          <th>Phlebotomist</th>
+                          <th>Status</th>
+                          <th>Time</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {RECENT_BOOKINGS.map((row) => (
+                          <tr key={row.id}>
+                            <td><strong>{row.id}</strong></td>
+                            <td>{row.lab}</td>
+                            <td style={{ color: '#64748B' }}>{row.tests}</td>
+                            <td>{row.phlebo}</td>
+                            <td>
+                              <span className={row.statusClass}>
+                                {row.status}
+                              </span>
+                            </td>
+                            <td style={{ color: '#64748B' }}>{row.time}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
 
-                {/* Courier Dispatch Table */}
-                <div style={{ marginTop: '24px' }}>
-                  <h4 style={{ margin: '0 0 12px 0', fontSize: '0.95rem', color: '#0F172A' }}>
-                    Active Couriers & Cold-Chain Telemetry
-                  </h4>
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Courier ID</th>
-                        <th>Name</th>
-                        <th>Phone</th>
-                        <th>Active Pickups</th>
-                        <th>GPS Telemetry</th>
-                        <th>Cooler Box Temp</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {ACTIVE_COURIERS.map((c) => (
-                        <tr key={c.id}>
-                          <td><strong>{c.id}</strong></td>
-                          <td>{c.name}</td>
-                          <td>{c.phone}</td>
-                          <td>{c.activeOrders} Batches</td>
-                          <td>{c.currentLocation} (Battery: {c.battery})</td>
-                          <td>
-                            <span style={{ color: '#16A34A', fontWeight: 600 }}>
-                              {c.tempStatus}
-                            </span>
-                          </td>
-                          <td>
-                            <button
-                              className="btn-secondary"
-                              style={{ padding: '4px 10px', fontSize: '0.8rem' }}
-                              onClick={() => setSelectedCourier(c)}
-                            >
-                              View Telemetry
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                {/* 2. Network Overview */}
+                <div className="chart-card-modern">
+                  <div className="card-top-header">
+                    <span className="card-top-title">Network Overview</span>
+                  </div>
+
+                  <div>
+                    <div className="network-list-item">
+                      <span className="network-item-label">
+                        <span>🏢</span> Small Labs
+                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center' }}>
+                        <span className="network-item-number">98</span>
+                        <span className="growth-pill-green">↑ +6</span>
+                      </div>
+                    </div>
+
+                    <div className="network-list-item">
+                      <span className="network-item-label">
+                        <span>🏥</span> Large Partner Labs
+                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center' }}>
+                        <span className="network-item-number">26</span>
+                        <span className="growth-pill-green">↑ +2</span>
+                      </div>
+                    </div>
+
+                    <div className="network-list-item">
+                      <span className="network-item-label">
+                        <span>👥</span> Phlebotomists
+                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center' }}>
+                        <span className="network-item-number">312</span>
+                        <span className="growth-pill-green">↑ +34</span>
+                      </div>
+                    </div>
+
+                    <div className="network-list-item">
+                      <span className="network-item-label">
+                        <span>📍</span> Service Locations
+                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center' }}>
+                        <span className="network-item-number">48</span>
+                        <span className="growth-pill-green">↑ +4</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
+
+                {/* 3. Today's Highlights */}
+                <div className="chart-card-modern">
+                  <div className="card-top-header">
+                    <span className="card-top-title">Today's Highlights</span>
+                  </div>
+
+                  <div>
+                    <div className="highlight-row-item">
+                      <div className="highlight-icon-circle" style={{ background: '#ECFDF5', color: '#16A34A' }}>✓</div>
+                      <div>
+                        <span className="highlight-metric-val">680</span>
+                        <span className="highlight-metric-desc">Bookings Completed</span>
+                      </div>
+                    </div>
+
+                    <div className="highlight-row-item">
+                      <div className="highlight-icon-circle" style={{ background: '#ECFDF5', color: '#059669' }}>₹</div>
+                      <div>
+                        <span className="highlight-metric-val">₹1,52,300</span>
+                        <span className="highlight-metric-desc">Revenue (Today)</span>
+                      </div>
+                    </div>
+
+                    <div className="highlight-row-item">
+                      <div className="highlight-icon-circle" style={{ background: '#EFF6FF', color: '#2563EB' }}>🧪</div>
+                      <div>
+                        <span className="highlight-metric-val">702</span>
+                        <span className="highlight-metric-desc">Samples Processed</span>
+                      </div>
+                    </div>
+
+                    <div className="highlight-row-item">
+                      <div className="highlight-icon-circle" style={{ background: '#FEF3C7', color: '#D97706' }}>🚚</div>
+                      <div>
+                        <span className="highlight-metric-val">214</span>
+                        <span className="highlight-metric-desc">Samples In Transit</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
             </>
           )}
 
-          {/* TAB 2: LABS DIRECTORY */}
-          {activeTab === 'labs' && (
-            <div className="surface-card">
-              <div className="card-header-flex">
+          {/* TAB 2: BOOKINGS MASTER LEDGER */}
+          {activeTab === 'bookings' && (
+            <div className="chart-card-modern">
+              <div className="card-top-header">
                 <div>
-                  <h3 className="card-title">Network Labs Directory</h3>
-                  <p style={{ fontSize: '0.825rem', color: '#64748B', marginTop: '2px' }}>
-                    Small collection centers and partner reference testing laboratories
+                  <h2 className="card-top-title">Global Bookings Master Ledger</h2>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '2px' }}>
+                    Real-time status of all patient specimen pickups across metropolitan hubs
                   </p>
                 </div>
-                <button className="btn-primary" onClick={() => alert('Onboard new laboratory wizard opened.')}>
-                  + Onboard New Lab
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => alert('Exporting all bookings to CSV...')}
+                >
+                  Export CSV
                 </button>
               </div>
 
               <div className="data-table-container">
-                <table className="data-table">
+                <table className="modern-data-table">
+                  <thead>
+                    <tr>
+                      <th>Booking ID</th>
+                      <th>Collection Center</th>
+                      <th>Target Hub</th>
+                      <th>Phlebotomist</th>
+                      <th>Tests</th>
+                      <th>Scheduled Slot</th>
+                      <th>Priority</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {RECENT_BOOKINGS.map((b) => (
+                      <tr key={b.id}>
+                        <td><strong>{b.id}</strong></td>
+                        <td>{b.lab}</td>
+                        <td>Metro Diagnostics Core Lab</td>
+                        <td>{b.phlebo}</td>
+                        <td style={{ color: '#64748B' }}>{b.tests}</td>
+                        <td>{b.time}</td>
+                        <td>
+                          <span style={{ fontWeight: 700, color: '#2563EB' }}>Routine</span>
+                        </td>
+                        <td>
+                          <span className={b.statusClass}>{b.status}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: LABS & PARTNERS */}
+          {(activeTab === 'labs' || activeTab === 'labs-small' || activeTab === 'labs-large' || activeTab === 'labs-verify') && (
+            <div className="chart-card-modern">
+              <div className="card-top-header">
+                <div>
+                  <h2 className="card-top-title">
+                    {activeTab === 'labs-small'
+                      ? 'Small Lab Collection Centers (98)'
+                      : activeTab === 'labs-large'
+                      ? 'Large Partner Reference Labs (26)'
+                      : activeTab === 'labs-verify'
+                      ? 'Pending Lab Verifications (8)'
+                      : 'All Laboratories & Testing Partners'}
+                  </h2>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '2px' }}>
+                    Accredited diagnostic facilities connected to cold-chain logistics routing
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => alert('Onboard laboratory modal opened.')}
+                >
+                  + Onboard Lab
+                </button>
+              </div>
+
+              <div className="data-table-container">
+                <table className="modern-data-table">
                   <thead>
                     <tr>
                       <th>Lab ID</th>
@@ -447,7 +994,8 @@ export function App() {
                       <th>City Hub</th>
                       <th>Monthly Samples</th>
                       <th>Accreditation</th>
-                      <th>Status</th>
+                      <th>Verification Status</th>
+                      <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -458,64 +1006,19 @@ export function App() {
                         <td>{lab.type}</td>
                         <td>{lab.city}</td>
                         <td><strong>{lab.ordersMTD}</strong></td>
-                        <td><span style={{ background: '#F1F5F9', padding: '3px 8px', borderRadius: '4px', fontSize: '0.8rem' }}>{lab.nabl}</span></td>
-                        <td><span className="status-pill status-sample-picked">● {lab.status}</span></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 3: PHLEBOTOMISTS FLEET */}
-          {activeTab === 'phlebotomists' && (
-            <div className="surface-card">
-              <div className="card-header-flex">
-                <div>
-                  <h3 className="card-title">Phlebotomist Fleet Directory</h3>
-                  <p style={{ fontSize: '0.825rem', color: '#64748B', marginTop: '2px' }}>
-                    Field logistics crew, active cooler containers, and live shift status
-                  </p>
-                </div>
-                <button className="btn-primary" onClick={() => alert('Add phlebotomist modal')}>
-                  + Add Phlebotomist
-                </button>
-              </div>
-
-              <div className="data-table-container">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Name</th>
-                      <th>Contact</th>
-                      <th>Shift Status</th>
-                      <th>Assigned Pickups</th>
-                      <th>Battery</th>
-                      <th>Rating</th>
-                      <th>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ACTIVE_COURIERS.map((phlebo) => (
-                      <tr key={phlebo.id}>
-                        <td><strong>{phlebo.id}</strong></td>
-                        <td>{phlebo.name}</td>
-                        <td>{phlebo.phone}</td>
                         <td>
-                          <span className={`status-pill ${phlebo.status === 'Online' ? 'status-sample-picked' : 'status-delayed'}`}>
-                            ● {phlebo.status}
+                          <span style={{ background: '#F1F5F9', padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem' }}>
+                            {lab.nabl}
                           </span>
                         </td>
-                        <td>{phlebo.activeOrders} active</td>
-                        <td>{phlebo.battery}</td>
-                        <td><span style={{ fontWeight: 600, color: '#D97706' }}>{phlebo.rating}</span></td>
+                        <td>
+                          <span className="status-pill-green">● {lab.status}</span>
+                        </td>
                         <td>
                           <button
+                            type="button"
                             className="btn-secondary"
-                            style={{ padding: '4px 10px', fontSize: '0.8rem' }}
-                            onClick={() => setSelectedCourier(phlebo)}
+                            onClick={() => alert(`Inspecting audit profile for ${lab.name}`)}
                           >
                             Inspect
                           </button>
@@ -528,85 +1031,96 @@ export function App() {
             </div>
           )}
 
-          {/* TAB 4: GLOBAL BOOKINGS */}
-          {activeTab === 'bookings' && (
-            <div className="surface-card">
-              <div className="card-header-flex">
+          {/* TAB 4: PHLEBOTOMISTS FLEET */}
+          {activeTab === 'phlebotomists' && (
+            <div className="chart-card-modern">
+              <div className="card-top-header">
                 <div>
-                  <h3 className="card-title">Global Platform Bookings Ledger</h3>
-                  <p style={{ fontSize: '0.825rem', color: '#64748B', marginTop: '2px' }}>
-                    Real-time status of all diagnostic orders across the metropolitan network
+                  <h2 className="card-top-title">Active Phlebotomist Fleet (312)</h2>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '2px' }}>
+                    Certified cold-chain sample couriers, battery status, and telemetry tracking
                   </p>
                 </div>
-                <input
-                  type="text"
-                  placeholder="Filter bookings..."
-                  className="form-input"
-                  style={{ width: '220px', padding: '6px 12px' }}
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => alert('Register phlebotomist modal opened.')}
+                >
+                  + Add Phlebotomist
+                </button>
               </div>
 
               <div className="data-table-container">
-                <table className="data-table">
+                <table className="modern-data-table">
                   <thead>
                     <tr>
-                      <th>Booking ID</th>
-                      <th>Collection Center</th>
-                      <th>Target Hub</th>
-                      <th>Phlebotomist</th>
-                      <th>Tests</th>
-                      <th>Priority</th>
-                      <th>Status</th>
+                      <th>ID</th>
+                      <th>Name</th>
+                      <th>Contact</th>
+                      <th>Shift Status</th>
+                      <th>Active Pickups</th>
+                      <th>Battery</th>
+                      <th>Chiller Temp</th>
+                      <th>Rating</th>
+                      <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {MOCK_GLOBAL_BOOKINGS
-                      .filter((b) => b.id.toLowerCase().includes(searchQuery.toLowerCase()) || b.origin.toLowerCase().includes(searchQuery.toLowerCase()))
-                      .map((b) => (
-                        <tr key={b.id}>
-                          <td><strong>{b.id}</strong></td>
-                          <td>{b.origin}</td>
-                          <td>{b.target}</td>
-                          <td>{b.phlebo}</td>
-                          <td>{b.tests}</td>
-                          <td>
-                            <span style={{ color: b.priority === 'STAT' ? '#DC2626' : b.priority === 'Urgent' ? '#D97706' : '#2563EB', fontWeight: 700 }}>
-                              {b.priority}
-                            </span>
-                          </td>
-                          <td>
-                            <span className="status-pill status-in-transit">● {b.status}</span>
-                          </td>
-                        </tr>
-                      ))}
+                    {ACTIVE_COURIERS.map((phlebo) => (
+                      <tr key={phlebo.id}>
+                        <td><strong>{phlebo.id}</strong></td>
+                        <td>{phlebo.name}</td>
+                        <td style={{ color: '#64748B' }}>{phlebo.phone}</td>
+                        <td>
+                          <span className={phlebo.status === 'Online' ? 'status-pill-green' : 'status-pill-red'}>
+                            ● {phlebo.status}
+                          </span>
+                        </td>
+                        <td>{phlebo.activeOrders} active</td>
+                        <td>{phlebo.battery}</td>
+                        <td>
+                          <span style={{ color: '#10B981', fontWeight: 600 }}>{phlebo.tempStatus}</span>
+                        </td>
+                        <td>
+                          <span style={{ fontWeight: 700, color: '#D97706' }}>{phlebo.rating}</span>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => setSelectedCourier(phlebo)}
+                          >
+                            View Telemetry
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
             </div>
           )}
 
-          {/* TAB 5: SAMPLES & CHAIN OF CUSTODY */}
+          {/* TAB 5: SAMPLES & COLD CHAIN */}
           {activeTab === 'samples' && (
-            <div className="surface-card">
-              <div className="card-header-flex">
+            <div className="chart-card-modern">
+              <div className="card-top-header">
                 <div>
-                  <h3 className="card-title">Specimen Chain-of-Custody Audit</h3>
-                  <p style={{ fontSize: '0.825rem', color: '#64748B', marginTop: '2px' }}>
-                    Immutable telemetry audit: Barcode scans, custody handovers, and temperature compliance
+                  <h2 className="card-top-title">Specimen Chain-of-Custody & Cold-Chain Telemetry</h2>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '2px' }}>
+                    Immutable barcode scans, handover timestamps, and real-time cooler box data
                   </p>
                 </div>
               </div>
 
               <div className="data-table-container">
-                <table className="data-table">
+                <table className="modern-data-table">
                   <thead>
                     <tr>
-                      <th>Barcode</th>
+                      <th>Barcode ID</th>
                       <th>Associated Booking</th>
                       <th>Specimen / Tube</th>
-                      <th>Logged Temperature</th>
+                      <th>Logged Temp</th>
                       <th>Cold-Chain Compliance</th>
                       <th>Last Handover Operator</th>
                     </tr>
@@ -617,7 +1131,7 @@ export function App() {
                       <td>BK-10456</td>
                       <td>EDTA Lavender (Blood)</td>
                       <td>4.2°C</td>
-                      <td><span className="status-pill status-sample-picked">✓ Compliant (2°C - 8°C)</span></td>
+                      <td><span className="status-pill-green">✓ Compliant (2°C - 8°C)</span></td>
                       <td>Rahul Yadav (PHL-204)</td>
                     </tr>
                     <tr>
@@ -625,7 +1139,7 @@ export function App() {
                       <td>BK-10456</td>
                       <td>Serum Red/Gold (Serum)</td>
                       <td>4.3°C</td>
-                      <td><span className="status-pill status-sample-picked">✓ Compliant (2°C - 8°C)</span></td>
+                      <td><span className="status-pill-green">✓ Compliant (2°C - 8°C)</span></td>
                       <td>Rahul Yadav (PHL-204)</td>
                     </tr>
                     <tr>
@@ -633,8 +1147,8 @@ export function App() {
                       <td>BK-10455</td>
                       <td>Serum Red/Gold</td>
                       <td>4.5°C</td>
-                      <td><span className="status-pill status-sample-picked">✓ Compliant (2°C - 8°C)</span></td>
-                      <td>Rahul Yadav (PHL-204)</td>
+                      <td><span className="status-pill-green">✓ Compliant (2°C - 8°C)</span></td>
+                      <td>Priya Desai (PHL-188)</td>
                     </tr>
                   </tbody>
                 </table>
@@ -644,14 +1158,18 @@ export function App() {
 
           {/* TAB 6: REPORTS AUDIT */}
           {activeTab === 'reports' && (
-            <div className="surface-card">
-              <h3 className="card-title">Diagnostic Reports Archive & Audit Trail</h3>
-              <p style={{ fontSize: '0.825rem', color: '#64748B', marginTop: '2px' }}>
-                All completed PDF diagnostic test results uploaded by partner reference laboratories
-              </p>
+            <div className="chart-card-modern">
+              <div className="card-top-header">
+                <div>
+                  <h2 className="card-top-title">Diagnostic Reports Archive & Audit Trail</h2>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '2px' }}>
+                    All completed PDF diagnostic test results uploaded by partner reference laboratories
+                  </p>
+                </div>
+              </div>
 
-              <div className="data-table-container" style={{ marginTop: '16px' }}>
-                <table className="data-table">
+              <div className="data-table-container">
+                <table className="modern-data-table">
                   <thead>
                     <tr>
                       <th>Report ID</th>
@@ -660,7 +1178,7 @@ export function App() {
                       <th>Collection Center</th>
                       <th>Turnaround Duration</th>
                       <th>Verification Date</th>
-                      <th>File Size</th>
+                      <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -671,16 +1189,15 @@ export function App() {
                       <td>Bhandup Care Lab</td>
                       <td>3 hours 45 mins</td>
                       <td>Today, 11:15 AM</td>
-                      <td>420 KB (Signed PDF)</td>
-                    </tr>
-                    <tr>
-                      <td><strong style={{ color: '#0D9488' }}>RPT-10450</strong></td>
-                      <td>BK-10450</td>
-                      <td>Apex Reference Testing</td>
-                      <td>City Health Lab</td>
-                      <td>4 hours 10 mins</td>
-                      <td>Yesterday</td>
-                      <td>512 KB (Signed PDF)</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          onClick={() => alert('Downloading verified PDF report...')}
+                        >
+                          📄 Download PDF
+                        </button>
+                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -690,50 +1207,58 @@ export function App() {
 
           {/* TAB 7: PAYMENTS & SETTLEMENTS */}
           {activeTab === 'payments' && (
-            <div className="surface-card">
-              <h3 className="card-title">Platform Payment Gateway & Settlements</h3>
-              <p style={{ fontSize: '0.825rem', color: '#64748B', marginTop: '2px' }}>
-                Automated splits between collection centers, phlebotomists, and reference testing centers
-              </p>
+            <div className="chart-card-modern">
+              <div className="card-top-header">
+                <div>
+                  <h2 className="card-top-title">Platform Payment Gateway & Settlements</h2>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '2px' }}>
+                    Automated splits between collection centers, phlebotomists, and reference testing centers
+                  </p>
+                </div>
+              </div>
 
-              <div className="kpi-row" style={{ marginTop: '20px' }}>
-                <div className="kpi-card">
-                  <div>
-                    <div className="kpi-val">₹8,64,500</div>
-                    <div className="kpi-label">Gross Platform GMV</div>
+              <div className="kpi-5-row" style={{ marginTop: '16px' }}>
+                <div className="kpi-card-modern">
+                  <div className="kpi-body">
+                    <span className="kpi-title">Gross Platform GMV</span>
+                    <span className="kpi-main-number">₹8,64,500</span>
                   </div>
                 </div>
-                <div className="kpi-card">
-                  <div>
-                    <div className="kpi-val">₹1,29,675</div>
-                    <div className="kpi-label">Platform Take Rate (15%)</div>
+                <div className="kpi-card-modern">
+                  <div className="kpi-body">
+                    <span className="kpi-title">Platform Take Rate (15%)</span>
+                    <span className="kpi-main-number">₹1,29,675</span>
                   </div>
                 </div>
-                <div className="kpi-card">
-                  <div>
-                    <div className="kpi-val">₹5,18,700</div>
-                    <div className="kpi-label">Lab Payouts</div>
+                <div className="kpi-card-modern">
+                  <div className="kpi-body">
+                    <span className="kpi-title">Lab Payouts</span>
+                    <span className="kpi-main-number">₹5,18,700</span>
                   </div>
                 </div>
-                <div className="kpi-card">
-                  <div>
-                    <div className="kpi-val">₹2,16,125</div>
-                    <div className="kpi-label">Phlebotomist Courier Payouts</div>
+                <div className="kpi-card-modern">
+                  <div className="kpi-body">
+                    <span className="kpi-title">Courier Payouts</span>
+                    <span className="kpi-main-number">₹2,16,125</span>
                   </div>
                 </div>
               </div>
             </div>
           )}
 
-          {/* TAB 8: COMMISSION */}
+          {/* TAB 8: COMMISSION SPLIT */}
           {activeTab === 'commission' && (
-            <div className="surface-card" style={{ maxWidth: '640px' }}>
-              <h3 className="card-title">Platform Commission & Split Rules</h3>
-              <p style={{ fontSize: '0.85rem', color: '#64748B', marginTop: '4px' }}>
-                Default transaction split across all routine and urgent bookings
-              </p>
+            <div className="chart-card-modern" style={{ maxWidth: '640px' }}>
+              <div className="card-top-header">
+                <div>
+                  <h2 className="card-top-title">Platform Commission & Split Rules</h2>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '2px' }}>
+                    Default transaction split across routine and urgent bookings
+                  </p>
+                </div>
+              </div>
 
-              <div style={{ marginTop: '20px' }}>
+              <div style={{ marginTop: '16px' }}>
                 <div className="form-group">
                   <label className="form-label">Platform Commission Fee (%)</label>
                   <input type="number" className="form-input" defaultValue={15} />
@@ -746,7 +1271,11 @@ export function App() {
                   <label className="form-label">Urgent / STAT Priority Surcharge (₹)</label>
                   <input type="number" className="form-input" defaultValue={150} />
                 </div>
-                <button className="btn-primary" onClick={() => alert('Commission configuration updated.')}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => alert('Commission rules updated.')}
+                >
                   Update Split Rules
                 </button>
               </div>
@@ -755,29 +1284,37 @@ export function App() {
 
           {/* TAB 9: ANALYTICS */}
           {activeTab === 'analytics' && (
-            <div className="surface-card">
-              <h3 className="card-title">Platform Performance & Volume Analytics</h3>
-              <p style={{ fontSize: '0.825rem', color: '#64748B', marginTop: '2px' }}>
-                Logistics network latency, courier density, and SLA performance
-              </p>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', margin: '20px 0' }}>
-                <div style={{ background: '#F8FAFC', padding: '16px', borderRadius: '10px' }}>
-                  <div style={{ fontSize: '0.8rem', color: '#64748B' }}>Average Pickup Latency</div>
-                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#0F172A', marginTop: '4px' }}>11.8 mins</div>
-                  <div style={{ fontSize: '0.8rem', color: '#16A34A', marginTop: '2px' }}>Within 15 min SLA target</div>
+            <div className="chart-card-modern">
+              <div className="card-top-header">
+                <div>
+                  <h2 className="card-top-title">Network Volume & Latency Analytics</h2>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '2px' }}>
+                    Logistics SLA performance, pickup duration metrics, and peak volume insights
+                  </p>
                 </div>
+              </div>
 
-                <div style={{ background: '#F8FAFC', padding: '16px', borderRadius: '10px' }}>
-                  <div style={{ fontSize: '0.8rem', color: '#64748B' }}>Cold-Chain Adherence</div>
-                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#16A34A', marginTop: '4px' }}>99.8%</div>
-                  <div style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '2px' }}>2 temperature alerts resolved</div>
+              <div className="kpi-5-row" style={{ marginTop: '16px' }}>
+                <div className="kpi-card-modern">
+                  <div className="kpi-body">
+                    <span className="kpi-title">Average Pickup Latency</span>
+                    <span className="kpi-main-number">11.8 mins</span>
+                    <span className="kpi-trend-text">Within 15 min SLA target</span>
+                  </div>
                 </div>
-
-                <div style={{ background: '#F8FAFC', padding: '16px', borderRadius: '10px' }}>
-                  <div style={{ fontSize: '0.8rem', color: '#64748B' }}>Daily Sample Processing Peak</div>
-                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#0D9488', marginTop: '4px' }}>1,840</div>
-                  <div style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '2px' }}>Saturday peak volume</div>
+                <div className="kpi-card-modern">
+                  <div className="kpi-body">
+                    <span className="kpi-title">Cold-Chain Adherence</span>
+                    <span className="kpi-main-number">99.8%</span>
+                    <span className="kpi-trend-text">2 alerts resolved</span>
+                  </div>
+                </div>
+                <div className="kpi-card-modern">
+                  <div className="kpi-body">
+                    <span className="kpi-title">Daily Sample Peak</span>
+                    <span className="kpi-main-number">1,840</span>
+                    <span className="kpi-sub-split">Saturday Peak Hours</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -785,13 +1322,17 @@ export function App() {
 
           {/* TAB 10: SETTINGS */}
           {activeTab === 'settings' && (
-            <div className="surface-card" style={{ maxWidth: '680px' }}>
-              <h3 className="card-title">Platform Global Configuration</h3>
-              <p style={{ fontSize: '0.85rem', color: '#64748B', marginTop: '4px' }}>
-                System-wide temperature limits, SLA timeout triggers, and automated notification webhooks
-              </p>
+            <div className="chart-card-modern" style={{ maxWidth: '640px' }}>
+              <div className="card-top-header">
+                <div>
+                  <h2 className="card-top-title">Platform Global Configuration</h2>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '2px' }}>
+                    Temperature thresholds, SLA timeout triggers, and automated notification webhooks
+                  </p>
+                </div>
+              </div>
 
-              <div style={{ marginTop: '20px' }}>
+              <div style={{ marginTop: '16px' }}>
                 <div className="form-group">
                   <label className="form-label">Default Cold-Chain Temperature Range</label>
                   <input type="text" className="form-input" value="2.0°C to 8.0°C (Refrigerated)" disabled />
@@ -804,7 +1345,11 @@ export function App() {
                   <label className="form-label">Auto-Reassign Courier Delay Threshold (Minutes)</label>
                   <input type="number" className="form-input" defaultValue={15} />
                 </div>
-                <button className="btn-primary" onClick={() => alert('Platform configurations saved.')}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => alert('Platform configurations saved.')}
+                >
                   Save Platform Settings
                 </button>
               </div>
@@ -812,6 +1357,53 @@ export function App() {
           )}
         </main>
       </div>
+
+      {/* Quick Action Modal */}
+      {quickActionModal && (
+        <div className="modal-overlay" onClick={() => setQuickActionModal(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 style={{ margin: 0, fontSize: '1.15rem' }}>{quickActionModal} Action</h3>
+              <button
+                type="button"
+                onClick={() => setQuickActionModal(null)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748B' }}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: '0.9rem', color: '#64748B' }}>
+                Executing automated platform command for <strong>{quickActionModal}</strong> across connected network nodes.
+              </p>
+              <div style={{ background: '#F8FAFC', padding: '14px', borderRadius: '8px', marginTop: '14px' }}>
+                <span style={{ color: '#0D9488', fontWeight: 600, fontSize: '0.85rem' }}>
+                  ✓ System Connected: All 98 Small Labs & 26 Large Testing Partners Synchronized.
+                </span>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setQuickActionModal(null)}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => {
+                  alert(`Action completed: ${quickActionModal}`);
+                  setQuickActionModal(null);
+                }}
+              >
+                Proceed
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Courier Telemetry Modal */}
       {selectedCourier && (
@@ -822,6 +1414,7 @@ export function App() {
                 Courier Telemetry: {selectedCourier.name} ({selectedCourier.id})
               </h3>
               <button
+                type="button"
                 onClick={() => setSelectedCourier(null)}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748B' }}
               >
@@ -829,28 +1422,33 @@ export function App() {
               </button>
             </div>
             <div className="modal-body">
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '14px' }}>
                 <div style={{ background: '#F8FAFC', padding: '12px', borderRadius: '8px' }}>
-                  <div style={{ fontSize: '0.8rem', color: '#64748B' }}>Device Battery</div>
+                  <div style={{ fontSize: '0.75rem', color: '#64748B' }}>Device Battery</div>
                   <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#0F172A' }}>{selectedCourier.battery}</div>
                 </div>
                 <div style={{ background: '#F8FAFC', padding: '12px', borderRadius: '8px' }}>
-                  <div style={{ fontSize: '0.8rem', color: '#64748B' }}>Cooler Box Sensor</div>
-                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#16A34A' }}>{selectedCourier.tempStatus}</div>
+                  <div style={{ fontSize: '0.75rem', color: '#64748B' }}>Cooler Box Sensor</div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#10B981' }}>{selectedCourier.tempStatus}</div>
                 </div>
               </div>
-              <p style={{ fontSize: '0.875rem', color: '#64748B' }}>
+              <p style={{ fontSize: '0.85rem', color: '#64748B' }}>
                 Current Road: <strong>{selectedCourier.currentLocation}</strong>
               </p>
-              <p style={{ fontSize: '0.875rem', color: '#64748B' }}>
+              <p style={{ fontSize: '0.85rem', color: '#64748B' }}>
                 SLA Status: <strong>On-Time (Next Stop ETA 12 mins)</strong>
               </p>
             </div>
             <div className="modal-footer">
-              <button className="btn-secondary" onClick={() => setSelectedCourier(null)}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setSelectedCourier(null)}
+              >
                 Close
               </button>
               <button
+                type="button"
                 className="btn-primary"
                 onClick={() => {
                   alert(`Direct Dispatch Radio opened for ${selectedCourier.name}`);

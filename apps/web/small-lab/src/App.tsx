@@ -329,20 +329,23 @@ export function App() {
 
   return (
     <div className="app-shell">
-      {/* 1. Left Sidebar Navigation */}
-      <aside className="sidebar">
-        <div className="logo-container">
-          <div className="logo-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2v20M2 12h20" />
+      {/* 1. Left Sidebar Navigation (Dark Slate Teal - Matching Modern Design System) */}
+      <aside className="sidebar-dark">
+        <div className="brand-header">
+          <div className="brand-logo-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10 2v7.31M14 2v7.31M8.5 2h7M14 9.3a6.5 6.5 0 1 1-4 0" />
             </svg>
           </div>
-          <span className="logo-text">{LABSETU_THEME.brand.name}</span>
+          <div className="brand-title-wrap">
+            <span className="brand-title">{LABSETU_THEME.brand.name}</span>
+            <span className="brand-subtitle">Small Diagnostic Lab Portal</span>
+          </div>
         </div>
 
-        <ul className="nav-list">
+        <ul className="sidebar-nav">
           <li
-            className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`}
+            className={`sidebar-nav-item ${activeTab === 'dashboard' ? 'active' : ''}`}
             onClick={() => setActiveTab('dashboard')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -351,21 +354,21 @@ export function App() {
               <rect x="14" y="14" width="7" height="7" rx="1" />
               <rect x="3" y="14" width="7" height="7" rx="1" />
             </svg>
-            Dashboard
+            <span>Dashboard</span>
           </li>
 
           <li
-            className={`nav-item ${activeTab === 'new-booking' ? 'active' : ''}`}
+            className={`sidebar-nav-item ${activeTab === 'new-booking' ? 'active' : ''}`}
             onClick={() => setActiveTab('new-booking')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12 5v14M5 12h14" />
             </svg>
-            New Booking
+            <span>New Booking</span>
           </li>
 
           <li
-            className={`nav-item ${activeTab === 'patients' ? 'active' : ''}`}
+            className={`sidebar-nav-item ${activeTab === 'patients' ? 'active' : ''}`}
             onClick={() => setActiveTab('patients')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -373,11 +376,11 @@ export function App() {
               <circle cx="9" cy="7" r="4" />
               <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
             </svg>
-            Patients
+            <span>Patients</span>
           </li>
 
           <li
-            className={`nav-item ${activeTab === 'test-catalogue' ? 'active' : ''}`}
+            className={`sidebar-nav-item ${activeTab === 'test-catalogue' ? 'active' : ''}`}
             onClick={() => setActiveTab('test-catalogue')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -386,56 +389,56 @@ export function App() {
               <line x1="16" y1="13" x2="8" y2="13" />
               <line x1="16" y1="17" x2="8" y2="17" />
             </svg>
-            Test Catalogue
+            <span>Test Catalogue</span>
           </li>
 
           <li
-            className={`nav-item ${activeTab === 'partner-labs' ? 'active' : ''}`}
+            className={`sidebar-nav-item ${activeTab === 'partner-labs' ? 'active' : ''}`}
             onClick={() => setActiveTab('partner-labs')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
               <polyline points="9 22 9 12 15 12 15 22" />
             </svg>
-            Partner Labs
+            <span>Partner Labs</span>
           </li>
 
           <li
-            className={`nav-item ${activeTab === 'bookings' ? 'active' : ''}`}
+            className={`sidebar-nav-item ${activeTab === 'bookings' ? 'active' : ''}`}
             onClick={() => setActiveTab('bookings')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
               <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
             </svg>
-            Bookings
+            <span>Bookings</span>
+            <span className="nav-badge-red">12</span>
           </li>
 
           <li
-            className={`nav-item ${activeTab === 'reports' ? 'active' : ''}`}
+            className={`sidebar-nav-item ${activeTab === 'reports' ? 'active' : ''}`}
             onClick={() => setActiveTab('reports')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
               <polyline points="14 2 14 8 20 8" />
             </svg>
-            Reports
+            <span>Reports</span>
           </li>
 
           <li
-            className={`nav-item ${activeTab === 'payments' ? 'active' : ''}`}
+            className={`sidebar-nav-item ${activeTab === 'payments' ? 'active' : ''}`}
             onClick={() => setActiveTab('payments')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
               <line x1="1" y1="10" x2="23" y2="10" />
             </svg>
-            Payments
+            <span>Payments</span>
           </li>
 
           <li
-            className={`nav-item ${activeTab === 'help' ? 'active' : ''}`}
-            style={{ marginTop: 'auto' }}
+            className={`sidebar-nav-item ${activeTab === 'help' ? 'active' : ''}`}
             onClick={() => setActiveTab('help')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -443,49 +446,58 @@ export function App() {
               <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
               <line x1="12" y1="17" x2="12.01" y2="17" />
             </svg>
-            Help
+            <span>Help</span>
           </li>
         </ul>
+
+        {/* Sidebar Footer Help Card */}
+        <div
+          className="sidebar-footer-card"
+          onClick={() => setActiveTab('help')}
+        >
+          <div className="sidebar-footer-icon">🎧</div>
+          <div>
+            <div className="sidebar-footer-title">Help & Support</div>
+            <div className="sidebar-footer-subtitle">Need assistance? We're here.</div>
+          </div>
+        </div>
       </aside>
 
       {/* 2. Main Wrapper */}
       <div className="main-wrapper">
-        <header className="top-nav">
-          <div className="top-greeting">
-            <h2>
-              Good Morning, Bhandup Care Lab <span role="img" aria-label="wave">👋</span>
-            </h2>
-            <p>Manage your bookings and reports</p>
+        <header className="top-navbar">
+          {/* Rounded Search Pill */}
+          <div className="top-search-pill">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="text"
+              placeholder="Search booking ID, test, patient, or phlebotomist..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
           </div>
 
-          <div className="top-actions">
-            <button className="icon-btn" aria-label="Notifications" title="Notifications">
+          <div className="top-nav-right">
+            <div className="nav-icon-circle" title="Notifications">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
                 <path d="M13.73 21a2 2 0 0 1-3.46 0" />
               </svg>
-              <span
-                style={{
-                  position: 'absolute',
-                  top: '8px',
-                  right: '8px',
-                  width: '7px',
-                  height: '7px',
-                  background: '#DC2626',
-                  borderRadius: '50%',
-                }}
-              />
-            </button>
-
-            <div className="user-pill">
-              <div className="user-avatar">B</div>
-              <span className="user-name">Bhandup Care Lab</span>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
+              <span className="nav-alert-dot" />
             </div>
 
-            <button className="btn-primary" onClick={() => setShowModal(true)}>
+            <div className="user-profile-badge">
+              <div className="user-photo-avatar">B</div>
+              <div className="user-profile-info">
+                <span className="user-profile-name">Bhandup Care Lab</span>
+                <span className="user-profile-role">Collection Center</span>
+              </div>
+            </div>
+
+            <button type="button" className="btn-primary" onClick={() => setShowModal(true)}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <line x1="12" y1="5" x2="12" y2="19" />
                 <line x1="5" y1="12" x2="19" y2="12" />
@@ -495,7 +507,7 @@ export function App() {
           </div>
         </header>
 
-        <main className="page-content">
+        <main className="dashboard-content">
           {/* Toast Notification */}
           {toastMessage && (
             <div
@@ -1096,7 +1108,7 @@ export function App() {
 
               <h4 style={{ fontSize: '0.95rem', marginBottom: '8px' }}>Pre-Analytical Specimen Guidelines</h4>
               <ul style={{ paddingLeft: '20px', fontSize: '0.875rem', color: '#475569', lineHeight: '1.8' }}>
-                <li><strong>Order of Draw:</strong> Blood Culture $\rightarrow$ Sodium Citrate (Blue) $\rightarrow$ Serum (Red/Gold) $\rightarrow$ Heparin (Green) $\rightarrow$ EDTA (Lavender) $\rightarrow$ Fluoride (Grey).</li>
+                <li><strong>Order of Draw:</strong> Blood Culture → Sodium Citrate (Blue) → Serum (Red/Gold) → Heparin (Green) → EDTA (Lavender) → Fluoride (Grey).</li>
                 <li><strong>Temperature Compliance:</strong> Always keep EDTA tubes in the 2°C to 8°C chilled pouch before courier handover.</li>
                 <li><strong>Labeling:</strong> Affix barcode label vertically on each collection tube with patient ID visible.</li>
               </ul>
