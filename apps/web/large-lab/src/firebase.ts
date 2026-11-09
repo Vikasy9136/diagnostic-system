@@ -27,3 +27,4 @@ if (import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'true') {
     console.warn('⚠️ Emulator connection already initialized or failed:', err);
   }
 }
+
