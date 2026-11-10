@@ -30,7 +30,12 @@ export function errorHandler(
     error: {
       code: errorCode,
       message: err.message || 'An unexpected error occurred',
-      ...(config.env === 'development' && { details: err.stack }),
+      details:
+        err instanceof AppError && err.details
+          ? err.details
+          : config.env === 'development'
+          ? err.stack
+          : undefined,
     },
     timestamp: new Date().toISOString(),
   };

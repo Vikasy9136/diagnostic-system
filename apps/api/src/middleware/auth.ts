@@ -3,15 +3,31 @@ import { UserRole, UserCustomClaims } from '@diagnostic/shared';
 import { AppError } from './errorHandler';
 import { initializeFirebase } from '../config/firebase';
 import { config } from '../config/env';
+import {
+  findProvisionedUserByEmail,
+  resolveDevSessionToken,
+} from '../services/user-directory.service';
 
 export interface AuthenticatedRequest extends Request {
   user?: UserCustomClaims & { uid: string; email?: string };
 }
 
+function decodeUnverifiedJwtPayload(token: string): Record<string, unknown> | null {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const json = Buffer.from(parts[1], 'base64url').toString('utf8');
+    return JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Authentication Middleware
  * Verifies real Firebase ID tokens when Admin SDK is configured;
- * falls back to explicit local dev mock mode only when Admin SDK is not initialized.
+ * in non-production mock mode (before serviceAccountKey.json), resolves the token's email
+ * against the Admin-provisioned directory without skipping role validation.
  */
 export async function requireAuth(
   req: AuthenticatedRequest,
@@ -28,15 +44,33 @@ export async function requireAuth(
     if (auth && !isMockMode) {
       try {
         const decoded = await auth.verifyIdToken(idToken);
-        const tokenRole = (decoded.role as UserRole | undefined) ||
-          (decoded.email === config.admin.email ? UserRole.ADMIN : undefined);
+        const provisioned = decoded.email
+          ? await findProvisionedUserByEmail(decoded.email)
+          : null;
+
+        if (provisioned && !provisioned.isActive) {
+          return next(
+            new AppError(
+              `Account (${decoded.email}) is suspended by Platform Admin.`,
+              403,
+              'ACCOUNT_SUSPENDED'
+            )
+          );
+        }
+
+        const isRootAdmin =
+          decoded.email?.toLowerCase() === config.admin.email.toLowerCase();
+        const tokenRole =
+          provisioned?.role ||
+          (decoded.role as UserRole | undefined) ||
+          (isRootAdmin ? UserRole.ADMIN : undefined);
 
         if (!tokenRole || !Object.values(UserRole).includes(tokenRole)) {
           return next(
             new AppError(
-              'User lacks an assigned platform role claim. Run admin setup or contact administrator.',
+              `Account (${decoded.email || decoded.uid}) has not been provisioned by Platform Admin (${config.admin.email}).`,
               403,
-              'FORBIDDEN'
+              'USER_NOT_PROVISIONED'
             )
           );
         }
@@ -45,8 +79,10 @@ export async function requireAuth(
           uid: decoded.uid,
           email: decoded.email,
           role: tokenRole,
-          labId: decoded.labId as string | undefined,
-          phlebotomistId: decoded.phlebotomistId as string | undefined,
+          labId: (provisioned?.labId || decoded.labId) as string | undefined,
+          phlebotomistId: (provisioned?.phlebotomistId || decoded.phlebotomistId) as
+            | string
+            | undefined,
         };
         return next();
       } catch (err) {
@@ -56,18 +92,86 @@ export async function requireAuth(
       }
     }
 
-    // Local development fallback when Admin SDK service account is not yet attached
-    if (config.env !== 'production') {
-      req.user = {
-        uid: 'dev-admin-001',
-        email: config.admin.email,
-        role: UserRole.ADMIN,
-      };
-      return next();
+    // Local development fallback when Admin SDK serviceAccountKey.json is not yet attached
+    if (isMockMode && config.env !== 'production') {
+      const devOtpSession = resolveDevSessionToken(idToken);
+      if (devOtpSession) {
+        const currentProfile = await findProvisionedUserByEmail(devOtpSession.email);
+        if (!currentProfile) {
+          return next(
+            new AppError(
+              `Account (${devOtpSession.email}) is no longer provisioned by Platform Admin.`,
+              403,
+              'USER_NOT_PROVISIONED'
+            )
+          );
+        }
+        if (!currentProfile.isActive) {
+          return next(
+            new AppError(
+              `Account (${devOtpSession.email}) is suspended by Platform Admin.`,
+              403,
+              'ACCOUNT_SUSPENDED'
+            )
+          );
+        }
+
+        req.user = {
+          uid: currentProfile.id || devOtpSession.uid,
+          email: currentProfile.email,
+          role: currentProfile.role,
+          labId: currentProfile.labId,
+          phlebotomistId: currentProfile.phlebotomistId,
+        };
+        return next();
+      }
+
+      const payload = decodeUnverifiedJwtPayload(idToken);
+      if (payload) {
+        const email = typeof payload.email === 'string' ? payload.email.toLowerCase() : undefined;
+        const uid =
+          (typeof payload.user_id === 'string' && payload.user_id) ||
+          (typeof payload.sub === 'string' && payload.sub) ||
+          'dev-firebase-user';
+        const provisioned = email ? await findProvisionedUserByEmail(email) : null;
+
+        if (!provisioned) {
+          return next(
+            new AppError(
+              `Account (${email || uid}) is not provisioned by Platform Admin (${config.admin.email}).`,
+              403,
+              'USER_NOT_PROVISIONED'
+            )
+          );
+        }
+
+        if (!provisioned.isActive) {
+          return next(
+            new AppError(
+              `Account (${email}) is currently suspended by Platform Admin.`,
+              403,
+              'ACCOUNT_SUSPENDED'
+            )
+          );
+        }
+
+        req.user = {
+          uid,
+          email: provisioned.email,
+          role: provisioned.role,
+          labId: provisioned.labId,
+          phlebotomistId: provisioned.phlebotomistId,
+        };
+        return next();
+      }
+
+      return next(
+        new AppError('Invalid development authentication token.', 401, 'UNAUTHORIZED')
+      );
     }
   }
 
-  // Mock header bypass strictly limited to non-production mock mode
+  // Mock header strictly limited to explicit API CLI tests in non-production mock mode
   if (
     isMockMode &&
     config.env !== 'production' &&
@@ -76,7 +180,7 @@ export async function requireAuth(
   ) {
     req.user = {
       uid: 'mock-user-123',
-      email: config.admin.email,
+      email: (req.headers['x-mock-email'] as string) || config.admin.email,
       role: mockRoleHeader as UserRole,
       labId: (req.headers['x-mock-lab-id'] as string) || 'LAB-001',
     };

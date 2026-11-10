@@ -9,6 +9,15 @@ export enum UserRole {
 }
 
 /**
+ * Supported authentication methods across LabSetu applications
+ */
+export enum AuthMethod {
+  GOOGLE = 'GOOGLE',
+  PASSWORD = 'PASSWORD',
+  EMAIL_OTP = 'EMAIL_OTP',
+}
+
+/**
  * Custom claims embedded in the Firebase Auth ID Token
  */
 export interface UserCustomClaims {
@@ -18,7 +27,7 @@ export interface UserCustomClaims {
 }
 
 /**
- * Standard User Profile stored in Firestore (`users/{userId}`)
+ * Standard User Profile stored in Firestore (`users/{userId}` and `user_directory/{email}`)
  */
 export interface UserProfile {
   id: string;
@@ -27,8 +36,42 @@ export interface UserProfile {
   phoneNumber?: string;
   role: UserRole;
   labId?: string;
+  phlebotomistId?: string;
   isActive: boolean;
+  fcmTokens?: string[];
+  createdByAdmin?: boolean;
   createdAt: string; // ISO 8601 timestamp string
   updatedAt: string;
 }
 
+/**
+ * Payload used exclusively by Platform Admin to provision a new role-assigned user
+ */
+export interface CreateManagedUserPayload {
+  email: string;
+  displayName: string;
+  role: UserRole;
+  phoneNumber?: string;
+  labId?: string;
+  phlebotomistId?: string;
+  password?: string;
+  isActive?: boolean;
+}
+
+export interface EmailOtpSendPayload {
+  email: string;
+  portalRole?: UserRole;
+}
+
+export interface EmailOtpVerifyPayload {
+  email: string;
+  otp: string;
+  portalRole?: UserRole;
+}
+
+export const ROLE_LABELS: Record<UserRole, string> = {
+  [UserRole.ADMIN]: 'Platform Admin',
+  [UserRole.SMALL_LAB]: 'Small Collection Lab',
+  [UserRole.LARGE_LAB]: 'Large Partner Reference Lab',
+  [UserRole.PHLEBOTOMIST]: 'Field Phlebotomist',
+};

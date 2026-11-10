@@ -75,19 +75,19 @@ async function seedFirebase(): Promise<void> {
 
   const now = new Date().toISOString();
 
-  // 3. Create / update Admin User document in Firestore
-  await db.collection('users').doc(adminUid).set(
-    {
-      id: adminUid,
-      email: adminEmail,
-      displayName: 'LabSetu Platform Owner',
-      role: UserRole.ADMIN,
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    },
-    { merge: true }
-  );
+  // 3. Create / update Admin User document in Firestore + user_directory
+  const adminProfile = {
+    id: adminUid,
+    email: adminEmail.toLowerCase(),
+    displayName: 'LabSetu Platform Owner',
+    role: UserRole.ADMIN,
+    isActive: true,
+    createdByAdmin: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await db.collection('users').doc(adminUid).set(adminProfile, { merge: true });
+  await db.collection('user_directory').doc(adminEmail.toLowerCase()).set(adminProfile, { merge: true });
 
   // 4. Platform Settings & Notification Settings in Firestore
   await db.collection('settings').doc('platform').set(
@@ -169,3 +169,4 @@ seedFirebase().catch((err) => {
   console.error('❌ Firebase bootstrap failed:', err);
   process.exit(1);
 });
+

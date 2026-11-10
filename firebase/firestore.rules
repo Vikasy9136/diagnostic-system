@@ -43,12 +43,27 @@ service cloud.firestore {
     }
 
     // =========================================================================
-    // 1. USERS COLLECTION (`users/{userId}`)
+    // 1. USERS COLLECTION (`users/{userId}`) & ADMIN DIRECTORY (`user_directory/{email}`)
+    // Strictly Admin-provisioned! Non-admins cannot self-assign or escalate roles.
     // =========================================================================
     match /users/{userId} {
       allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      allow create, update: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      allow delete: if isAdmin();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+        || (isAuthenticated()
+          && request.auth.uid == userId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fcmTokens', 'lastLoginAt', 'updatedAt']));
+    }
+
+    match /user_directory/{emailId} {
+      allow read: if isAdmin()
+        || (isAuthenticated() && request.auth.token.email == emailId);
+      allow write: if isAdmin();
+    }
+
+    // Server-side Email OTP records (only Admin SDK / Cloud backend touches this)
+    match /email_otps/{emailId} {
+      allow read, write: if false;
     }
 
     // =========================================================================
@@ -71,25 +86,20 @@ service cloud.firestore {
     // 4. PICKUP ORDERS (`orders/{orderId}`)
     // =========================================================================
     match /orders/{orderId} {
-      // Admins have full access
       allow read, write: if isAdmin();
 
-      // Small Lab: Can create orders for their own lab, and read orders originating from their lab
       allow create: if isSmallLab() && request.resource.data.smallLabId == getLabId();
       allow read: if isSmallLab() && resource.data.smallLabId == getLabId();
-      // Small Lab can cancel an order if it is still in CREATED or READY_FOR_PICKUP
       allow update: if isSmallLab()
         && resource.data.smallLabId == getLabId()
         && resource.data.status in ['CREATED', 'READY_FOR_PICKUP']
         && request.resource.data.status in ['READY_FOR_PICKUP', 'CANCELLED'];
 
-      // Large Partner Lab: Can read orders targeted to them and update accessioning/report status
       allow read: if isLargeLab() && resource.data.targetLabId == getLabId();
       allow update: if isLargeLab()
         && resource.data.targetLabId == getLabId()
         && request.resource.data.status in ['UNDER_ANALYSIS', 'REPORT_UPLOADED', 'COMPLETED', 'REJECTED'];
 
-      // Phlebotomist: Can read orders assigned to them and update status during pickup/transit
       allow read: if isPhlebotomist() && resource.data.phlebotomistId == getPhlebotomistId();
       allow update: if isPhlebotomist()
         && resource.data.phlebotomistId == getPhlebotomistId()
@@ -98,13 +108,12 @@ service cloud.firestore {
 
     // =========================================================================
     // 5. IMMUTABLE CHAIN-OF-CUSTODY AUDIT EVENTS (`custody_events/{eventId}`)
-    // Chain-of-custody logs are strictly append-only. No edits or deletes!
     // =========================================================================
     match /custody_events/{eventId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated()
         && request.resource.data.operatorId == request.auth.uid;
-      allow update, delete: if false; // Strict immutability for compliance
+      allow update, delete: if false;
     }
 
     // =========================================================================
@@ -129,11 +138,9 @@ service cloud.firestore {
 
     // =========================================================================
     // 7. EMAIL DELIVERY QUEUE / AUDIT LOG (`mail/{mailId}`)
-    // Compatible with Firebase Trigger Email Extension & Node.js SMTP Worker
     // =========================================================================
     match /mail/{mailId} {
-      allow read, create: if isAdmin();
-      allow update, delete: if isAdmin();
+      allow read, write: if isAdmin();
     }
 
     // =========================================================================

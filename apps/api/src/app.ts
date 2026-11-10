@@ -5,6 +5,8 @@ import { config } from './config/env';
 import { healthRouter } from './routes/health.routes';
 import { ordersRouter } from './routes/orders.routes';
 import { notificationsRouter } from './routes/notifications.routes';
+import { authRouter } from './routes/auth.routes';
+import { usersRouter } from './routes/users.routes';
 import { errorHandler, AppError } from './middleware/errorHandler';
 
 export function createApp(): Application {
@@ -30,6 +32,8 @@ export function createApp(): Application {
 
   // API Routes
   app.use('/api/v1/health', healthRouter);
+  app.use('/api/v1/auth', authRouter);
+  app.use('/api/v1/users', usersRouter);
   app.use('/api/v1/orders', ordersRouter);
   app.use('/api/v1/notifications', notificationsRouter);
 

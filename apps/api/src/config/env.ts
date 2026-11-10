@@ -10,7 +10,16 @@ export const config = {
   port: parseInt(process.env.PORT || '5000', 10),
   corsOrigin: process.env.CORS_ORIGIN
     ? process.env.CORS_ORIGIN.split(',').map((origin) => origin.trim())
-    : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'],
+    : [
+        'http://localhost:3000',
+        'http://localhost:3001',
+        'http://localhost:3002',
+        'http://localhost:8081',
+        'http://localhost:19006',
+        'http://127.0.0.1:3000',
+        'http://127.0.0.1:3001',
+        'http://127.0.0.1:3002',
+      ],
   admin: {
     email: process.env.ADMIN_EMAIL || 'lab.setu.admin@gmail.com',
     initialPassword: process.env.ADMIN_INITIAL_PASSWORD || '',

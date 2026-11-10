@@ -8,8 +8,19 @@ import {
   SafeAreaView,
   StatusBar,
   TextInput,
-  Alert,
 } from 'react-native';
+import { signOut } from 'firebase/auth';
+import { auth } from './firebase';
+import {
+  DynamicAlertModal,
+  type DynamicAlertState,
+  type DynamicAlertVariant,
+  INITIAL_DYNAMIC_ALERT,
+} from './components/DynamicAlertModal';
+import {
+  PhleboAuthGate,
+  type VerifiedPhleboSession,
+} from './components/PhleboAuthGate';
 
 // Canonical LabSetu Palette from design system
 const COLORS = {
@@ -34,6 +45,8 @@ type ScreenType =
   | 'COMPLETED';
 
 export default function App() {
+  const [session, setSession] = useState<VerifiedPhleboSession | null>(null);
+  const [alertState, setAlertState] = useState<DynamicAlertState>(INITIAL_DYNAMIC_ALERT);
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('BOOKING_REQUESTS');
   const [isOnline, setIsOnline] = useState(true);
   const [requestTab, setRequestTab] = useState<'new' | 'active' | 'completed'>('new');
@@ -44,6 +57,53 @@ export default function App() {
   const [bookingHistoryFilter, setBookingHistoryFilter] = useState<'all' | 'active' | 'completed' | 'scheduled'>('all');
   const [bookingSearchQuery, setBookingSearchQuery] = useState('');
   const [dutyStatus, setDutyStatus] = useState<'ONLINE' | 'BREAK' | 'OFFLINE'>('ONLINE');
+
+  const showDynamicAlert = (opts: {
+    variant: DynamicAlertVariant;
+    title: string;
+    message: string;
+    detail?: string;
+    confirmLabel?: string;
+    cancelLabel?: string;
+    onConfirm?: () => void;
+  }) => {
+    setAlertState({
+      isOpen: true,
+      variant: opts.variant,
+      title: opts.title,
+      message: opts.message,
+      detail: opts.detail,
+      confirmLabel: opts.confirmLabel,
+      cancelLabel: opts.cancelLabel,
+      onConfirm: opts.onConfirm,
+    });
+  };
+
+  const handleSignOut = () => {
+    showDynamicAlert({
+      variant: 'confirm',
+      title: 'Sign Out of LabSetu?',
+      message: `End current shift session for ${session?.profile.email || 'this account'}?`,
+      confirmLabel: 'Sign Out',
+      cancelLabel: 'Stay Signed In',
+      onConfirm: () => {
+        void (async () => {
+          if (auth.currentUser) {
+            await signOut(auth);
+          }
+          setSession(null);
+          setBottomTab('home');
+          setCurrentScreen('BOOKING_REQUESTS');
+        })();
+      },
+    });
+  };
+
+  const phleboName = session?.profile.displayName || 'Rahul Yadav';
+  const phleboFirstName = phleboName.split(' ')[0] || phleboName;
+  const phleboInitial = phleboName.charAt(0).toUpperCase() || 'P';
+  const phleboId = session?.profile.phlebotomistId || 'PHL-204';
+  const phleboEmail = session?.profile.email || 'phlebo@labsetu.in';
 
   const updateOtpDigit = (index: number, value: string) => {
     const updated = [...otpValue];
@@ -141,11 +201,11 @@ export default function App() {
         <View style={styles.heroRow}>
           <View style={styles.profileSection}>
             <View style={styles.avatarCircle}>
-              <Text style={styles.avatarText}>R</Text>
+              <Text style={styles.avatarText}>{phleboInitial}</Text>
             </View>
             <View>
-              <Text style={styles.greetingTitle}>Hello, Rahul</Text>
-              <Text style={styles.greetingSubtitle}>Phlebotomist</Text>
+              <Text style={styles.greetingTitle}>Hello, {phleboFirstName}</Text>
+              <Text style={styles.greetingSubtitle}>Field Phlebotomist • {phleboId}</Text>
             </View>
           </View>
 
@@ -256,7 +316,21 @@ export default function App() {
           <View style={styles.actionsRow}>
             <TouchableOpacity
               style={styles.btnSecondary}
-              onPress={() => Alert.alert('Booking Declined', 'Assignment passed to next available phlebotomist.')}
+              onPress={() =>
+                showDynamicAlert({
+                  variant: 'confirm',
+                  title: `Decline Booking ${activeBooking.id}?`,
+                  message: 'This sample collection request will be reassigned to the next available phlebotomist.',
+                  confirmLabel: 'Decline',
+                  cancelLabel: 'Keep',
+                  onConfirm: () =>
+                    showDynamicAlert({
+                      variant: 'info',
+                      title: 'Booking Declined',
+                      message: `Assignment ${activeBooking.id} passed to next available phlebotomist.`,
+                    }),
+                })
+              }
             >
               <Text style={styles.btnSecondaryText}>Reject</Text>
             </TouchableOpacity>
@@ -342,7 +416,14 @@ export default function App() {
             </View>
             <TouchableOpacity
               style={styles.callCircleBtn}
-              onPress={() => Alert.alert('Dialing Patient', activeBooking.patientPhone)}
+              onPress={() =>
+                showDynamicAlert({
+                  variant: 'info',
+                  title: 'Dialing Patient',
+                  message: `Connecting secure bridge call to ${activeBooking.patientName}.`,
+                  detail: activeBooking.patientPhone,
+                })
+              }
             >
               <Text style={{ color: 'white', fontWeight: 'bold' }}>📞</Text>
             </TouchableOpacity>
@@ -438,8 +519,13 @@ export default function App() {
         <TouchableOpacity
           style={styles.ctaButton}
           onPress={() => {
-            Alert.alert('Barcode Verified!', `Specimen ${scannedBarcode} successfully linked.`);
             setCurrentScreen('DROP_SAMPLE');
+            showDynamicAlert({
+              variant: 'success',
+              title: 'Barcode Verified!',
+              message: `Specimen ${scannedBarcode} successfully linked to chain-of-custody.`,
+              detail: `Proceed to handover at ${activeBooking.dropLab}`,
+            });
           }}
         >
           <Text style={styles.ctaButtonText}>Scan Barcode</Text>
@@ -736,10 +822,12 @@ export default function App() {
               <TouchableOpacity
                 style={[styles.btnPrimary, { paddingHorizontal: 16, paddingVertical: 10 }]}
                 onPress={() =>
-                  Alert.alert(
-                    'Instant UPI Payout Requested',
-                    '₹3,420 will be credited directly to rahul.yadav@okhdfcbank within 60 seconds.'
-                  )
+                  showDynamicAlert({
+                    variant: 'success',
+                    title: 'Instant UPI Payout Requested',
+                    message: `₹3,420 will be credited to ${phleboName}'s verified UPI within 60 seconds.`,
+                    detail: `Partner ID: ${phleboId}`,
+                  })
                 }
               >
                 <Text style={styles.btnPrimaryText}>Withdraw to UPI</Text>
@@ -871,10 +959,10 @@ export default function App() {
         <View style={styles.heroHeader}>
           <View style={{ alignItems: 'center', paddingVertical: 10 }}>
             <View style={[styles.avatarCircle, { width: 68, height: 68, borderRadius: 34 }]}>
-              <Text style={[styles.avatarText, { fontSize: 26 }]}>R</Text>
+              <Text style={[styles.avatarText, { fontSize: 26 }]}>{phleboInitial}</Text>
             </View>
-            <Text style={[styles.greetingTitle, { fontSize: 20, marginTop: 8 }]}>Rahul Yadav</Text>
-            <Text style={styles.greetingSubtitle}>Phlebotomist ID: PHL-204 • Blood Group: O+</Text>
+            <Text style={[styles.greetingTitle, { fontSize: 20, marginTop: 8 }]}>{phleboName}</Text>
+            <Text style={styles.greetingSubtitle}>ID: {phleboId} • {phleboEmail}</Text>
             <View style={[styles.onlinePill, { backgroundColor: '#064E3B', marginTop: 10 }]}>
               <Text style={styles.onlinePillText}>⭐ 4.9 Rating (428 Pickups)</Text>
             </View>
@@ -897,9 +985,13 @@ export default function App() {
                   dutyStatus === s.status && { backgroundColor: s.bg, borderColor: s.text, borderWidth: 1.5 },
                 ]}
                 onPress={() => {
-                  setDutyStatus(s.status as any);
+                  setDutyStatus(s.status as 'ONLINE' | 'BREAK' | 'OFFLINE');
                   setIsOnline(s.status === 'ONLINE');
-                  Alert.alert('Shift Status Updated', `You are now ${s.label}`);
+                  showDynamicAlert({
+                    variant: 'success',
+                    title: 'Shift Status Updated',
+                    message: `Duty mode set to ${s.label}.`,
+                  });
                 }}
               >
                 <Text
@@ -978,10 +1070,20 @@ export default function App() {
             <TouchableOpacity
               style={styles.sosButton}
               onPress={() =>
-                Alert.alert(
-                  'Emergency Cold-Chain SOS Triggered',
-                  'Central Dispatch Operations & nearest backup phlebotomist have been notified of your location.'
-                )
+                showDynamicAlert({
+                  variant: 'confirm',
+                  title: 'Trigger Cold-Chain Emergency SOS?',
+                  message: 'This alerts Central Dispatch and dispatches the nearest backup courier to your GPS location.',
+                  confirmLabel: 'Dispatch SOS',
+                  cancelLabel: 'Cancel',
+                  onConfirm: () =>
+                    showDynamicAlert({
+                      variant: 'error',
+                      title: 'Emergency Cold-Chain SOS Triggered',
+                      message: 'Central Dispatch Operations & nearest backup phlebotomist have been notified of your location.',
+                      detail: `Active Unit: ${phleboId} (${phleboName})`,
+                    }),
+                })
               }
             >
               <Text style={styles.sosButtonText}>🚨 EMERGENCY COLD-CHAIN SOS</Text>
@@ -989,9 +1091,23 @@ export default function App() {
 
             <TouchableOpacity
               style={styles.helpHotlineButton}
-              onPress={() => Alert.alert('LabSetu Hotline', 'Dialing Operations Control Center: 1800-889-SETU')}
+              onPress={() =>
+                showDynamicAlert({
+                  variant: 'info',
+                  title: 'LabSetu Hotline',
+                  message: 'Dialing Operations Control Center for urgent sample logistics assistance.',
+                  detail: '24x7 Dispatch Support: 1800-889-SETU',
+                })
+              }
             >
               <Text style={styles.helpHotlineText}>📞 Call Central Dispatch Hotline (24x7)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.signOutButton}
+              onPress={handleSignOut}
+            >
+              <Text style={styles.signOutButtonText}>Sign Out ({phleboEmail})</Text>
             </TouchableOpacity>
           </View>
 
@@ -1007,89 +1123,103 @@ export default function App() {
     <SafeAreaView style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.primaryDark} />
 
-      {/* Screen Router */}
-      <View style={{ flex: 1 }}>
-        {bottomTab === 'home' && (
-          <>
-            {currentScreen === 'BOOKING_REQUESTS' && renderBookingRequestsScreen()}
-            {currentScreen === 'BOOKING_DETAILS' && renderBookingDetailsScreen()}
-            {currentScreen === 'COLLECT_SAMPLE' && renderCollectSampleScreen()}
-            {currentScreen === 'DROP_SAMPLE' && renderDropSampleScreen()}
-            {currentScreen === 'COMPLETED' && renderCompletedScreen()}
-          </>
-        )}
-        {bottomTab === 'bookings' && renderBookingsHistoryScreen()}
-        {bottomTab === 'earnings' && renderEarningsScreen()}
-        {bottomTab === 'profile' && renderProfileScreen()}
-      </View>
+      <DynamicAlertModal
+        alertState={alertState}
+        onClose={() => setAlertState(INITIAL_DYNAMIC_ALERT)}
+      />
 
-      {/* Persistent Bottom Tab Bar */}
-      <View style={styles.bottomTabBar}>
-        <TouchableOpacity
-          style={styles.bottomTabItem}
-          onPress={() => {
-            setBottomTab('home');
-            setCurrentScreen('BOOKING_REQUESTS');
-          }}
-        >
-          <Text style={{ fontSize: 18 }}>🏠</Text>
-          <Text
-            style={[
-              styles.bottomTabText,
-              bottomTab === 'home' && { color: COLORS.primaryTeal, fontWeight: '700' },
-            ]}
-          >
-            Home
-          </Text>
-        </TouchableOpacity>
+      {!session ? (
+        <PhleboAuthGate
+          onShowAlert={(opts) => showDynamicAlert(opts)}
+          onAuthenticated={(verified) => setSession(verified)}
+        />
+      ) : (
+        <>
+          {/* Screen Router */}
+          <View style={{ flex: 1 }}>
+            {bottomTab === 'home' && (
+              <>
+                {currentScreen === 'BOOKING_REQUESTS' && renderBookingRequestsScreen()}
+                {currentScreen === 'BOOKING_DETAILS' && renderBookingDetailsScreen()}
+                {currentScreen === 'COLLECT_SAMPLE' && renderCollectSampleScreen()}
+                {currentScreen === 'DROP_SAMPLE' && renderDropSampleScreen()}
+                {currentScreen === 'COMPLETED' && renderCompletedScreen()}
+              </>
+            )}
+            {bottomTab === 'bookings' && renderBookingsHistoryScreen()}
+            {bottomTab === 'earnings' && renderEarningsScreen()}
+            {bottomTab === 'profile' && renderProfileScreen()}
+          </View>
 
-        <TouchableOpacity
-          style={styles.bottomTabItem}
-          onPress={() => {
-            setBottomTab('bookings');
-          }}
-        >
-          <Text style={{ fontSize: 18 }}>📋</Text>
-          <Text
-            style={[
-              styles.bottomTabText,
-              bottomTab === 'bookings' && { color: COLORS.primaryTeal, fontWeight: '700' },
-            ]}
-          >
-            Bookings
-          </Text>
-        </TouchableOpacity>
+          {/* Persistent Bottom Tab Bar */}
+          <View style={styles.bottomTabBar}>
+            <TouchableOpacity
+              style={styles.bottomTabItem}
+              onPress={() => {
+                setBottomTab('home');
+                setCurrentScreen('BOOKING_REQUESTS');
+              }}
+            >
+              <Text style={{ fontSize: 18 }}>🏠</Text>
+              <Text
+                style={[
+                  styles.bottomTabText,
+                  bottomTab === 'home' && { color: COLORS.primaryTeal, fontWeight: '700' },
+                ]}
+              >
+                Home
+              </Text>
+            </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.bottomTabItem}
-          onPress={() => setBottomTab('earnings')}
-        >
-          <Text style={{ fontSize: 18 }}>💰</Text>
-          <Text
-            style={[
-              styles.bottomTabText,
-              bottomTab === 'earnings' && { color: COLORS.primaryTeal, fontWeight: '700' },
-            ]}
-          >
-            Earnings
-          </Text>
-        </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.bottomTabItem}
+              onPress={() => {
+                setBottomTab('bookings');
+              }}
+            >
+              <Text style={{ fontSize: 18 }}>📋</Text>
+              <Text
+                style={[
+                  styles.bottomTabText,
+                  bottomTab === 'bookings' && { color: COLORS.primaryTeal, fontWeight: '700' },
+                ]}
+              >
+                Bookings
+              </Text>
+            </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.bottomTabItem}
-          onPress={() => setBottomTab('profile')}
-        >
-          <Text style={{ fontSize: 18 }}>👤</Text>
-          <Text
-            style={[
-              styles.bottomTabText,
-              bottomTab === 'profile' && { color: COLORS.primaryTeal, fontWeight: '700' },
-            ]}
-          >
-            Profile
-          </Text>
-        </TouchableOpacity>
-      </View>
+            <TouchableOpacity
+              style={styles.bottomTabItem}
+              onPress={() => setBottomTab('earnings')}
+            >
+              <Text style={{ fontSize: 18 }}>💰</Text>
+              <Text
+                style={[
+                  styles.bottomTabText,
+                  bottomTab === 'earnings' && { color: COLORS.primaryTeal, fontWeight: '700' },
+                ]}
+              >
+                Earnings
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.bottomTabItem}
+              onPress={() => setBottomTab('profile')}
+            >
+              <Text style={{ fontSize: 18 }}>👤</Text>
+              <Text
+                style={[
+                  styles.bottomTabText,
+                  bottomTab === 'profile' && { color: COLORS.primaryTeal, fontWeight: '700' },
+                ]}
+              >
+                Profile
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
     </SafeAreaView>
   );
 }
@@ -1942,6 +2072,19 @@ const styles = StyleSheet.create({
     color: COLORS.primaryDark,
     fontSize: 13,
     fontWeight: '600',
+  },
+  signOutButton: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  signOutButtonText: {
+    color: '#475569',
+    fontSize: 13,
+    fontWeight: '700',
   },
   versionFootnote: {
     textAlign: 'center',
