@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from 'react';
+import { useState, useEffect, useRef, type FormEvent } from 'react';
 import {
   LABSETU_THEME,
   ROLE_LABELS,
@@ -16,7 +16,7 @@ import {
   getIdTokenResult,
   type User,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import {
   ADMIN_LOGIN_EMAIL,
   API_BASE_URL,
@@ -25,12 +25,13 @@ import {
   db,
   googleProvider,
 } from '../firebase';
-import { DynamicAlertVariant } from './DynamicAlertModal';
+import { ensureRootAdminInitialized } from '../services/firestoreService';
+import { type DynamicAlertVariant } from './DynamicAlertModal';
 
 export interface VerifiedPortalSession {
   firebaseUser: User | null;
   profile: UserProfile;
-  authSource: 'firebase' | 'email-otp-dev';
+  authSource: 'firebase';
   bearerToken: string;
 }
 
@@ -43,6 +44,7 @@ interface AuthGateScreenProps {
     title: string;
     message: string;
     detail?: string;
+    confirmLabel?: string;
   }) => void;
   onAuthenticated: (session: VerifiedPortalSession | null) => void;
 }
@@ -76,11 +78,12 @@ export function AuthGateScreen({
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [inlineSuccess, setInlineSuccess] = useState<string | null>(null);
 
-  // Holds signed-in user when their Admin-assigned role belongs to a different portal
+  // Holds signed-out user details when their Admin-assigned role belongs to a different portal
   const [roleMismatch, setRoleMismatch] = useState<{
     email: string;
     assignedRole: UserRole;
   } | null>(null);
+  const mismatchTriggeredRef = useRef(false);
 
   useEffect(() => {
     if (otpCooldown <= 0) return;
@@ -90,12 +93,27 @@ export function AuthGateScreen({
     return () => clearInterval(timer);
   }, [otpCooldown]);
 
-  const resolvePortalUrl = (role: UserRole): string | null => {
+  const resolvePortalUrl = (role: UserRole): string => {
     if (role === UserRole.ADMIN) return PORTAL_URLS.ADMIN;
     if (role === UserRole.SMALL_LAB) return PORTAL_URLS.SMALL_LAB;
     if (role === UserRole.LARGE_LAB) return PORTAL_URLS.LARGE_LAB;
-    return null;
+    return `${PORTAL_URLS.PORTAL}/login?role=PHLEBOTOMIST`;
   };
+
+  async function rejectRoleMismatch(email: string, assignedRole: UserRole) {
+    mismatchTriggeredRef.current = true;
+    setRoleMismatch({ email, assignedRole });
+    if (auth.currentUser) {
+      await signOut(auth);
+    }
+    onAuthenticated(null);
+    onShowAlert({
+      variant: 'error',
+      title: 'Strict Role Lock: Access Denied',
+      message: `${email} is provisioned ONLY for "${ROLE_LABELS[assignedRole]}" and cannot access ${portalTitle} (${ROLE_LABELS[requiredRole]}).`,
+      detail: `Assigned Role: ${ROLE_LABELS[assignedRole]} • Session Signed Out Automatically`,
+    });
+  }
 
   async function verifyFirebaseUserRole(user: User): Promise<void> {
     const email = user.email?.trim().toLowerCase() || '';
@@ -133,8 +151,7 @@ export function AuthGateScreen({
       } else if (res.status === 403 && json?.error?.code === 'ROLE_MISMATCH') {
         const assignedRole =
           (json.error?.details?.assignedRole as UserRole) || UserRole.SMALL_LAB;
-        setRoleMismatch({ email, assignedRole });
-        onAuthenticated(null);
+        await rejectRoleMismatch(email, assignedRole);
         return;
       } else if (res.status === 403 && json?.error?.code === 'ACCOUNT_SUSPENDED') {
         await signOut(auth);
@@ -148,11 +165,10 @@ export function AuthGateScreen({
         });
         return;
       } else if (res.status === 403 && json?.error?.code === 'USER_NOT_PROVISIONED') {
-        // Check direct Firestore user_directory before rejecting (handles local dev before serviceAccountKey.json)
         apiProfile = null;
       }
     } catch {
-      // Backend API offline locally; verify directly via Firestore & Claims below
+      // Backend API offline locally; verify directly via Cloud Firestore & Claims below
     }
 
     if (apiProfile) {
@@ -167,14 +183,16 @@ export function AuthGateScreen({
         return;
       }
       if (apiProfile.role !== requiredRole) {
-        setRoleMismatch({ email, assignedRole: apiProfile.role });
-        onAuthenticated(null);
+        await rejectRoleMismatch(email, apiProfile.role);
         return;
+      }
+
+      if (apiProfile.role === UserRole.ADMIN) {
+        await ensureRootAdminInitialized(user.uid, apiProfile).catch(() => {});
       }
 
       setRoleMismatch(null);
       setInlineError(null);
-      // Force refresh ID token if custom claim wasn't stamped yet
       const freshToken = claimRole ? idToken : await user.getIdToken(true);
       onAuthenticated({
         firebaseUser: user,
@@ -231,8 +249,7 @@ export function AuthGateScreen({
     }
 
     if (resolvedRole !== requiredRole) {
-      setRoleMismatch({ email, assignedRole: resolvedRole });
-      onAuthenticated(null);
+      await rejectRoleMismatch(email, resolvedRole);
       return;
     }
 
@@ -243,7 +260,7 @@ export function AuthGateScreen({
       displayName:
         dirProfile?.displayName ||
         user.displayName ||
-        (isRootAdmin ? 'LabSetu Platform Owner' : email.split('@')[0]),
+        (isRootAdmin ? 'LabSetu Platform Admin' : email.split('@')[0]),
       role: resolvedRole,
       labId: dirProfile?.labId || (tokenResult.claims?.labId as string | undefined),
       phlebotomistId:
@@ -256,13 +273,8 @@ export function AuthGateScreen({
       updatedAt: now,
     };
 
-    // Ensure root admin directory entry exists in Firestore if root admin logged in directly
-    if (isRootAdmin) {
-      try {
-        await setDoc(doc(db, 'user_directory', email), finalProfile, { merge: true });
-      } catch {
-        // Non-blocking sync
-      }
+    if (finalProfile.role === UserRole.ADMIN) {
+      await ensureRootAdminInitialized(user.uid, finalProfile).catch(() => {});
     }
 
     setRoleMismatch(null);
@@ -278,7 +290,10 @@ export function AuthGateScreen({
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
-        setRoleMismatch(null);
+        if (!mismatchTriggeredRef.current) {
+          setRoleMismatch(null);
+        }
+        mismatchTriggeredRef.current = false;
         onAuthenticated(null);
         setAuthLoading(false);
         return;
@@ -423,9 +438,13 @@ export function AuthGateScreen({
       if (!res.ok) {
         const errCode = json?.error?.code;
         if (errCode === 'ROLE_MISMATCH' && json?.error?.details?.assignedRole) {
-          setRoleMismatch({
-            email: normalized,
-            assignedRole: json.error.details.assignedRole as UserRole,
+          const assignedRole = json.error.details.assignedRole as UserRole;
+          setRoleMismatch({ email: normalized, assignedRole });
+          onShowAlert({
+            variant: 'error',
+            title: 'Strict Role Lock: Access Denied',
+            message: `${normalized} is assigned "${ROLE_LABELS[assignedRole]}" and cannot open ${portalTitle}.`,
+            detail: `Assigned Role: ${ROLE_LABELS[assignedRole]}`,
           });
           return;
         }
@@ -447,7 +466,7 @@ export function AuthGateScreen({
       const deliveryNote =
         json?.data?.deliveryMode === 'SMTP'
           ? `6-digit verification OTP sent via email to ${normalized}.`
-          : `6-digit OTP issued for ${normalized}. Configure SMTP_PASS in diagnostic-platform/.env for Gmail delivery, or read the code in the running API server terminal.`;
+          : `6-digit OTP issued for ${normalized}. Configure SMTP_PASS in diagnostic-platform/.env for Gmail delivery, or check the running API server terminal.`;
       setInlineSuccess(deliveryNote);
       onShowAlert({
         variant: 'success',
@@ -502,14 +521,12 @@ export function AuthGateScreen({
         return;
       }
 
-      // Non-production dev mode before serviceAccountKey.json is attached:
-      // API server verified the real 6-digit OTP hash and issued a strict role-checked session
-      if (import.meta.env.DEV && profile && devSessionToken && profile.role === requiredRole) {
-        onAuthenticated({
-          firebaseUser: null,
-          profile,
-          authSource: 'email-otp-dev',
-          bearerToken: devSessionToken,
+      if (profile && devSessionToken && profile.role === requiredRole) {
+        onShowAlert({
+          variant: 'warning',
+          title: 'Direct Firestore Requires Firebase Auth',
+          message:
+            'OTP verified against API dev mode, but Firebase Admin serviceAccountKey.json is not attached yet for Custom Tokens. Use Google Sign-In or Email & Password so live Cloud Firestore reads & writes succeed!',
         });
         return;
       }
@@ -518,7 +535,7 @@ export function AuthGateScreen({
         variant: 'error',
         title: 'Custom Token Configuration Needed',
         message:
-          'Place serviceAccountKey.json in diagnostic-platform/ to mint Firebase Custom Tokens in production.',
+          'Place serviceAccountKey.json in diagnostic-platform/ to mint Firebase Custom Tokens, or sign in via Google / Email & Password.',
       });
     } catch {
       onShowAlert({
@@ -554,9 +571,9 @@ export function AuthGateScreen({
           <div className="admin-login-banner">
             <div className="brand-logo-icon">🛡️</div>
             <div>
-              <div style={{ fontSize: '1.2rem', fontWeight: 800 }}>Role Access Mismatch</div>
+              <div style={{ fontSize: '1.2rem', fontWeight: 800 }}>Strict Role Lock</div>
               <div style={{ fontSize: '0.75rem', color: '#7DD3FC' }}>
-                Strict Role-Based Dashboard Protection
+                Signed Out Automatically • Role Mismatch
               </div>
             </div>
           </div>
@@ -580,32 +597,33 @@ export function AuthGateScreen({
               </div>
             </div>
 
-            <p style={{ fontSize: '0.83rem', color: '#64748B', marginBottom: '18px', lineHeight: 1.55 }}>
-              {roleMismatch.assignedRole === UserRole.PHLEBOTOMIST
-                ? 'This account is assigned as a Field Phlebotomist. Please sign in using the LabSetu Phlebotomist Mobile / Companion App.'
-                : 'Your account belongs to another LabSetu portal. Open your assigned dashboard or sign out to switch accounts.'}
-            </p>
+            <a
+              href={correctUrl}
+              className="btn-primary btn-full"
+              style={{ textDecoration: 'none', marginBottom: '10px', justifyContent: 'center' }}
+            >
+              Open {ROLE_LABELS[roleMismatch.assignedRole]} Dashboard →
+            </a>
 
-            {correctUrl && (
-              <a
-                href={correctUrl}
-                className="btn-primary btn-full"
-                style={{ textDecoration: 'none', marginBottom: '10px' }}
-              >
-                Open {ROLE_LABELS[roleMismatch.assignedRole]} Portal →
-              </a>
-            )}
+            <a
+              href={PORTAL_URLS.PORTAL}
+              className="btn-secondary btn-full"
+              style={{ textDecoration: 'none', marginBottom: '10px', justifyContent: 'center' }}
+            >
+              ← Open Unified LabSetu Portal
+            </a>
 
             <button
               type="button"
               className="btn-secondary btn-full"
+              style={{ justifyContent: 'center' }}
               onClick={async () => {
                 setRoleMismatch(null);
                 setOtpSent(false);
                 if (auth.currentUser) await signOut(auth);
               }}
             >
-              Sign Out &amp; Use Different Account
+              Use Different Account
             </button>
           </div>
         </div>
@@ -643,7 +661,6 @@ export function AuthGateScreen({
             <code>{requiredRole}</code> can access this dashboard.
           </p>
 
-          {/* Method 1: Google Sign-In (Always Visible Primary SSO Option) */}
           <button
             type="button"
             className="btn-google-signin"
@@ -663,7 +680,6 @@ export function AuthGateScreen({
             <span>OR SIGN IN WITH EMAIL</span>
           </div>
 
-          {/* Segmented Auth Mode Switcher */}
           <div className="labsetu-auth-tabs">
             <button
               type="button"
@@ -761,6 +777,7 @@ export function AuthGateScreen({
               <button
                 type="submit"
                 className="btn-primary btn-full"
+                style={{ justifyContent: 'center' }}
                 disabled={authSubmitting}
               >
                 {authSubmitting ? 'Verifying...' : `Sign In to ${portalTitle}`}
@@ -810,6 +827,7 @@ export function AuthGateScreen({
               <button
                 type="submit"
                 className="btn-primary btn-full"
+                style={{ justifyContent: 'center' }}
                 disabled={authSubmitting}
               >
                 {authSubmitting
@@ -852,6 +870,19 @@ export function AuthGateScreen({
               )}
             </form>
           )}
+
+          <div
+            style={{
+              marginTop: '18px',
+              paddingTop: '14px',
+              borderTop: '1px solid #E2E8F0',
+              textAlign: 'center',
+            }}
+          >
+            <a href={PORTAL_URLS.PORTAL} className="btn-link-muted" style={{ textDecoration: 'none' }}>
+              ← Open Unified LabSetu Portal (All Roles)
+            </a>
+          </div>
         </div>
       </div>
     </div>

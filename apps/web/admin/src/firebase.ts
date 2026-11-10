@@ -17,6 +17,7 @@ export const API_BASE_URL =
   import.meta.env.VITE_API_URL || 'http://localhost:5000/api/v1';
 
 export const PORTAL_URLS = {
+  PORTAL: import.meta.env.VITE_PORTAL_URL || 'http://localhost:3003',
   ADMIN: import.meta.env.VITE_ADMIN_PORTAL_URL || 'http://localhost:3002',
   SMALL_LAB: import.meta.env.VITE_SMALL_LAB_PORTAL_URL || 'http://localhost:3000',
   LARGE_LAB: import.meta.env.VITE_LARGE_LAB_PORTAL_URL || 'http://localhost:3001',

@@ -1,4 +1,4 @@
-import { SpecimenItem } from './specimen.js';
+import { SpecimenItem, SpecimenQualityStatus } from './specimen.js';
 import { CustodyEvent } from './custody.js';
 
 /**
@@ -69,6 +69,13 @@ export interface PickupOrder {
   actualPickupAt?: string;
   actualDeliveredAt?: string;
   reportDocumentUrl?: string;
+  reportId?: string;
+  totalAmountInr?: number;
+  courierFeeInr?: number;
+  handoverOtp?: string;
+  arrivalTemperatureCelsius?: number;
+  qualityStatus?: SpecimenQualityStatus;
+  department?: string;
   cancellationReason?: string;
   rejectionReason?: string;
   createdAt: string;

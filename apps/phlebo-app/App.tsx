@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   StyleSheet,
   Text,
@@ -9,8 +9,34 @@ import {
   StatusBar,
   TextInput,
 } from 'react-native';
+import {
+  computeDailyVolumeBars,
+  type CustodyEvent,
+  CustodyEventType,
+  formatInr,
+  isOrderCompleted,
+  NotificationCategory,
+  NotificationChannel,
+  NotificationPriority,
+  OrderStatus,
+  type PhlebotomistProfile,
+  type PhlebotomistShiftStatus,
+  type PickupOrder,
+  type SettlementRecord,
+  UserRole,
+} from '@diagnostic/shared';
 import { signOut } from 'firebase/auth';
-import { auth } from './firebase';
+import {
+  addDoc,
+  collection,
+  doc,
+  onSnapshot,
+  query,
+  updateDoc,
+  where,
+  type Unsubscribe,
+} from 'firebase/firestore';
+import { ADMIN_LOGIN_EMAIL, auth, db } from './firebase';
 import {
   DynamicAlertModal,
   type DynamicAlertState,
@@ -22,7 +48,6 @@ import {
   type VerifiedPhleboSession,
 } from './components/PhleboAuthGate';
 
-// Canonical LabSetu Palette from design system
 const COLORS = {
   primaryTeal: '#0D9488',
   primaryDark: '#0F766E',
@@ -44,19 +69,41 @@ type ScreenType =
   | 'DROP_SAMPLE'
   | 'COMPLETED';
 
+interface CompletedReceipt {
+  orderNumber: string;
+  targetLabName: string;
+  feeInr: number;
+  tempCelsius: number;
+  completedAt: string;
+}
+
 export default function App() {
   const [session, setSession] = useState<VerifiedPhleboSession | null>(null);
   const [alertState, setAlertState] = useState<DynamicAlertState>(INITIAL_DYNAMIC_ALERT);
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('BOOKING_REQUESTS');
-  const [isOnline, setIsOnline] = useState(true);
   const [requestTab, setRequestTab] = useState<'new' | 'active' | 'completed'>('new');
   const [bottomTab, setBottomTab] = useState<'home' | 'bookings' | 'earnings' | 'profile'>('home');
-  const [otpValue, setOtpValue] = useState(['7', '4', '2', '9', '9']);
-  const [scannedBarcode, setScannedBarcode] = useState('SMP-10456-CBC');
+
+  // Live Cloud Firestore Data States (ZERO hardcoded or dummy data)
+  const [orders, setOrders] = useState<PickupOrder[]>([]);
+  const [settlements, setSettlements] = useState<SettlementRecord[]>([]);
+  const [myPhleboProfile, setMyPhleboProfile] = useState<PhlebotomistProfile | null>(null);
+
+  // Selected trip & workflow form state
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [otpValue, setOtpValue] = useState<string[]>(['', '', '', '', '']);
+  const [scannedBarcode, setScannedBarcode] = useState('');
+  const [pickupTempInput, setPickupTempInput] = useState('4.2');
+  const [dropTempInput, setDropTempInput] = useState('4.2');
   const [showManualEntry, setShowManualEntry] = useState(false);
-  const [bookingHistoryFilter, setBookingHistoryFilter] = useState<'all' | 'active' | 'completed' | 'scheduled'>('all');
+  const [submittingAction, setSubmittingAction] = useState(false);
+  const [lastReceipt, setLastReceipt] = useState<CompletedReceipt | null>(null);
+
+  // History filter state
+  const [bookingHistoryFilter, setBookingHistoryFilter] = useState<
+    'all' | 'active' | 'completed' | 'scheduled'
+  >('all');
   const [bookingSearchQuery, setBookingSearchQuery] = useState('');
-  const [dutyStatus, setDutyStatus] = useState<'ONLINE' | 'BREAK' | 'OFFLINE'>('ONLINE');
 
   const showDynamicAlert = (opts: {
     variant: DynamicAlertVariant;
@@ -92,6 +139,10 @@ export default function App() {
             await signOut(auth);
           }
           setSession(null);
+          setOrders([]);
+          setSettlements([]);
+          setMyPhleboProfile(null);
+          setSelectedOrderId(null);
           setBottomTab('home');
           setCurrentScreen('BOOKING_REQUESTS');
         })();
@@ -99,509 +150,1152 @@ export default function App() {
     });
   };
 
-  const phleboName = session?.profile.displayName || 'Rahul Yadav';
-  const phleboFirstName = phleboName.split(' ')[0] || phleboName;
+  const myPhleboId = session?.profile.phlebotomistId?.trim() || '';
+  const phleboName = session?.profile.displayName || '';
+  const phleboFirstName = phleboName.split(' ')[0] || 'Courier';
   const phleboInitial = phleboName.charAt(0).toUpperCase() || 'P';
-  const phleboId = session?.profile.phlebotomistId || 'PHL-204';
-  const phleboEmail = session?.profile.email || 'phlebo@labsetu.in';
+  const phleboEmail = session?.profile.email || '';
+
+  // Subscribe live to Cloud Firestore (`orders`, `phlebotomists`, `settlements`)
+  useEffect(() => {
+    if (!session?.firebaseUser) {
+      setOrders([]);
+      setSettlements([]);
+      setMyPhleboProfile(null);
+      return;
+    }
+
+    const unsubs: Unsubscribe[] = [];
+    const orderMap = new Map<string, PickupOrder>();
+    const emitOrders = () => {
+      setOrders(
+        Array.from(orderMap.values()).sort((a, b) =>
+          (b.createdAt || '').localeCompare(a.createdAt || '')
+        )
+      );
+    };
+
+    // 1. Open dispatch pool (READY_FOR_PICKUP with no assigned phlebo)
+    unsubs.push(
+      onSnapshot(
+        query(
+          collection(db, 'orders'),
+          where('status', '==', OrderStatus.READY_FOR_PICKUP),
+          where('phlebotomistId', '==', '')
+        ),
+        (snap) => {
+          for (const [k, v] of orderMap.entries()) {
+            if (v.status === OrderStatus.READY_FOR_PICKUP && !v.phlebotomistId) {
+              orderMap.delete(k);
+            }
+          }
+          snap.docs.forEach((d) => {
+            orderMap.set(d.id, { id: d.id, ...(d.data() as Omit<PickupOrder, 'id'>) });
+          });
+          emitOrders();
+        }
+      )
+    );
+
+    // 2. Assigned bookings for this phlebotomist
+    if (myPhleboId) {
+      unsubs.push(
+        onSnapshot(
+          query(collection(db, 'orders'), where('phlebotomistId', '==', myPhleboId)),
+          (snap) => {
+            for (const [k, v] of orderMap.entries()) {
+              if (v.phlebotomistId === myPhleboId) {
+                orderMap.delete(k);
+              }
+            }
+            snap.docs.forEach((d) => {
+              orderMap.set(d.id, { id: d.id, ...(d.data() as Omit<PickupOrder, 'id'>) });
+            });
+            emitOrders();
+          }
+        )
+      );
+
+      // 3. Phlebotomist fleet profile doc
+      unsubs.push(
+        onSnapshot(doc(db, 'phlebotomists', myPhleboId), (snap) => {
+          if (snap.exists()) {
+            setMyPhleboProfile({
+              id: snap.id,
+              ...(snap.data() as Omit<PhlebotomistProfile, 'id'>),
+            });
+          } else {
+            setMyPhleboProfile(null);
+          }
+        })
+      );
+
+      // 4. Live settlements for this phlebotomist
+      unsubs.push(
+        onSnapshot(
+          query(collection(db, 'settlements'), where('phlebotomistId', '==', myPhleboId)),
+          (snap) => {
+            const list = snap.docs
+              .map((d) => ({ id: d.id, ...(d.data() as Omit<SettlementRecord, 'id'>) }))
+              .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+            setSettlements(list);
+          }
+        )
+      );
+    } else if (phleboEmail) {
+      unsubs.push(
+        onSnapshot(
+          query(
+            collection(db, 'phlebotomists'),
+            where('email', '==', phleboEmail.toLowerCase())
+          ),
+          (snap) => {
+            if (!snap.empty) {
+              const first = snap.docs[0];
+              setMyPhleboProfile({
+                id: first.id,
+                ...(first.data() as Omit<PhlebotomistProfile, 'id'>),
+              });
+            }
+          }
+        )
+      );
+    }
+
+    return () => unsubs.forEach((u) => u());
+  }, [session?.firebaseUser, myPhleboId, phleboEmail]);
+
+  const effectivePhleboId = myPhleboId || myPhleboProfile?.id || '';
+  const dutyStatus: PhlebotomistShiftStatus = myPhleboProfile?.status || 'ONLINE';
+  const isOnline = dutyStatus === 'ONLINE';
+
+  const openPoolOrders = useMemo(
+    () =>
+      orders.filter(
+        (o) =>
+          o.status === OrderStatus.READY_FOR_PICKUP &&
+          (!o.phlebotomistId || o.phlebotomistId === '')
+      ),
+    [orders]
+  );
+
+  const myAssignedOrders = useMemo(
+    () =>
+      orders.filter(
+        (o) => Boolean(effectivePhleboId) && o.phlebotomistId === effectivePhleboId
+      ),
+    [orders, effectivePhleboId]
+  );
+
+  const activeAssignedOrders = useMemo(
+    () =>
+      myAssignedOrders.filter(
+        (o) =>
+          o.status === OrderStatus.ASSIGNED_TO_PHLEBO ||
+          o.status === OrderStatus.PICKED_UP ||
+          o.status === OrderStatus.IN_TRANSIT
+      ),
+    [myAssignedOrders]
+  );
+
+  const completedAssignedOrders = useMemo(
+    () =>
+      myAssignedOrders.filter(
+        (o) =>
+          o.status === OrderStatus.DELIVERED_TO_LAB ||
+          o.status === OrderStatus.UNDER_ANALYSIS ||
+          isOrderCompleted(o.status)
+      ),
+    [myAssignedOrders]
+  );
+
+  const selectedOrder = useMemo(
+    () => orders.find((o) => o.id === selectedOrderId) || null,
+    [orders, selectedOrderId]
+  );
+
+  // Merge live settlements with handled orders for accurate earnings computation
+  const earningRows = useMemo(() => {
+    const stlMap = new Map(settlements.map((s) => [s.orderId, s]));
+    return myAssignedOrders
+      .filter((o) => o.status !== OrderStatus.CANCELLED && o.status !== OrderStatus.REJECTED)
+      .map((order) => {
+        const stl = stlMap.get(order.id);
+        const amountInr = stl?.phleboPayoutInr ?? order.courierFeeInr ?? 0;
+        const settled = stl?.status === 'SETTLED';
+        const delivered =
+          order.status === OrderStatus.DELIVERED_TO_LAB ||
+          order.status === OrderStatus.UNDER_ANALYSIS ||
+          isOrderCompleted(order.status);
+        return { order, stl, amountInr, settled, delivered };
+      });
+  }, [myAssignedOrders, settlements]);
+
+  const metrics = useMemo(() => {
+    const now = new Date();
+    const todayStr = now.toDateString();
+    const weekAgoMs = now.getTime() - 7 * 86400000;
+    const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+    const todayEarnings = earningRows
+      .filter((r) => new Date(r.order.updatedAt || r.order.createdAt).toDateString() === todayStr && r.delivered)
+      .reduce((sum, r) => sum + r.amountInr, 0);
+
+    const todayOrdersCount = myAssignedOrders.filter(
+      (o) => new Date(o.updatedAt || o.createdAt).toDateString() === todayStr
+    ).length;
+
+    const todayCompletedCount = completedAssignedOrders.filter(
+      (o) => new Date(o.updatedAt || o.createdAt).toDateString() === todayStr
+    ).length;
+
+    const weeklyEarnings = earningRows
+      .filter(
+        (r) =>
+          r.delivered &&
+          new Date(r.order.updatedAt || r.order.createdAt).getTime() >= weekAgoMs
+      )
+      .reduce((sum, r) => sum + r.amountInr, 0);
+
+    const monthlyEarnings = earningRows
+      .filter(
+        (r) =>
+          r.delivered &&
+          (r.order.updatedAt || r.order.createdAt || '').startsWith(monthPrefix)
+      )
+      .reduce((sum, r) => sum + r.amountInr, 0);
+
+    const totalEarnedDelivered = earningRows
+      .filter((r) => r.delivered)
+      .reduce((sum, r) => sum + r.amountInr, 0);
+
+    const settledInr = earningRows
+      .filter((r) => r.settled)
+      .reduce((sum, r) => sum + r.amountInr, 0);
+
+    const pendingPayoutInr = Math.max(0, totalEarnedDelivered - settledInr);
+
+    const weeklyBars = computeDailyVolumeBars(myAssignedOrders);
+
+    return {
+      todayEarnings,
+      todayOrdersCount,
+      todayCompletedCount,
+      weeklyEarnings,
+      monthlyEarnings,
+      totalEarnedDelivered,
+      settledInr,
+      pendingPayoutInr,
+      weeklyBars,
+    };
+  }, [earningRows, myAssignedOrders, completedAssignedOrders]);
 
   const updateOtpDigit = (index: number, value: string) => {
+    const clean = value.replace(/\D/g, '').slice(-1);
     const updated = [...otpValue];
-    updated[index] = value;
+    updated[index] = clean;
     setOtpValue(updated);
   };
 
-  // History bookings mock records
-  const MOCK_HISTORY_BOOKINGS = [
-    {
-      id: 'BK-10456',
-      patient: 'Ravi Sharma',
-      pickup: 'Sharma Diagnostic Lab, Bhandup (W)',
-      drop: 'Metro Diagnostics, Mulund (W)',
-      tests: 'CBC, LFT, KFT',
-      status: 'In Transit',
-      temp: '4.2°C (Safe)',
-      fee: '₹350',
-      time: '10:15 AM',
-      category: 'active',
-    },
-    {
-      id: 'BK-10455',
-      patient: 'Priya Desai',
-      pickup: 'City Health Lab, Mulund (W)',
-      drop: 'Metro Diagnostics, Mulund (W)',
-      tests: 'TSH, FT4',
-      status: 'Delivered',
-      temp: '4.5°C (Safe)',
-      fee: '₹300',
-      time: '09:40 AM',
-      category: 'completed',
-    },
-    {
-      id: 'BK-10454',
-      patient: 'Ajay Mehta',
-      pickup: 'LifeCare Clinic, Kanjurmarg',
-      drop: 'Metro Diagnostics, Mulund (W)',
-      tests: 'Lipid Profile, KFT',
-      status: 'Delivered',
-      temp: '4.1°C (Safe)',
-      fee: '₹400',
-      time: '08:50 AM',
-      category: 'completed',
-    },
-    {
-      id: 'BK-10453',
-      patient: 'Sneha Patil',
-      pickup: 'Bhandup Care Lab, Bhandup',
-      drop: 'Apex Reference Testing, Thane',
-      tests: 'HbA1c, Glucose Fasting',
-      status: 'Scheduled',
-      temp: 'Cooler Ready',
-      fee: '₹280',
-      time: '02:30 PM',
-      category: 'scheduled',
-    },
-    {
-      id: 'BK-10451',
-      patient: 'Sunita Rao',
-      pickup: 'Sharma Diagnostic Lab, Bhandup (W)',
-      drop: 'Metro Diagnostics, Mulund (W)',
-      tests: 'CBC, ESR',
-      status: 'Delivered',
-      temp: '4.3°C (Safe)',
-      fee: '₹250',
-      time: 'Yesterday',
-      category: 'completed',
-    },
-  ];
+  function openOrderWorkflow(order: PickupOrder) {
+    setSelectedOrderId(order.id);
+    setScannedBarcode(order.specimens[0]?.barcode || '');
+    setPickupTempInput(String(myPhleboProfile?.chillerTempCelsius ?? 4.2));
+    setDropTempInput(
+      String(order.arrivalTemperatureCelsius ?? myPhleboProfile?.chillerTempCelsius ?? 4.2)
+    );
+    setOtpValue(['', '', '', '', '']);
 
-  // Active booking mock details
-  const activeBooking = {
-    id: 'BK-10456',
-    pickupLab: 'Sharma Diagnostic Lab',
-    pickupAddress: 'Bhandup (W)',
-    patientName: 'Ravi Sharma',
-    patientPhone: '+91 98XXX3210',
-    patientAddress: 'Mulund (E)',
-    distanceKm: '3.2 km',
-    dropLab: 'Metro Diagnostics',
-    dropAddress: 'Mulund (W)',
-    tests: 'CBC, LFT, KFT',
-    earnings: '₹350',
-    pickupEta: '< 12 mins',
-  };
+    if (
+      order.status === OrderStatus.PICKED_UP ||
+      order.status === OrderStatus.IN_TRANSIT
+    ) {
+      setCurrentScreen('DROP_SAMPLE');
+    } else {
+      setCurrentScreen('BOOKING_DETAILS');
+    }
+  }
+
+  async function handleAcceptPoolOrder(order: PickupOrder) {
+    if (!session?.firebaseUser) return;
+    if (!effectivePhleboId) {
+      showDynamicAlert({
+        variant: 'warning',
+        title: 'Phlebotomist ID Required',
+        message: `Ask Platform Admin (${ADMIN_LOGIN_EMAIL}) to assign a phlebotomistId to ${phleboEmail} in Admin -> Users & Roles.`,
+      });
+      return;
+    }
+
+    setSubmittingAction(true);
+    try {
+      const now = new Date().toISOString();
+      const evt: CustodyEvent = {
+        id: `EVT-${Date.now()}`,
+        orderId: order.id,
+        eventType: CustodyEventType.COLD_CHAIN_CHECK,
+        timestamp: now,
+        operatorId: session.firebaseUser.uid,
+        operatorName: phleboName,
+        operatorRole: UserRole.PHLEBOTOMIST,
+        notes: `Claimed from open pool by ${phleboName} (${effectivePhleboId})`,
+      };
+
+      await updateDoc(doc(db, 'orders', order.id), {
+        phlebotomistId: effectivePhleboId,
+        phlebotomistName: phleboName,
+        status: OrderStatus.ASSIGNED_TO_PHLEBO,
+        custodyHistory: [...(order.custodyHistory || []), evt],
+        updatedAt: now,
+      });
+
+      await addDoc(collection(db, 'custody_events'), evt);
+
+      await addDoc(collection(db, 'notifications'), {
+        title: `Pickup Assigned: ${order.orderNumber}`,
+        message: `${phleboName} (${effectivePhleboId}) accepted sample collection from ${order.smallLabName}.`,
+        category: NotificationCategory.PICKUP_ASSIGNED,
+        priority: NotificationPriority.NORMAL,
+        recipientRole: UserRole.SMALL_LAB,
+        orderId: order.id,
+        channels: [NotificationChannel.IN_APP],
+        read: false,
+        emailSent: false,
+        pushSent: false,
+        createdAt: now,
+      });
+
+      openOrderWorkflow({
+        ...order,
+        phlebotomistId: effectivePhleboId,
+        phlebotomistName: phleboName,
+        status: OrderStatus.ASSIGNED_TO_PHLEBO,
+      });
+    } catch (err) {
+      showDynamicAlert({
+        variant: 'error',
+        title: 'Claim Failed',
+        message: (err as Error).message || 'Could not claim this booking from Firestore.',
+      });
+    } finally {
+      setSubmittingAction(false);
+    }
+  }
+
+  function handleDeclineAssignedOrder(order: PickupOrder) {
+    if (!session?.firebaseUser) return;
+    showDynamicAlert({
+      variant: 'confirm',
+      title: `Release Booking ${order.orderNumber}?`,
+      message: 'This returns the sample pickup request back to the Open Dispatch Pool.',
+      confirmLabel: 'Release Booking',
+      cancelLabel: 'Keep Trip',
+      onConfirm: () => {
+        if (!session?.firebaseUser) return;
+        void (async () => {
+          try {
+            const now = new Date().toISOString();
+            const evt: CustodyEvent = {
+              id: `EVT-${Date.now()}`,
+              orderId: order.id,
+              eventType: CustodyEventType.COLD_CHAIN_CHECK,
+              timestamp: now,
+              operatorId: session.firebaseUser!.uid,
+              operatorName: phleboName,
+              operatorRole: UserRole.PHLEBOTOMIST,
+              notes: `Released back to open dispatch pool by ${phleboName}`,
+            };
+
+            await updateDoc(doc(db, 'orders', order.id), {
+              phlebotomistId: '',
+              phlebotomistName: '',
+              status: OrderStatus.READY_FOR_PICKUP,
+              custodyHistory: [...(order.custodyHistory || []), evt],
+              updatedAt: now,
+            });
+            await addDoc(collection(db, 'custody_events'), evt);
+            if (selectedOrderId === order.id) {
+              setSelectedOrderId(null);
+              setCurrentScreen('BOOKING_REQUESTS');
+            }
+            showDynamicAlert({
+              variant: 'info',
+              title: 'Booking Returned to Pool',
+              message: `${order.orderNumber} is back in Open Dispatch Pool.`,
+            });
+          } catch (err) {
+            showDynamicAlert({
+              variant: 'error',
+              title: 'Release Failed',
+              message: (err as Error).message || 'Unable to release booking.',
+            });
+          }
+        })();
+      },
+    });
+  }
+
+  async function handleConfirmCollection(order: PickupOrder) {
+    if (!session?.firebaseUser) return;
+    const cleanBarcode = scannedBarcode.trim();
+    const numericTemp = Number.parseFloat(pickupTempInput);
+
+    if (!cleanBarcode) {
+      showDynamicAlert({
+        variant: 'warning',
+        title: 'Specimen Barcode Required',
+        message: 'Scan or enter the specimen tube barcode before marking pickup complete.',
+      });
+      return;
+    }
+    if (Number.isNaN(numericTemp)) {
+      showDynamicAlert({
+        variant: 'warning',
+        title: 'Temperature Required',
+        message: 'Enter a numeric chiller temperature in °C.',
+      });
+      return;
+    }
+
+    setSubmittingAction(true);
+    try {
+      const now = new Date().toISOString();
+      const evt: CustodyEvent = {
+        id: `EVT-${Date.now()}`,
+        orderId: order.id,
+        eventType: CustodyEventType.PICKED_UP_BY_PHLEBO,
+        timestamp: now,
+        operatorId: session.firebaseUser.uid,
+        operatorName: phleboName,
+        operatorRole: UserRole.PHLEBOTOMIST,
+        temperatureCelsius: numericTemp,
+        notes: `Barcode ${cleanBarcode} scanned at ${numericTemp}°C by ${phleboName}`,
+      };
+
+      await updateDoc(doc(db, 'orders', order.id), {
+        status: OrderStatus.PICKED_UP,
+        actualPickupAt: now,
+        arrivalTemperatureCelsius: numericTemp,
+        custodyHistory: [...(order.custodyHistory || []), evt],
+        updatedAt: now,
+      });
+      await addDoc(collection(db, 'custody_events'), evt);
+
+      await addDoc(collection(db, 'notifications'), {
+        title: `Sample Collected: ${order.orderNumber}`,
+        message: `${phleboName} collected barcode ${cleanBarcode} (${numericTemp}°C) en route to ${order.targetLabName}.`,
+        category: NotificationCategory.SAMPLE_COLLECTED,
+        priority: NotificationPriority.NORMAL,
+        recipientRole: UserRole.SMALL_LAB,
+        orderId: order.id,
+        channels: [NotificationChannel.IN_APP],
+        read: false,
+        emailSent: false,
+        pushSent: false,
+        createdAt: now,
+      });
+
+      if (numericTemp < 2 || numericTemp > 8) {
+        await addDoc(collection(db, 'notifications'), {
+          title: `Cold-Chain Excursion Alert — ${order.orderNumber}`,
+          message: `Specimen temp logged at ${numericTemp}°C (outside 2°C–8°C safe band) by ${phleboName}.`,
+          category: NotificationCategory.TEMPERATURE_ALERT,
+          priority: NotificationPriority.CRITICAL,
+          recipientEmail: ADMIN_LOGIN_EMAIL,
+          recipientRole: UserRole.ADMIN,
+          orderId: order.id,
+          channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+          read: false,
+          emailSent: false,
+          pushSent: false,
+          createdAt: now,
+        });
+      }
+
+      setOtpValue(['', '', '', '', '']);
+      setDropTempInput(String(numericTemp));
+      setCurrentScreen('DROP_SAMPLE');
+
+      showDynamicAlert({
+        variant: numericTemp < 2 || numericTemp > 8 ? 'warning' : 'success',
+        title: 'Barcode Verified & Collected',
+        message: `Specimen ${cleanBarcode} marked PICKED_UP at ${numericTemp}°C.`,
+        detail: `Proceed to ${order.targetLabName} for 5-digit Handover OTP.`,
+      });
+    } catch (err) {
+      showDynamicAlert({
+        variant: 'error',
+        title: 'Collection Update Failed',
+        message: (err as Error).message || 'Could not update pickup in Firestore.',
+      });
+    } finally {
+      setSubmittingAction(false);
+    }
+  }
+
+  async function handleConfirmDropOtp(order: PickupOrder) {
+    if (!session?.firebaseUser) return;
+    const enteredOtp = otpValue.join('').replace(/\D/g, '');
+    const numericTemp = Number.parseFloat(dropTempInput);
+
+    if (enteredOtp.length < 5) {
+      showDynamicAlert({
+        variant: 'warning',
+        title: '5-Digit Handover OTP Required',
+        message: 'Ask the receiving lab / Small Lab coordinator for the 5-digit Handover OTP.',
+      });
+      return;
+    }
+
+    if (order.handoverOtp && enteredOtp !== order.handoverOtp) {
+      showDynamicAlert({
+        variant: 'error',
+        title: 'Handover OTP Mismatch',
+        message: `Entered code "${enteredOtp}" does not match booking ${order.orderNumber}. Verify directly with receiving desk.`,
+      });
+      return;
+    }
+
+    if (Number.isNaN(numericTemp)) {
+      showDynamicAlert({
+        variant: 'warning',
+        title: 'Arrival Temperature Required',
+        message: 'Enter numeric chiller drop temperature in °C.',
+      });
+      return;
+    }
+
+    setSubmittingAction(true);
+    try {
+      const now = new Date().toISOString();
+      const evt: CustodyEvent = {
+        id: `EVT-${Date.now()}`,
+        orderId: order.id,
+        eventType: CustodyEventType.DELIVERED_TO_PARTNER_LAB,
+        timestamp: now,
+        operatorId: session.firebaseUser.uid,
+        operatorName: phleboName,
+        operatorRole: UserRole.PHLEBOTOMIST,
+        temperatureCelsius: numericTemp,
+        notes: `Handover OTP verified & delivered to ${order.targetLabName} at ${numericTemp}°C`,
+      };
+
+      await updateDoc(doc(db, 'orders', order.id), {
+        status: OrderStatus.DELIVERED_TO_LAB,
+        actualDeliveredAt: now,
+        arrivalTemperatureCelsius: numericTemp,
+        custodyHistory: [...(order.custodyHistory || []), evt],
+        updatedAt: now,
+      });
+      await addDoc(collection(db, 'custody_events'), evt);
+
+      await addDoc(collection(db, 'notifications'), {
+        title: `Specimen Arrived: ${order.orderNumber}`,
+        message: `${phleboName} delivered ${order.specimens.map((s) => s.testCode).join(', ')} at ${numericTemp}°C. Ready for QC.`,
+        category: NotificationCategory.SAMPLE_COLLECTED,
+        priority: NotificationPriority.HIGH,
+        recipientRole: UserRole.LARGE_LAB,
+        orderId: order.id,
+        channels: [NotificationChannel.IN_APP],
+        read: false,
+        emailSent: false,
+        pushSent: false,
+        createdAt: now,
+      });
+
+      setLastReceipt({
+        orderNumber: order.orderNumber,
+        targetLabName: order.targetLabName,
+        feeInr: order.courierFeeInr || 0,
+        tempCelsius: numericTemp,
+        completedAt: new Date(now).toLocaleTimeString('en-IN', {
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+      });
+      setOtpValue(['', '', '', '', '']);
+      setCurrentScreen('COMPLETED');
+    } catch (err) {
+      showDynamicAlert({
+        variant: 'error',
+        title: 'Drop Verification Failed',
+        message: (err as Error).message || 'Could not update delivery in Firestore.',
+      });
+    } finally {
+      setSubmittingAction(false);
+    }
+  }
+
+  async function handleShiftUpdate(nextStatus: PhlebotomistShiftStatus) {
+    if (!effectivePhleboId) {
+      showDynamicAlert({
+        variant: 'warning',
+        title: 'Missing Phlebotomist Fleet ID',
+        message: `Ask Platform Admin (${ADMIN_LOGIN_EMAIL}) to assign your phlebotomistId in Admin -> Phlebotomists before toggling duty state.`,
+      });
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, 'phlebotomists', effectivePhleboId), {
+        status: nextStatus,
+        updatedAt: new Date().toISOString(),
+      });
+      showDynamicAlert({
+        variant: 'success',
+        title: 'Shift Status Updated',
+        message: `Live duty status set to ${nextStatus} in Cloud Firestore.`,
+      });
+    } catch (err) {
+      showDynamicAlert({
+        variant: 'warning',
+        title: 'Fleet Record Update Blocked',
+        message:
+          (err as Error).message ||
+          'Ensure Admin has initialized your Phlebotomist profile document in Firestore.',
+      });
+    }
+  }
+
+  function handleTriggerSos() {
+    showDynamicAlert({
+      variant: 'confirm',
+      title: 'Trigger Cold-Chain Emergency SOS?',
+      message:
+        'This writes a CRITICAL alert + email directly to Platform Admin Operations Desk for backup courier dispatch.',
+      confirmLabel: 'Dispatch SOS',
+      cancelLabel: 'Cancel',
+      onConfirm: () => {
+        void (async () => {
+          try {
+            const now = new Date().toISOString();
+            const alertTitle = `EMERGENCY SOS — ${effectivePhleboId || phleboName}`;
+            const alertMessage = `Field Phlebotomist ${phleboName} (${phleboEmail}) triggered an Emergency Cold-Chain SOS.`;
+
+            await addDoc(collection(db, 'notifications'), {
+              title: alertTitle,
+              message: alertMessage,
+              category: NotificationCategory.TEMPERATURE_ALERT,
+              priority: NotificationPriority.CRITICAL,
+              recipientEmail: ADMIN_LOGIN_EMAIL,
+              recipientRole: UserRole.ADMIN,
+              channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+              read: false,
+              emailSent: false,
+              pushSent: false,
+              createdAt: now,
+            });
+
+            await addDoc(collection(db, 'mail'), {
+              to: [ADMIN_LOGIN_EMAIL],
+              message: {
+                subject: `[LabSetu SOS] ${alertTitle}`,
+                text: alertMessage,
+              },
+              createdAt: now,
+            });
+
+            showDynamicAlert({
+              variant: 'error',
+              title: 'Emergency SOS Sent to Admin',
+              message: `Critical alert & email queued in Cloud Firestore for ${ADMIN_LOGIN_EMAIL}.`,
+              detail: `Courier ID: ${effectivePhleboId || phleboEmail}`,
+            });
+          } catch (err) {
+            showDynamicAlert({
+              variant: 'error',
+              title: 'SOS Dispatch Failed',
+              message: (err as Error).message || 'Could not queue SOS alert.',
+            });
+          }
+        })();
+      },
+    });
+  }
 
   /* =========================================================================
-   * 1. SCREEN 1: BOOKING REQUESTS (HOME LIST)
+   * 1. SCREEN 1: BOOKING REQUESTS (LIVE POOL / ACTIVE / COMPLETED)
    * ========================================================================= */
-  const renderBookingRequestsScreen = () => (
-    <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
-      {/* Dark Teal Hero Header */}
-      <View style={styles.heroHeader}>
-        <View style={styles.heroRow}>
-          <View style={styles.profileSection}>
-            <View style={styles.avatarCircle}>
-              <Text style={styles.avatarText}>{phleboInitial}</Text>
-            </View>
-            <View>
-              <Text style={styles.greetingTitle}>Hello, {phleboFirstName}</Text>
-              <Text style={styles.greetingSubtitle}>Field Phlebotomist • {phleboId}</Text>
-            </View>
-          </View>
+  const renderBookingRequestsScreen = () => {
+    const displayedOrders =
+      requestTab === 'new'
+        ? openPoolOrders
+        : requestTab === 'active'
+        ? activeAssignedOrders
+        : completedAssignedOrders;
 
-          {/* Online Toggle Switch */}
-          <TouchableOpacity
-            style={[styles.onlinePill, { backgroundColor: isOnline ? '#16A34A' : '#64748B' }]}
-            onPress={() => setIsOnline(!isOnline)}
-          >
-            <Text style={styles.onlinePillText}>{isOnline ? 'Online ●' : 'Offline ○'}</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Today's Summary Floating Card */}
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryTitle}>Today's Summary</Text>
-          <View style={styles.summaryMetricsRow}>
-            <View style={styles.summaryMetricCol}>
-              <Text style={styles.metricNumber}>5</Text>
-              <Text style={styles.metricLabel}>Bookings</Text>
-            </View>
-            <View style={styles.summaryDivider} />
-            <View style={styles.summaryMetricCol}>
-              <Text style={styles.metricNumber}>4</Text>
-              <Text style={styles.metricLabel}>Completed</Text>
-            </View>
-            <View style={styles.summaryDivider} />
-            <View style={styles.summaryMetricCol}>
-              <Text style={[styles.metricNumber, { color: COLORS.primaryTeal }]}>₹1,240</Text>
-              <Text style={styles.metricLabel}>Earnings</Text>
-            </View>
-          </View>
-        </View>
-      </View>
-
-      {/* Tabs: New (3) | Active (1) | Completed */}
-      <View style={styles.bodyContainer}>
-        <View style={styles.requestTabsRow}>
-          <TouchableOpacity
-            style={[styles.tabButton, requestTab === 'new' && styles.tabButtonActive]}
-            onPress={() => setRequestTab('new')}
-          >
-            <Text style={[styles.tabButtonText, requestTab === 'new' && styles.tabButtonTextActive]}>
-              New (3)
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.tabButton, requestTab === 'active' && styles.tabButtonActive]}
-            onPress={() => setRequestTab('active')}
-          >
-            <Text style={[styles.tabButtonText, requestTab === 'active' && styles.tabButtonTextActive]}>
-              Active (1)
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.tabButton, requestTab === 'completed' && styles.tabButtonActive]}
-            onPress={() => setRequestTab('completed')}
-          >
-            <Text style={[styles.tabButtonText, requestTab === 'completed' && styles.tabButtonTextActive]}>
-              Completed
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Card 1: BK-10456 */}
-        <View style={styles.bookingCard}>
-          <View style={styles.bookingCardTop}>
-            <View>
-              <Text style={styles.bookingTitle}>New Booking</Text>
-              <Text style={styles.bookingId}>ID: {activeBooking.id}</Text>
-            </View>
-            <View style={{ alignItems: 'flex-end' }}>
-              <View style={styles.pickupTimeBadge}>
-                <Text style={styles.pickupTimeText}>Pickup {activeBooking.pickupEta}</Text>
+    return (
+      <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
+        <View style={styles.heroHeader}>
+          <View style={styles.heroRow}>
+            <View style={styles.profileSection}>
+              <View style={styles.avatarCircle}>
+                <Text style={styles.avatarText}>{phleboInitial}</Text>
               </View>
-              <Text style={styles.bookingPrice}>{activeBooking.earnings}</Text>
-            </View>
-          </View>
-
-          {/* Route Preview */}
-          <View style={styles.routeContainer}>
-            <View style={styles.routeRow}>
-              <View style={[styles.dotMarker, { backgroundColor: COLORS.primaryTeal }]} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.routePlaceTitle}>{activeBooking.pickupLab}</Text>
-                <Text style={styles.routePlaceSubtitle}>{activeBooking.pickupAddress}</Text>
+              <View>
+                <Text style={styles.greetingTitle}>Hello, {phleboFirstName}</Text>
+                <Text style={styles.greetingSubtitle}>
+                  Field Phlebotomist • {effectivePhleboId || 'ID Unassigned'}
+                </Text>
               </View>
             </View>
 
-            <View style={styles.routeConnectingLine} />
+            <TouchableOpacity
+              style={[
+                styles.onlinePill,
+                {
+                  backgroundColor: isOnline
+                    ? '#16A34A'
+                    : dutyStatus === 'BREAK'
+                    ? '#D97706'
+                    : '#64748B',
+                },
+              ]}
+              onPress={() => void handleShiftUpdate(isOnline ? 'OFFLINE' : 'ONLINE')}
+            >
+              <Text style={styles.onlinePillText}>{dutyStatus}</Text>
+            </TouchableOpacity>
+          </View>
 
-            <View style={styles.routeRow}>
-              <View style={[styles.dotMarker, { backgroundColor: COLORS.errorRed }]} />
-              <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-between' }}>
-                <View>
-                  <Text style={styles.routePlaceTitle}>Patient Home</Text>
-                  <Text style={styles.routePlaceSubtitle}>{activeBooking.patientAddress}</Text>
+          <View style={styles.summaryCard}>
+            <Text style={styles.summaryTitle}>Today&apos;s Live Summary (Firestore)</Text>
+            <View style={styles.summaryMetricsRow}>
+              <View style={styles.summaryMetricCol}>
+                <Text style={styles.metricNumber}>{metrics.todayOrdersCount}</Text>
+                <Text style={styles.metricLabel}>Assigned Today</Text>
+              </View>
+              <View style={styles.summaryDivider} />
+              <View style={styles.summaryMetricCol}>
+                <Text style={styles.metricNumber}>{metrics.todayCompletedCount}</Text>
+                <Text style={styles.metricLabel}>Delivered</Text>
+              </View>
+              <View style={styles.summaryDivider} />
+              <View style={styles.summaryMetricCol}>
+                <Text style={[styles.metricNumber, { color: COLORS.primaryTeal }]}>
+                  {formatInr(metrics.todayEarnings)}
+                </Text>
+                <Text style={styles.metricLabel}>Earned Today</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.bodyContainer}>
+          {!effectivePhleboId ? (
+            <View style={styles.warningBox}>
+              <Text style={styles.warningBoxText}>
+                Your account does not have a phlebotomistId yet. Ask Platform Admin (
+                {ADMIN_LOGIN_EMAIL}) to assign one in Users &amp; Roles so you can claim
+                bookings.
+              </Text>
+            </View>
+          ) : null}
+
+          <View style={styles.requestTabsRow}>
+            <TouchableOpacity
+              style={[styles.tabButton, requestTab === 'new' && styles.tabButtonActive]}
+              onPress={() => setRequestTab('new')}
+            >
+              <Text
+                style={[styles.tabButtonText, requestTab === 'new' && styles.tabButtonTextActive]}
+              >
+                Pool ({openPoolOrders.length})
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.tabButton, requestTab === 'active' && styles.tabButtonActive]}
+              onPress={() => setRequestTab('active')}
+            >
+              <Text
+                style={[
+                  styles.tabButtonText,
+                  requestTab === 'active' && styles.tabButtonTextActive,
+                ]}
+              >
+                Active ({activeAssignedOrders.length})
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.tabButton, requestTab === 'completed' && styles.tabButtonActive]}
+              onPress={() => setRequestTab('completed')}
+            >
+              <Text
+                style={[
+                  styles.tabButtonText,
+                  requestTab === 'completed' && styles.tabButtonTextActive,
+                ]}
+              >
+                Completed ({completedAssignedOrders.length})
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {displayedOrders.length === 0 ? (
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyTitle}>
+                {requestTab === 'new'
+                  ? 'No Unassigned Pool Bookings'
+                  : requestTab === 'active'
+                  ? 'No Active Trips Right Now'
+                  : 'No Completed Deliveries Yet'}
+              </Text>
+              <Text style={styles.emptySub}>
+                Live pickup orders created by Small Collection Labs sync here automatically.
+              </Text>
+            </View>
+          ) : (
+            displayedOrders.map((order) => {
+              const isOpenPool = requestTab === 'new';
+              const isInTransit =
+                order.status === OrderStatus.PICKED_UP ||
+                order.status === OrderStatus.IN_TRANSIT;
+              return (
+                <View key={order.id} style={styles.bookingCard}>
+                  <View style={styles.bookingCardTop}>
+                    <View>
+                      <Text style={styles.bookingTitle}>
+                        {isOpenPool ? 'Open Pickup Request' : order.status}
+                      </Text>
+                      <Text style={styles.bookingId}>
+                        ID: {order.orderNumber} • {order.patient.pseudonym}
+                      </Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <View style={styles.pickupTimeBadge}>
+                        <Text style={styles.pickupTimeText}>{order.priority}</Text>
+                      </View>
+                      <Text style={styles.bookingPrice}>
+                        {formatInr(order.courierFeeInr || 0)}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.routeContainer}>
+                    <View style={styles.routeRow}>
+                      <View style={[styles.dotMarker, { backgroundColor: COLORS.primaryTeal }]} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.routePlaceTitle}>{order.smallLabName}</Text>
+                        <Text style={styles.routePlaceSubtitle}>{order.pickupLocation.address}</Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.routeConnectingLine} />
+
+                    <View style={styles.routeRow}>
+                      <View style={[styles.dotMarker, { backgroundColor: COLORS.errorRed }]} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.routePlaceTitle}>{order.targetLabName}</Text>
+                        <Text style={styles.routePlaceSubtitle}>
+                          {order.deliveryLocation.address}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  <Text style={styles.testsPreview}>
+                    Specimens: {order.specimens.map((s) => `${s.testCode} (${s.barcode})`).join(', ')}
+                  </Text>
+
+                  {isOpenPool ? (
+                    <View style={styles.actionsRow}>
+                      <TouchableOpacity
+                        style={[styles.btnPrimary, submittingAction && { opacity: 0.65 }]}
+                        disabled={submittingAction}
+                        onPress={() => void handleAcceptPoolOrder(order)}
+                      >
+                        <Text style={styles.btnPrimaryText}>Accept &amp; Claim Pickup →</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : requestTab === 'active' ? (
+                    <View style={styles.actionsRow}>
+                      {order.status === OrderStatus.ASSIGNED_TO_PHLEBO ? (
+                        <TouchableOpacity
+                          style={styles.btnSecondary}
+                          onPress={() => handleDeclineAssignedOrder(order)}
+                        >
+                          <Text style={styles.btnSecondaryText}>Release</Text>
+                        </TouchableOpacity>
+                      ) : null}
+
+                      <TouchableOpacity
+                        style={styles.btnPrimary}
+                        onPress={() => openOrderWorkflow(order)}
+                      >
+                        <Text style={styles.btnPrimaryText}>
+                          {isInTransit ? 'Drop & Verify OTP →' : 'Start Pickup →'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.historyCardFooter}>
+                      <Text style={styles.historyCardTemp}>
+                        Delivered {order.arrivalTemperatureCelsius ?? '—'}°C
+                      </Text>
+                      <Text style={styles.historyCardTests}>{order.status}</Text>
+                    </View>
+                  )}
                 </View>
-                <Text style={styles.distanceBadge}>{activeBooking.distanceKm}</Text>
-              </View>
-            </View>
-          </View>
-
-          <Text style={styles.testsPreview}>Tests: {activeBooking.tests}</Text>
-
-          {/* Actions: Reject / Accept */}
-          <View style={styles.actionsRow}>
-            <TouchableOpacity
-              style={styles.btnSecondary}
-              onPress={() =>
-                showDynamicAlert({
-                  variant: 'confirm',
-                  title: `Decline Booking ${activeBooking.id}?`,
-                  message: 'This sample collection request will be reassigned to the next available phlebotomist.',
-                  confirmLabel: 'Decline',
-                  cancelLabel: 'Keep',
-                  onConfirm: () =>
-                    showDynamicAlert({
-                      variant: 'info',
-                      title: 'Booking Declined',
-                      message: `Assignment ${activeBooking.id} passed to next available phlebotomist.`,
-                    }),
-                })
-              }
-            >
-              <Text style={styles.btnSecondaryText}>Reject</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.btnPrimary}
-              onPress={() => setCurrentScreen('BOOKING_DETAILS')}
-            >
-              <Text style={styles.btnPrimaryText}>Accept</Text>
-            </TouchableOpacity>
-          </View>
+              );
+            })
+          )}
         </View>
-
-        {/* Card 2: BK-10457 */}
-        <View style={styles.bookingCard}>
-          <View style={styles.bookingCardTop}>
-            <View>
-              <Text style={styles.bookingTitle}>New Booking</Text>
-              <Text style={styles.bookingId}>ID: BK-10457</Text>
-            </View>
-            <View style={{ alignItems: 'flex-end' }}>
-              <View style={styles.pickupTimeBadge}>
-                <Text style={styles.pickupTimeText}>Pickup &lt; 18 mins</Text>
-              </View>
-              <Text style={styles.bookingPrice}>₹280</Text>
-            </View>
-          </View>
-
-          <View style={styles.routeContainer}>
-            <View style={styles.routeRow}>
-              <View style={[styles.dotMarker, { backgroundColor: COLORS.primaryTeal }]} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.routePlaceTitle}>City Health Clinic</Text>
-                <Text style={styles.routePlaceSubtitle}>Mulund (W)</Text>
-              </View>
-            </View>
-          </View>
-          <Text style={styles.testsPreview}>Tests: TSH, Lipid Profile</Text>
-        </View>
-      </View>
-    </ScrollView>
-  );
+      </ScrollView>
+    );
+  };
 
   /* =========================================================================
    * 2. SCREEN 2: BOOKING DETAILS & ROUTE
    * ========================================================================= */
-  const renderBookingDetailsScreen = () => (
-    <ScrollView style={styles.scrollArea}>
-      <View style={styles.navBarHeader}>
-        <TouchableOpacity onPress={() => setCurrentScreen('BOOKING_REQUESTS')}>
-          <Text style={styles.navBarBackArrow}>←</Text>
-        </TouchableOpacity>
-        <View style={{ flex: 1, alignItems: 'center' }}>
-          <Text style={styles.navBarTitle}>Booking Details</Text>
-          <Text style={styles.navBarSubtitle}>{activeBooking.id}</Text>
+  const renderBookingDetailsScreen = () => {
+    if (!selectedOrder) {
+      return renderBookingRequestsScreen();
+    }
+    return (
+      <ScrollView style={styles.scrollArea}>
+        <View style={styles.navBarHeader}>
+          <TouchableOpacity onPress={() => setCurrentScreen('BOOKING_REQUESTS')}>
+            <Text style={styles.navBarBackArrow}>←</Text>
+          </TouchableOpacity>
+          <View style={{ flex: 1, alignItems: 'center' }}>
+            <Text style={styles.navBarTitle}>Booking Details</Text>
+            <Text style={styles.navBarSubtitle}>{selectedOrder.orderNumber}</Text>
+          </View>
+          <View style={{ width: 24 }} />
         </View>
-        <View style={{ width: 24 }} />
-      </View>
 
-      <View style={styles.bodyContainer}>
-        {/* Full Chain Timeline */}
-        <View style={styles.timelineCard}>
-          {/* 1. Pickup Lab */}
-          <View style={styles.timelineItem}>
-            <View style={[styles.dotMarker, { backgroundColor: COLORS.primaryTeal }]} />
-            <View style={{ marginLeft: 10, flex: 1 }}>
-              <Text style={styles.timelineLabel}>Pickup</Text>
-              <Text style={styles.timelineTitle}>{activeBooking.pickupLab}</Text>
-              <Text style={styles.timelineSub}>{activeBooking.pickupAddress}</Text>
+        <View style={styles.bodyContainer}>
+          <View style={styles.timelineCard}>
+            <View style={styles.timelineItem}>
+              <View style={[styles.dotMarker, { backgroundColor: COLORS.primaryTeal }]} />
+              <View style={{ marginLeft: 10, flex: 1 }}>
+                <Text style={styles.timelineLabel}>Pickup Source Lab</Text>
+                <Text style={styles.timelineTitle}>{selectedOrder.smallLabName}</Text>
+                <Text style={styles.timelineSub}>{selectedOrder.pickupLocation.address}</Text>
+              </View>
+            </View>
+
+            <View style={styles.timelineLine} />
+
+            <View style={styles.timelineItem}>
+              <View style={[styles.dotMarker, { backgroundColor: COLORS.accentBlue }]} />
+              <View style={{ marginLeft: 10, flex: 1 }}>
+                <Text style={styles.timelineLabel}>Patient Case</Text>
+                <Text style={styles.timelineTitle}>{selectedOrder.patient.pseudonym}</Text>
+                <Text style={styles.timelineSub}>
+                  {selectedOrder.patient.age} yrs • {selectedOrder.patient.gender}
+                </Text>
+              </View>
+              {selectedOrder.pickupLocation.contactPhone ? (
+                <TouchableOpacity
+                  style={styles.callCircleBtn}
+                  onPress={() =>
+                    showDynamicAlert({
+                      variant: 'info',
+                      title: 'Collection Lab Contact',
+                      message: `Contact ${selectedOrder.smallLabName} desk before pickup arrival.`,
+                      detail: selectedOrder.pickupLocation.contactPhone,
+                    })
+                  }
+                >
+                  <Text style={{ color: 'white', fontWeight: 'bold' }}>📞</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            <View style={styles.timelineLine} />
+
+            <View style={styles.timelineItem}>
+              <View style={[styles.dotMarker, { backgroundColor: COLORS.successGreen }]} />
+              <View style={{ marginLeft: 10, flex: 1 }}>
+                <Text style={styles.timelineLabel}>Drop Reference Hub</Text>
+                <Text style={styles.timelineTitle}>{selectedOrder.targetLabName}</Text>
+                <Text style={styles.timelineSub}>{selectedOrder.deliveryLocation.address}</Text>
+              </View>
             </View>
           </View>
 
-          <View style={styles.timelineLine} />
-
-          {/* 2. Collection Patient */}
-          <View style={styles.timelineItem}>
-            <View style={[styles.dotMarker, { backgroundColor: COLORS.accentBlue }]} />
-            <View style={{ marginLeft: 10, flex: 1 }}>
-              <Text style={styles.timelineLabel}>Collection</Text>
-              <Text style={styles.timelineTitle}>{activeBooking.patientName}</Text>
-              <Text style={styles.timelineSub}>{activeBooking.patientPhone}</Text>
-              <Text style={styles.timelineSub}>{activeBooking.patientAddress}</Text>
-            </View>
-            <TouchableOpacity
-              style={styles.callCircleBtn}
-              onPress={() =>
-                showDynamicAlert({
-                  variant: 'info',
-                  title: 'Dialing Patient',
-                  message: `Connecting secure bridge call to ${activeBooking.patientName}.`,
-                  detail: activeBooking.patientPhone,
-                })
-              }
-            >
-              <Text style={{ color: 'white', fontWeight: 'bold' }}>📞</Text>
-            </TouchableOpacity>
+          <View style={styles.infoCard}>
+            <Text style={styles.infoCardLabel}>Required Diagnostic Specimens</Text>
+            <Text style={styles.infoCardValue}>
+              {selectedOrder.specimens
+                .map((s) => `${s.testCode} (${s.tubeType}) [${s.barcode}]`)
+                .join('\n')}
+            </Text>
+            <View style={{ height: 1, backgroundColor: COLORS.borderLight, marginVertical: 12 }} />
+            <Text style={styles.infoCardLabel}>Courier Fee • Priority</Text>
+            <Text style={[styles.infoCardValue, { color: COLORS.primaryTeal }]}>
+              {formatInr(selectedOrder.courierFeeInr || 0)} • {selectedOrder.priority}
+            </Text>
           </View>
 
-          <View style={styles.timelineLine} />
-
-          {/* 3. Drop Partner Lab */}
-          <View style={styles.timelineItem}>
-            <View style={[styles.dotMarker, { backgroundColor: COLORS.successGreen }]} />
-            <View style={{ marginLeft: 10, flex: 1 }}>
-              <Text style={styles.timelineLabel}>Drop</Text>
-              <Text style={styles.timelineTitle}>{activeBooking.dropLab}</Text>
-              <Text style={styles.timelineSub}>{activeBooking.dropAddress}</Text>
-            </View>
-          </View>
+          <TouchableOpacity
+            style={styles.ctaButton}
+            onPress={() => setCurrentScreen('COLLECT_SAMPLE')}
+          >
+            <Text style={styles.ctaButtonText}>Proceed to Barcode Scan &amp; Collect</Text>
+          </TouchableOpacity>
         </View>
-
-        {/* Tests Info Card */}
-        <View style={styles.infoCard}>
-          <Text style={styles.infoCardLabel}>Required Diagnostic Tests</Text>
-          <Text style={styles.infoCardValue}>{activeBooking.tests}</Text>
-          <View style={{ height: 1, backgroundColor: COLORS.borderLight, marginVertical: 12 }} />
-          <Text style={styles.infoCardLabel}>Cold-Chain Mandate</Text>
-          <Text style={[styles.infoCardValue, { color: COLORS.primaryTeal }]}>
-            Refrigerated Gel Pack (2°C - 8°C)
-          </Text>
-        </View>
-
-        {/* Bottom CTA */}
-        <TouchableOpacity
-          style={styles.ctaButton}
-          onPress={() => setCurrentScreen('COLLECT_SAMPLE')}
-        >
-          <Text style={styles.ctaButtonText}>Start Pickup</Text>
-        </TouchableOpacity>
-      </View>
-    </ScrollView>
-  );
+      </ScrollView>
+    );
+  };
 
   /* =========================================================================
-   * 3. SCREEN 3: SAMPLE COLLECTION & BARCODE SCANNER
+   * 3. SCREEN 3: SAMPLE COLLECTION & BARCODE ENTRY
    * ========================================================================= */
-  const renderCollectSampleScreen = () => (
-    <View style={styles.fullscreenContainer}>
-      <View style={styles.navBarHeader}>
-        <TouchableOpacity onPress={() => setCurrentScreen('BOOKING_DETAILS')}>
-          <Text style={styles.navBarBackArrow}>←</Text>
-        </TouchableOpacity>
-        <View style={{ flex: 1, alignItems: 'center' }}>
-          <Text style={styles.navBarTitle}>Collect Sample</Text>
-          <Text style={styles.navBarSubtitle}>{activeBooking.id}</Text>
-        </View>
-        <View style={{ width: 24 }} />
-      </View>
-
-      <View style={[styles.bodyContainer, { flex: 1, justifyContent: 'center', alignItems: 'center' }]}>
-        {/* Vial Graphic Box */}
-        <View style={styles.vialGraphicFrame}>
-          <Text style={{ fontSize: 48, marginBottom: 8 }}>🧪</Text>
-          <View style={styles.barcodeReticle} />
-          <Text style={styles.scannedBarcodePill}>{scannedBarcode}</Text>
+  const renderCollectSampleScreen = () => {
+    if (!selectedOrder) {
+      return renderBookingRequestsScreen();
+    }
+    return (
+      <ScrollView style={styles.scrollArea}>
+        <View style={styles.navBarHeader}>
+          <TouchableOpacity onPress={() => setCurrentScreen('BOOKING_DETAILS')}>
+            <Text style={styles.navBarBackArrow}>←</Text>
+          </TouchableOpacity>
+          <View style={{ flex: 1, alignItems: 'center' }}>
+            <Text style={styles.navBarTitle}>Collect Sample</Text>
+            <Text style={styles.navBarSubtitle}>{selectedOrder.orderNumber}</Text>
+          </View>
+          <View style={{ width: 24 }} />
         </View>
 
-        <Text style={styles.collectTitle}>Scan Sample Barcode</Text>
-        <Text style={styles.collectSubtitle}>
-          Align camera with the specimen vial barcode to link chain-of-custody.
-        </Text>
-
-        {showManualEntry ? (
-          <View style={{ width: '100%', marginBottom: 20 }}>
-            <Text style={{ fontSize: 13, color: COLORS.textSecondary, marginBottom: 6 }}>
-              Enter Specimen Barcode:
+        <View style={[styles.bodyContainer, { alignItems: 'center' }]}>
+          <View style={styles.vialGraphicFrame}>
+            <Text style={{ fontSize: 44, marginBottom: 8 }}>🧪</Text>
+            <View style={styles.barcodeReticle} />
+            <Text style={styles.scannedBarcodePill}>
+              {scannedBarcode || selectedOrder.specimens[0]?.barcode || 'No Barcode'}
             </Text>
+          </View>
+
+          <Text style={styles.collectTitle}>Verify Specimen Barcode &amp; Temp</Text>
+          <Text style={styles.collectSubtitle}>
+            Confirm vial barcode from {selectedOrder.smallLabName} and log chiller box reading.
+          </Text>
+
+          <View style={{ width: '100%', marginBottom: 14 }}>
+            <Text style={styles.inputLabelSm}>Specimen Tube Barcode</Text>
             <TextInput
-              style={{
-                backgroundColor: 'white',
-                borderWidth: 1.5,
-                borderColor: COLORS.primaryTeal,
-                borderRadius: 8,
-                padding: 12,
-                fontSize: 15,
-                fontWeight: '600',
-                color: COLORS.textPrimary,
-              }}
+              style={styles.fieldInput}
               value={scannedBarcode}
               onChangeText={setScannedBarcode}
-              placeholder="e.g. SMP-10456-CBC"
+              placeholder={selectedOrder.specimens[0]?.barcode || 'Enter vial barcode'}
+              editable={showManualEntry || !selectedOrder.specimens[0]?.barcode}
             />
           </View>
-        ) : null}
 
-        <TouchableOpacity
-          style={styles.ctaButton}
-          onPress={() => {
-            setCurrentScreen('DROP_SAMPLE');
-            showDynamicAlert({
-              variant: 'success',
-              title: 'Barcode Verified!',
-              message: `Specimen ${scannedBarcode} successfully linked to chain-of-custody.`,
-              detail: `Proceed to handover at ${activeBooking.dropLab}`,
-            });
-          }}
-        >
-          <Text style={styles.ctaButtonText}>Scan Barcode</Text>
-        </TouchableOpacity>
+          <View style={{ width: '100%', marginBottom: 20 }}>
+            <Text style={styles.inputLabelSm}>Chiller Box Temperature (°C)</Text>
+            <TextInput
+              style={styles.fieldInput}
+              value={pickupTempInput}
+              onChangeText={setPickupTempInput}
+              keyboardType="numeric"
+              placeholder="4.2"
+            />
+          </View>
 
-        <TouchableOpacity
-          style={{ marginTop: 16 }}
-          onPress={() => setShowManualEntry(!showManualEntry)}
-        >
-          <Text style={{ color: COLORS.primaryTeal, fontWeight: '600', fontSize: 14 }}>
-            {showManualEntry ? 'Use Camera Scanner' : 'Or Enter Manually'}
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
+          <TouchableOpacity
+            style={[styles.ctaButton, submittingAction && { opacity: 0.65 }]}
+            disabled={submittingAction}
+            onPress={() => void handleConfirmCollection(selectedOrder)}
+          >
+            <Text style={styles.ctaButtonText}>
+              {submittingAction ? 'Saving to Firestore...' : 'Confirm Pickup & Log Custody ✓'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={{ marginTop: 14 }}
+            onPress={() => setShowManualEntry(!showManualEntry)}
+          >
+            <Text style={{ color: COLORS.primaryTeal, fontWeight: '600', fontSize: 14 }}>
+              {showManualEntry ? 'Lock Expected Specimen Barcode' : 'Override Barcode Manually'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    );
+  };
 
   /* =========================================================================
-   * 4. SCREEN 4: DROP SAMPLE & OTP
+   * 4. SCREEN 4: DROP SAMPLE & 5-DIGIT OTP VERIFICATION
    * ========================================================================= */
-  const renderDropSampleScreen = () => (
-    <ScrollView style={styles.scrollArea}>
-      <View style={styles.navBarHeader}>
-        <TouchableOpacity onPress={() => setCurrentScreen('COLLECT_SAMPLE')}>
-          <Text style={styles.navBarBackArrow}>←</Text>
-        </TouchableOpacity>
-        <View style={{ flex: 1, alignItems: 'center' }}>
-          <Text style={styles.navBarTitle}>Drop Sample</Text>
-          <Text style={styles.navBarSubtitle}>{activeBooking.id}</Text>
-        </View>
-        <View style={{ width: 24 }} />
-      </View>
-
-      <View style={styles.bodyContainer}>
-        {/* Lab Destination Card */}
-        <View style={styles.dropLabCard}>
-          <Text style={{ fontSize: 36, marginBottom: 8 }}>🏢</Text>
-          <Text style={styles.dropLabTitle}>{activeBooking.dropLab}</Text>
-          <Text style={styles.dropLabSub}>{activeBooking.dropAddress}</Text>
+  const renderDropSampleScreen = () => {
+    if (!selectedOrder) {
+      return renderBookingRequestsScreen();
+    }
+    return (
+      <ScrollView style={styles.scrollArea}>
+        <View style={styles.navBarHeader}>
+          <TouchableOpacity onPress={() => setCurrentScreen('BOOKING_REQUESTS')}>
+            <Text style={styles.navBarBackArrow}>←</Text>
+          </TouchableOpacity>
+          <View style={{ flex: 1, alignItems: 'center' }}>
+            <Text style={styles.navBarTitle}>Drop Sample &amp; OTP</Text>
+            <Text style={styles.navBarSubtitle}>{selectedOrder.orderNumber}</Text>
+          </View>
+          <View style={{ width: 24 }} />
         </View>
 
-        {/* Handover Instruction */}
-        <View style={styles.handoverBanner}>
-          <Text style={styles.handoverCheck}>✓ Sample Handover</Text>
-          <Text style={styles.handoverSub}>Confirm with laboratory receiving staff</Text>
-          <Text style={styles.enterOtpPrompt}>Enter receiving OTP</Text>
-        </View>
+        <View style={styles.bodyContainer}>
+          <View style={styles.dropLabCard}>
+            <Text style={{ fontSize: 36, marginBottom: 8 }}>🏢</Text>
+            <Text style={styles.dropLabTitle}>{selectedOrder.targetLabName}</Text>
+            <Text style={styles.dropLabSub}>{selectedOrder.deliveryLocation.address}</Text>
+          </View>
 
-        {/* 5-Digit OTP Boxes */}
-        <View style={styles.otpBoxesRow}>
-          {otpValue.map((digit, idx) => (
-            <View key={idx} style={styles.otpBox}>
-              <TextInput
-                style={styles.otpDigit}
-                value={digit}
-                maxLength={1}
-                keyboardType="numeric"
-                onChangeText={(val) => updateOtpDigit(idx, val)}
-              />
-            </View>
-          ))}
-        </View>
+          <View style={styles.handoverBanner}>
+            <Text style={styles.handoverCheck}>🔐 Chain-of-Custody Handover</Text>
+            <Text style={styles.handoverSub}>
+              Verify the 5-digit Handover OTP provided for {selectedOrder.orderNumber}
+            </Text>
+          </View>
 
-        {/* Confirm Drop CTA */}
-        <TouchableOpacity
-          style={[styles.ctaButton, { marginTop: 32 }]}
-          onPress={() => setCurrentScreen('COMPLETED')}
-        >
-          <Text style={styles.ctaButtonText}>Confirm Drop</Text>
-        </TouchableOpacity>
-      </View>
-    </ScrollView>
-  );
+          <View style={styles.otpBoxesRow}>
+            {otpValue.map((digit, idx) => (
+              <View key={idx} style={styles.otpBox}>
+                <TextInput
+                  style={styles.otpDigit}
+                  value={digit}
+                  maxLength={1}
+                  keyboardType="numeric"
+                  textAlign="center"
+                  onChangeText={(val) => updateOtpDigit(idx, val)}
+                />
+              </View>
+            ))}
+          </View>
+
+          <View style={{ marginTop: 22 }}>
+            <Text style={styles.inputLabelSm}>Arrival Chiller Temperature (°C)</Text>
+            <TextInput
+              style={styles.fieldInput}
+              value={dropTempInput}
+              onChangeText={setDropTempInput}
+              keyboardType="numeric"
+              placeholder="4.2"
+            />
+          </View>
+
+          <TouchableOpacity
+            style={[styles.ctaButton, { marginTop: 22 }, submittingAction && { opacity: 0.65 }]}
+            disabled={submittingAction}
+            onPress={() => void handleConfirmDropOtp(selectedOrder)}
+          >
+            <Text style={styles.ctaButtonText}>
+              {submittingAction ? 'Verifying Handover...' : 'Verify OTP & Confirm Drop ✓'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    );
+  };
 
   /* =========================================================================
-   * 5. SCREEN 5: BOOKING COMPLETED
+   * 5. SCREEN 5: BOOKING COMPLETED RECEIPT
    * ========================================================================= */
   const renderCompletedScreen = () => (
     <View style={styles.fullscreenContainer}>
@@ -610,45 +1304,49 @@ export default function App() {
           <Text style={styles.navBarBackArrow}>←</Text>
         </TouchableOpacity>
         <View style={{ flex: 1, alignItems: 'center' }}>
-          <Text style={styles.navBarTitle}>Booking Completed</Text>
+          <Text style={styles.navBarTitle}>Delivery Logged</Text>
         </View>
         <View style={{ width: 24 }} />
       </View>
 
       <View style={[styles.bodyContainer, { flex: 1, justifyContent: 'center' }]}>
-        {/* Big Green Circle Checkmark */}
         <View style={styles.successCheckCircle}>
           <Text style={styles.successCheckSymbol}>✓</Text>
         </View>
 
         <Text style={styles.successTitle}>Sample Delivered Successfully</Text>
 
-        {/* Receipt Details Card */}
         <View style={styles.receiptCard}>
           <View style={styles.receiptRow}>
             <Text style={styles.receiptKey}>Booking ID</Text>
-            <Text style={styles.receiptVal}>{activeBooking.id}</Text>
+            <Text style={styles.receiptVal}>{lastReceipt?.orderNumber || '—'}</Text>
           </View>
           <View style={styles.receiptDivider} />
           <View style={styles.receiptRow}>
-            <Text style={styles.receiptKey}>Earnings</Text>
-            <Text style={[styles.receiptVal, { color: COLORS.primaryTeal }]}>
-              {activeBooking.earnings}
+            <Text style={styles.receiptKey}>Destination Hub</Text>
+            <Text style={styles.receiptVal}>{lastReceipt?.targetLabName || '—'}</Text>
+          </View>
+          <View style={styles.receiptDivider} />
+          <View style={styles.receiptRow}>
+            <Text style={styles.receiptKey}>Arrival Temp</Text>
+            <Text style={styles.receiptVal}>
+              {lastReceipt ? `${lastReceipt.tempCelsius}°C` : '—'}
             </Text>
           </View>
           <View style={styles.receiptDivider} />
           <View style={styles.receiptRow}>
-            <Text style={styles.receiptKey}>Distance</Text>
-            <Text style={styles.receiptVal}>{activeBooking.distanceKm}</Text>
+            <Text style={styles.receiptKey}>Courier Payout</Text>
+            <Text style={[styles.receiptVal, { color: COLORS.primaryTeal }]}>
+              {formatInr(lastReceipt?.feeInr || 0)}
+            </Text>
           </View>
           <View style={styles.receiptDivider} />
           <View style={styles.receiptRow}>
             <Text style={styles.receiptKey}>Completed At</Text>
-            <Text style={styles.receiptVal}>11:48 AM</Text>
+            <Text style={styles.receiptVal}>{lastReceipt?.completedAt || '—'}</Text>
           </View>
         </View>
 
-        {/* View Earnings CTA */}
         <TouchableOpacity
           style={[styles.ctaButton, { marginTop: 28 }]}
           onPress={() => {
@@ -656,39 +1354,66 @@ export default function App() {
             setCurrentScreen('BOOKING_REQUESTS');
           }}
         >
-          <Text style={styles.ctaButtonText}>View Earnings</Text>
+          <Text style={styles.ctaButtonText}>View Live Earnings</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
 
   /* =========================================================================
-   * TAB 2: MY BOOKINGS SCREEN
+   * TAB 2: MY BOOKINGS HISTORY (100% LIVE FIRESTORE)
    * ========================================================================= */
   const renderBookingsHistoryScreen = () => {
-    const filtered = MOCK_HISTORY_BOOKINGS.filter((b) => {
-      const matchFilter = bookingHistoryFilter === 'all' || b.category === bookingHistoryFilter;
+    const q = bookingSearchQuery.trim().toLowerCase();
+    const filtered = myAssignedOrders.filter((b) => {
+      const isActive =
+        b.status === OrderStatus.PICKED_UP ||
+        b.status === OrderStatus.IN_TRANSIT;
+      const isDone =
+        b.status === OrderStatus.DELIVERED_TO_LAB ||
+        b.status === OrderStatus.UNDER_ANALYSIS ||
+        isOrderCompleted(b.status);
+      const isScheduled = b.status === OrderStatus.ASSIGNED_TO_PHLEBO;
+
+      const matchFilter =
+        bookingHistoryFilter === 'all' ||
+        (bookingHistoryFilter === 'active' && isActive) ||
+        (bookingHistoryFilter === 'completed' && isDone) ||
+        (bookingHistoryFilter === 'scheduled' && isScheduled);
+
       const matchQuery =
-        b.id.toLowerCase().includes(bookingSearchQuery.toLowerCase()) ||
-        b.patient.toLowerCase().includes(bookingSearchQuery.toLowerCase()) ||
-        b.tests.toLowerCase().includes(bookingSearchQuery.toLowerCase());
+        !q ||
+        b.orderNumber.toLowerCase().includes(q) ||
+        b.patient.pseudonym.toLowerCase().includes(q) ||
+        b.smallLabName.toLowerCase().includes(q) ||
+        b.specimens.some((s) => s.testCode.toLowerCase().includes(q));
+
       return matchFilter && matchQuery;
     });
+
+    const activeCount = myAssignedOrders.filter(
+      (b) => b.status === OrderStatus.PICKED_UP || b.status === OrderStatus.IN_TRANSIT
+    ).length;
+    const completedCount = completedAssignedOrders.length;
+    const scheduledCount = myAssignedOrders.filter(
+      (b) => b.status === OrderStatus.ASSIGNED_TO_PHLEBO
+    ).length;
 
     return (
       <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
         <View style={styles.appHeaderBar}>
           <Text style={styles.appHeaderTitle}>My Bookings</Text>
-          <Text style={styles.appHeaderSubtitle}>Track active collections and pickup history</Text>
+          <Text style={styles.appHeaderSubtitle}>
+            Live Firestore collection &amp; handover history
+          </Text>
         </View>
 
         <View style={styles.bodyContainer}>
-          {/* Search Box */}
           <View style={styles.searchBox}>
             <Text style={{ fontSize: 16, marginRight: 8 }}>🔍</Text>
             <TextInput
               style={styles.searchInput}
-              placeholder="Search by ID, patient, test..."
+              placeholder="Search by ID, patient, lab, test..."
               placeholderTextColor={COLORS.textSecondary}
               value={bookingSearchQuery}
               onChangeText={setBookingSearchQuery}
@@ -700,7 +1425,6 @@ export default function App() {
             )}
           </View>
 
-          {/* Filter Chips */}
           <View style={styles.requestTabsRow}>
             {(['all', 'active', 'completed', 'scheduled'] as const).map((key) => (
               <TouchableOpacity
@@ -715,140 +1439,167 @@ export default function App() {
                   ]}
                 >
                   {key === 'all'
-                    ? 'All (5)'
+                    ? `All (${myAssignedOrders.length})`
                     : key === 'active'
-                    ? 'Active (1)'
+                    ? `Transit (${activeCount})`
                     : key === 'completed'
-                    ? 'Completed (3)'
-                    : 'Scheduled (1)'}
+                    ? `Done (${completedCount})`
+                    : `Assigned (${scheduledCount})`}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
 
-          {/* Bookings List */}
-          {filtered.map((item) => (
-            <View key={item.id} style={styles.historyCard}>
-              <View style={styles.historyCardHeader}>
-                <View>
-                  <Text style={styles.historyCardId}>{item.id}</Text>
-                  <Text style={styles.historyCardPatient}>{item.patient}</Text>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={styles.historyCardFee}>{item.fee}</Text>
-                  <View
-                    style={[
-                      styles.statusPillBadge,
-                      {
-                        backgroundColor:
-                          item.status === 'In Transit'
-                            ? '#DBEAFE'
-                            : item.status === 'Delivered'
-                            ? '#DCFCE7'
-                            : '#FEF3C7',
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.statusPillText,
-                        {
-                          color:
-                            item.status === 'In Transit'
-                              ? '#2563EB'
-                              : item.status === 'Delivered'
-                              ? '#16A34A'
-                              : '#D97706',
-                        },
-                      ]}
-                    >
-                      ● {item.status}
+          {filtered.length === 0 ? (
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyTitle}>No Matching Bookings</Text>
+              <Text style={styles.emptySub}>
+                Claim an open booking from Home or adjust filters.
+              </Text>
+            </View>
+          ) : (
+            filtered.map((item) => {
+              const isTransit =
+                item.status === OrderStatus.PICKED_UP ||
+                item.status === OrderStatus.IN_TRANSIT;
+              const isAssigned = item.status === OrderStatus.ASSIGNED_TO_PHLEBO;
+              return (
+                <View key={item.id} style={styles.historyCard}>
+                  <View style={styles.historyCardHeader}>
+                    <View>
+                      <Text style={styles.historyCardId}>{item.orderNumber}</Text>
+                      <Text style={styles.historyCardPatient}>{item.patient.pseudonym}</Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={styles.historyCardFee}>
+                        {formatInr(item.courierFeeInr || 0)}
+                      </Text>
+                      <View
+                        style={[
+                          styles.statusPillBadge,
+                          {
+                            backgroundColor: isTransit
+                              ? '#DBEAFE'
+                              : isAssigned
+                              ? '#FEF3C7'
+                              : '#DCFCE7',
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.statusPillText,
+                            {
+                              color: isTransit
+                                ? '#2563EB'
+                                : isAssigned
+                                ? '#D97706'
+                                : '#16A34A',
+                            },
+                          ]}
+                        >
+                          ● {item.status}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  <View style={styles.routeItemRow}>
+                    <View style={[styles.dotMarker, { backgroundColor: COLORS.primaryTeal }]} />
+                    <Text style={styles.routeTextSm}>{item.smallLabName}</Text>
+                  </View>
+                  <View style={[styles.routeItemRow, { marginTop: 4 }]}>
+                    <View style={[styles.dotMarker, { backgroundColor: COLORS.accentBlue }]} />
+                    <Text style={styles.routeTextSm}>{item.targetLabName}</Text>
+                  </View>
+
+                  <View style={styles.historyCardFooter}>
+                    <Text style={styles.historyCardTests}>
+                      🧪 {item.specimens.map((s) => s.testCode).join(', ')}
+                    </Text>
+                    <Text style={styles.historyCardTemp}>
+                      ❄️{' '}
+                      {item.arrivalTemperatureCelsius !== undefined
+                        ? `${item.arrivalTemperatureCelsius}°C`
+                        : 'Awaiting Scan'}
                     </Text>
                   </View>
+
+                  {(isTransit || isAssigned) && (
+                    <TouchableOpacity
+                      style={[styles.btnPrimary, { marginTop: 12, paddingVertical: 8 }]}
+                      onPress={() => {
+                        setBottomTab('home');
+                        openOrderWorkflow(item);
+                      }}
+                    >
+                      <Text style={styles.btnPrimaryText}>
+                        {isTransit ? 'Open OTP Handover' : 'Open Collection Workflow'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
-              </View>
-
-              <View style={styles.routeItemRow}>
-                <View style={[styles.dotMarker, { backgroundColor: COLORS.primaryTeal }]} />
-                <Text style={styles.routeTextSm}>{item.pickup}</Text>
-              </View>
-              <View style={[styles.routeItemRow, { marginTop: 4 }]}>
-                <View style={[styles.dotMarker, { backgroundColor: COLORS.accentBlue }]} />
-                <Text style={styles.routeTextSm}>{item.drop}</Text>
-              </View>
-
-              <View style={styles.historyCardFooter}>
-                <Text style={styles.historyCardTests}>🧪 {item.tests}</Text>
-                <Text style={styles.historyCardTemp}>❄️ {item.temp}</Text>
-              </View>
-
-              {item.status === 'In Transit' && (
-                <TouchableOpacity
-                  style={[styles.btnPrimary, { marginTop: 12, paddingVertical: 8 }]}
-                  onPress={() => {
-                    setBottomTab('home');
-                    setCurrentScreen('BOOKING_DETAILS');
-                  }}
-                >
-                  <Text style={styles.btnPrimaryText}>Resume Active Trip</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          ))}
+              );
+            })
+          )}
         </View>
       </ScrollView>
     );
   };
 
   /* =========================================================================
-   * TAB 3: EARNINGS & PAYOUTS SCREEN
+   * TAB 3: EARNINGS & PAYOUTS (100% LIVE FIRESTORE SETTLEMENTS + ORDERS)
    * ========================================================================= */
   const renderEarningsScreen = () => {
+    const maxCount = Math.max(1, ...metrics.weeklyBars.map((b) => b.count));
+
     return (
       <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
         <View style={styles.heroHeader}>
-          <Text style={styles.greetingTitle}>Earnings & Payouts</Text>
-          <Text style={styles.greetingSubtitle}>Instant cold-chain logistics incentives & daily ledger</Text>
+          <Text style={styles.greetingTitle}>Earnings &amp; Settlements</Text>
+          <Text style={styles.greetingSubtitle}>
+            Calculated live from Firestore `orders` &amp; `settlements`
+          </Text>
 
-          {/* Wallet Payout Card */}
           <View style={[styles.summaryCard, { marginTop: 16 }]}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
               <View>
-                <Text style={styles.summaryTitle}>AVAILABLE FOR WITHDRAWAL</Text>
+                <Text style={styles.summaryTitle}>PENDING COURIER PAYOUT</Text>
                 <Text style={[styles.metricNumber, { fontSize: 28, color: COLORS.primaryDark }]}>
-                  ₹3,420
+                  {formatInr(metrics.pendingPayoutInr)}
                 </Text>
               </View>
-              <TouchableOpacity
-                style={[styles.btnPrimary, { paddingHorizontal: 16, paddingVertical: 10 }]}
-                onPress={() =>
-                  showDynamicAlert({
-                    variant: 'success',
-                    title: 'Instant UPI Payout Requested',
-                    message: `₹3,420 will be credited to ${phleboName}'s verified UPI within 60 seconds.`,
-                    detail: `Partner ID: ${phleboId}`,
-                  })
-                }
-              >
-                <Text style={styles.btnPrimaryText}>Withdraw to UPI</Text>
-              </TouchableOpacity>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={styles.metricLabel}>Settled Total</Text>
+                <Text style={[styles.metricNumber, { fontSize: 16, color: COLORS.successGreen }]}>
+                  {formatInr(metrics.settledInr)}
+                </Text>
+              </View>
             </View>
 
-            <View style={[styles.summaryDivider, { width: '100%', height: 1, marginVertical: 14 }]} />
+            <View
+              style={[styles.summaryDivider, { width: '100%', height: 1, marginVertical: 14 }]}
+            />
 
             <View style={styles.summaryMetricsRow}>
               <View style={styles.summaryMetricCol}>
-                <Text style={styles.metricNumber}>₹1,240</Text>
-                <Text style={styles.metricLabel}>Today (5 Pickups)</Text>
+                <Text style={styles.metricNumber}>{formatInr(metrics.todayEarnings)}</Text>
+                <Text style={styles.metricLabel}>Today</Text>
               </View>
               <View style={styles.summaryDivider} />
               <View style={styles.summaryMetricCol}>
-                <Text style={styles.metricNumber}>₹8,450</Text>
-                <Text style={styles.metricLabel}>This Week</Text>
+                <Text style={styles.metricNumber}>{formatInr(metrics.weeklyEarnings)}</Text>
+                <Text style={styles.metricLabel}>7 Days</Text>
               </View>
               <View style={styles.summaryDivider} />
               <View style={styles.summaryMetricCol}>
-                <Text style={styles.metricNumber}>₹34,200</Text>
+                <Text style={styles.metricNumber}>{formatInr(metrics.monthlyEarnings)}</Text>
                 <Text style={styles.metricLabel}>This Month</Text>
               </View>
             </View>
@@ -856,102 +1607,66 @@ export default function App() {
         </View>
 
         <View style={[styles.bodyContainer, { paddingTop: 48 }]}>
-          {/* Weekly Performance Bar Chart */}
           <View style={styles.chartCard}>
-            <Text style={styles.sectionHeaderTitle}>Weekly Earnings Overview</Text>
+            <Text style={styles.sectionHeaderTitle}>Weekly Pickup Volume (Live)</Text>
             <View style={styles.barChartContainer}>
-              {[
-                { day: 'Mon', amount: '₹1,100', heightPct: 65 },
-                { day: 'Tue', amount: '₹1,350', heightPct: 82 },
-                { day: 'Wed', amount: '₹950', heightPct: 56 },
-                { day: 'Thu', amount: '₹1,400', heightPct: 85 },
-                { day: 'Fri', amount: '₹1,200', heightPct: 72 },
-                { day: 'Sat', amount: '₹1,650', heightPct: 100, active: true },
-                { day: 'Sun', amount: '₹800', heightPct: 48 },
-              ].map((bar) => (
-                <View key={bar.day} style={styles.chartBarCol}>
-                  <Text style={styles.chartBarAmount}>{bar.amount.replace('₹', '')}</Text>
-                  <View style={styles.chartBarTrack}>
-                    <View
-                      style={[
-                        styles.chartBarFill,
-                        {
-                          height: `${bar.heightPct}%`,
-                          backgroundColor: bar.active ? COLORS.primaryTeal : '#94A3B8',
-                        },
-                      ]}
-                    />
+              {metrics.weeklyBars.map((bar) => {
+                const heightPct = Math.max(8, Math.round((bar.count / maxCount) * 100));
+                return (
+                  <View key={bar.day} style={styles.chartBarCol}>
+                    <Text style={styles.chartBarAmount}>{bar.count}</Text>
+                    <View style={styles.chartBarTrack}>
+                      <View
+                        style={[
+                          styles.chartBarFill,
+                          {
+                            height: `${heightPct}%`,
+                            backgroundColor: bar.count > 0 ? COLORS.primaryTeal : '#CBD5E1',
+                          },
+                        ]}
+                      />
+                    </View>
+                    <Text style={styles.chartBarDay}>{bar.day}</Text>
                   </View>
-                  <Text
-                    style={[
-                      styles.chartBarDay,
-                      bar.active && { color: COLORS.primaryDark, fontWeight: '700' },
-                    ]}
-                  >
-                    {bar.day}
-                  </Text>
-                </View>
-              ))}
+                );
+              })}
             </View>
           </View>
 
-          {/* Incentive Boosters */}
-          <View style={styles.incentiveCard}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <Text style={{ fontSize: 24 }}>🎯</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.incentiveTitle}>Cold-Chain Quality Bonus</Text>
-                <Text style={styles.incentiveSubtitle}>
-                  100% compliant temp logs today! +₹250 added to your balance.
-                </Text>
-              </View>
-            </View>
-            <View style={styles.progressBarTrack}>
-              <View style={[styles.progressBarFill, { width: '100%' }]} />
-            </View>
-          </View>
-
-          {/* Recent Trip Earnings */}
-          <Text style={[styles.sectionHeaderTitle, { marginTop: 20, marginBottom: 10 }]}>
-            Recent Trip Breakdown
+          <Text style={[styles.sectionHeaderTitle, { marginTop: 12, marginBottom: 10 }]}>
+            Trip Settlement Ledger ({earningRows.length})
           </Text>
 
-          {[
-            { id: 'BK-10456', fee: '₹350', base: '₹250 base + ₹100 chilled bonus', time: 'Today, 11:48 AM', lab: 'Metro Diagnostics' },
-            { id: 'BK-10455', fee: '₹300', base: '₹250 base + ₹50 distance', time: 'Today, 10:15 AM', lab: 'Metro Diagnostics' },
-            { id: 'BK-10454', fee: '₹400', base: '₹250 base + ₹150 STAT surge', time: 'Today, 09:30 AM', lab: 'Metro Diagnostics' },
-            { id: 'BK-10452', fee: '₹190', base: 'Standard Routine Pickup', time: 'Today, 08:45 AM', lab: 'Apex Lab' },
-          ].map((trip) => (
-            <View key={trip.id} style={styles.tripLedgerRow}>
-              <View>
-                <Text style={styles.tripLedgerId}>{trip.id}</Text>
-                <Text style={styles.tripLedgerLab}>{trip.lab} • {trip.time}</Text>
-                <Text style={styles.tripLedgerBase}>{trip.base}</Text>
-              </View>
-              <Text style={styles.tripLedgerFee}>+{trip.fee}</Text>
-            </View>
-          ))}
-
-          {/* Linked Bank Card */}
-          <View style={styles.bankAccountCard}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <Text style={{ fontSize: 24 }}>🏦</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.bankName}>HDFC Bank (Linked UPI)</Text>
-                <Text style={styles.bankNumber}>A/c •••• 4092 • rahul.yadav@okhdfcbank</Text>
-              </View>
-              <Text style={{ color: COLORS.successGreen, fontWeight: '700', fontSize: 12 }}>
-                ✓ VERIFIED
+          {earningRows.length === 0 ? (
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyTitle}>No Courier Payouts Yet</Text>
+              <Text style={styles.emptySub}>
+                Claim and deliver sample orders to see live settlement rows.
               </Text>
             </View>
-          </View>
+          ) : (
+            earningRows.map(({ order, amountInr, settled, delivered }) => (
+              <View key={order.id} style={styles.tripLedgerRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.tripLedgerId}>{order.orderNumber}</Text>
+                  <Text style={styles.tripLedgerLab}>
+                    {order.smallLabName} → {order.targetLabName}
+                  </Text>
+                  <Text style={styles.tripLedgerBase}>
+                    {settled ? 'SETTLED BY ADMIN' : delivered ? 'DELIVERED • PENDING SETTLEMENT' : order.status}
+                  </Text>
+                </View>
+                <Text style={styles.tripLedgerFee}>{formatInr(amountInr)}</Text>
+              </View>
+            ))
+          )}
         </View>
       </ScrollView>
     );
   };
 
   /* =========================================================================
-   * TAB 4: PHLEBOTOMIST PROFILE & HARDWARE COMPLIANCE
+   * TAB 4: PROFILE & SHIFT / COLD-CHAIN EQUIPMENT (ZERO MOCK DATA)
    * ========================================================================= */
   const renderProfileScreen = () => {
     return (
@@ -961,38 +1676,43 @@ export default function App() {
             <View style={[styles.avatarCircle, { width: 68, height: 68, borderRadius: 34 }]}>
               <Text style={[styles.avatarText, { fontSize: 26 }]}>{phleboInitial}</Text>
             </View>
-            <Text style={[styles.greetingTitle, { fontSize: 20, marginTop: 8 }]}>{phleboName}</Text>
-            <Text style={styles.greetingSubtitle}>ID: {phleboId} • {phleboEmail}</Text>
+            <Text style={[styles.greetingTitle, { fontSize: 20, marginTop: 8 }]}>
+              {phleboName}
+            </Text>
+            <Text style={styles.greetingSubtitle}>
+              ID: {effectivePhleboId || 'Unassigned'} • {phleboEmail}
+            </Text>
             <View style={[styles.onlinePill, { backgroundColor: '#064E3B', marginTop: 10 }]}>
-              <Text style={styles.onlinePillText}>⭐ 4.9 Rating (428 Pickups)</Text>
+              <Text style={styles.onlinePillText}>
+                {myPhleboProfile
+                  ? `★ ${myPhleboProfile.rating.toFixed(1)} (${completedAssignedOrders.length} Delivered)`
+                  : 'Awaiting Admin Fleet Record'}
+              </Text>
             </View>
           </View>
         </View>
 
         <View style={styles.bodyContainer}>
-          {/* Shift Status Selector */}
-          <Text style={styles.sectionHeaderTitle}>Shift Status</Text>
+          <Text style={styles.sectionHeaderTitle}>Shift Status (Live Firestore Sync)</Text>
           <View style={styles.shiftSelectorRow}>
-            {[
-              { status: 'ONLINE', label: '🟢 On Duty', bg: '#DCFCE7', text: '#16A34A' },
-              { status: 'BREAK', label: '🟡 On Break', bg: '#FEF3C7', text: '#D97706' },
-              { status: 'OFFLINE', label: '🔴 Off Duty', bg: '#FEE2E2', text: '#DC2626' },
-            ].map((s) => (
+            {(
+              [
+                { status: 'ONLINE', label: '🟢 On Duty', bg: '#DCFCE7', text: '#16A34A' },
+                { status: 'BREAK', label: '🟡 On Break', bg: '#FEF3C7', text: '#D97706' },
+                { status: 'OFFLINE', label: '🔴 Off Duty', bg: '#FEE2E2', text: '#DC2626' },
+              ] as const
+            ).map((s) => (
               <TouchableOpacity
                 key={s.status}
                 style={[
                   styles.shiftButton,
-                  dutyStatus === s.status && { backgroundColor: s.bg, borderColor: s.text, borderWidth: 1.5 },
+                  dutyStatus === s.status && {
+                    backgroundColor: s.bg,
+                    borderColor: s.text,
+                    borderWidth: 1.5,
+                  },
                 ]}
-                onPress={() => {
-                  setDutyStatus(s.status as 'ONLINE' | 'BREAK' | 'OFFLINE');
-                  setIsOnline(s.status === 'ONLINE');
-                  showDynamicAlert({
-                    variant: 'success',
-                    title: 'Shift Status Updated',
-                    message: `Duty mode set to ${s.label}.`,
-                  });
-                }}
+                onPress={() => void handleShiftUpdate(s.status)}
               >
                 <Text
                   style={[
@@ -1006,7 +1726,6 @@ export default function App() {
             ))}
           </View>
 
-          {/* Assigned Cold-Chain Logistics Kit */}
           <Text style={[styles.sectionHeaderTitle, { marginTop: 20 }]}>
             Assigned Cold-Chain Equipment
           </Text>
@@ -1014,105 +1733,63 @@ export default function App() {
             <View style={styles.equipmentRow}>
               <Text style={{ fontSize: 20 }}>🧊</Text>
               <View style={{ flex: 1, marginLeft: 10 }}>
-                <Text style={styles.equipmentTitle}>IoT Smart Chiller Box #CB-408</Text>
-                <Text style={styles.equipmentSub}>Internal Sensor: 4.2°C (Calibrated NABL) • Battery: 94%</Text>
+                <Text style={styles.equipmentTitle}>
+                  {myPhleboProfile?.coolerBoxId
+                    ? `Smart Chiller Box #${myPhleboProfile.coolerBoxId}`
+                    : 'Cooler Box Not Assigned'}
+                </Text>
+                <Text style={styles.equipmentSub}>
+                  {myPhleboProfile
+                    ? `Temp: ${myPhleboProfile.chillerTempCelsius}°C • Battery: ${myPhleboProfile.batteryPct}%`
+                    : 'Ask Platform Admin to assign hardware in Admin -> Phlebotomists'}
+                </Text>
               </View>
-              <Text style={{ color: COLORS.successGreen, fontWeight: '700', fontSize: 12 }}>ONLINE</Text>
             </View>
 
-            <View style={[styles.equipmentRow, { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderColor: COLORS.borderLight }]}>
+            <View
+              style={[
+                styles.equipmentRow,
+                { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderColor: COLORS.borderLight },
+              ]}
+            >
               <Text style={{ fontSize: 20 }}>🏍️</Text>
               <View style={{ flex: 1, marginLeft: 10 }}>
-                <Text style={styles.equipmentTitle}>Logistics Bike</Text>
-                <Text style={styles.equipmentSub}>Hero Electric • MH-03-BW-4921</Text>
+                <Text style={styles.equipmentTitle}>Assigned Vehicle</Text>
+                <Text style={styles.equipmentSub}>
+                  {myPhleboProfile?.vehicleInfo || 'Awaiting Admin Vehicle Assignment'}
+                </Text>
               </View>
-              <Text style={{ color: COLORS.primaryTeal, fontWeight: '600', fontSize: 12 }}>ASSIGNED</Text>
             </View>
 
-            <View style={[styles.equipmentRow, { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderColor: COLORS.borderLight }]}>
-              <Text style={{ fontSize: 20 }}>📱</Text>
-              <View style={{ flex: 1, marginLeft: 10 }}>
-                <Text style={styles.equipmentTitle}>Barcode Scanner & Logger</Text>
-                <Text style={styles.equipmentSub}>BLE 5.2 Handheld Accession Wand • Paired</Text>
-              </View>
-              <Text style={{ color: COLORS.successGreen, fontWeight: '700', fontSize: 12 }}>PAIRED</Text>
-            </View>
-          </View>
-
-          {/* Verified Qualifications */}
-          <Text style={[styles.sectionHeaderTitle, { marginTop: 20 }]}>
-            Certifications & Verification
-          </Text>
-          <View style={styles.complianceCard}>
-            {[
-              { title: 'DMLT Pathology Diploma', auth: 'Maharashtra Paramedical Council', exp: 'Permanent' },
-              { title: 'Cold-Chain Biological Handling', auth: 'LabSetu Standards Institute', exp: 'Valid till Nov 2027' },
-              { title: 'Police Background Verification', auth: 'Mumbai City Police', exp: 'Clear (Verified 2026)' },
-            ].map((doc, idx) => (
-              <View
-                key={doc.title}
-                style={[
-                  styles.docItemRow,
-                  idx > 0 && { borderTopWidth: 1, borderColor: COLORS.borderLight, paddingTop: 10, marginTop: 10 },
-                ]}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.docTitle}>{doc.title}</Text>
-                  <Text style={styles.docAuth}>{doc.auth} • {doc.exp}</Text>
-                </View>
-                <Text style={{ color: COLORS.successGreen, fontSize: 16 }}>✓</Text>
-              </View>
-            ))}
-          </View>
-
-          {/* Support and SOS */}
-          <View style={{ marginTop: 24, gap: 10 }}>
-            <TouchableOpacity
-              style={styles.sosButton}
-              onPress={() =>
-                showDynamicAlert({
-                  variant: 'confirm',
-                  title: 'Trigger Cold-Chain Emergency SOS?',
-                  message: 'This alerts Central Dispatch and dispatches the nearest backup courier to your GPS location.',
-                  confirmLabel: 'Dispatch SOS',
-                  cancelLabel: 'Cancel',
-                  onConfirm: () =>
-                    showDynamicAlert({
-                      variant: 'error',
-                      title: 'Emergency Cold-Chain SOS Triggered',
-                      message: 'Central Dispatch Operations & nearest backup phlebotomist have been notified of your location.',
-                      detail: `Active Unit: ${phleboId} (${phleboName})`,
-                    }),
-                })
-              }
+            <View
+              style={[
+                styles.equipmentRow,
+                { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderColor: COLORS.borderLight },
+              ]}
             >
+              <Text style={{ fontSize: 20 }}>📍</Text>
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={styles.equipmentTitle}>Coverage Zone &amp; Verification</Text>
+                <Text style={styles.equipmentSub}>
+                  {myPhleboProfile?.currentLocation || 'Unassigned Zone'} •{' '}
+                  {myPhleboProfile?.verified ? 'VERIFIED' : 'PENDING'}
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          <View style={{ marginTop: 24, gap: 10 }}>
+            <TouchableOpacity style={styles.sosButton} onPress={handleTriggerSos}>
               <Text style={styles.sosButtonText}>🚨 EMERGENCY COLD-CHAIN SOS</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.helpHotlineButton}
-              onPress={() =>
-                showDynamicAlert({
-                  variant: 'info',
-                  title: 'LabSetu Hotline',
-                  message: 'Dialing Operations Control Center for urgent sample logistics assistance.',
-                  detail: '24x7 Dispatch Support: 1800-889-SETU',
-                })
-              }
-            >
-              <Text style={styles.helpHotlineText}>📞 Call Central Dispatch Hotline (24x7)</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.signOutButton}
-              onPress={handleSignOut}
-            >
+            <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
               <Text style={styles.signOutButtonText}>Sign Out ({phleboEmail})</Text>
             </TouchableOpacity>
           </View>
 
           <Text style={styles.versionFootnote}>
-            LabSetu Phlebotomist Companion v2.4.0 (Build 108) • Android Protected
+            LabSetu Phlebotomist Companion • Firebase Project: labsetu-diagnostics
           </Text>
         </View>
       </ScrollView>
@@ -1135,7 +1812,6 @@ export default function App() {
         />
       ) : (
         <>
-          {/* Screen Router */}
           <View style={{ flex: 1 }}>
             {bottomTab === 'home' && (
               <>
@@ -1151,7 +1827,6 @@ export default function App() {
             {bottomTab === 'profile' && renderProfileScreen()}
           </View>
 
-          {/* Persistent Bottom Tab Bar */}
           <View style={styles.bottomTabBar}>
             <TouchableOpacity
               style={styles.bottomTabItem}
@@ -1173,9 +1848,7 @@ export default function App() {
 
             <TouchableOpacity
               style={styles.bottomTabItem}
-              onPress={() => {
-                setBottomTab('bookings');
-              }}
+              onPress={() => setBottomTab('bookings')}
             >
               <Text style={{ fontSize: 18 }}>📋</Text>
               <Text
@@ -1237,8 +1910,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
   },
-
-  /* Dark Teal Hero Header */
   heroHeader: {
     backgroundColor: COLORS.primaryDark,
     paddingHorizontal: 20,
@@ -1292,8 +1963,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-
-  /* Floating Summary Card */
   summaryCard: {
     backgroundColor: COLORS.surfaceCard,
     borderRadius: 14,
@@ -1335,15 +2004,45 @@ const styles = StyleSheet.create({
     height: 28,
     backgroundColor: COLORS.borderLight,
   },
-
-  /* Body Content */
   bodyContainer: {
     paddingHorizontal: 20,
     paddingTop: 38,
     paddingBottom: 24,
   },
-
-  /* Request Filter Tabs */
+  warningBox: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+  },
+  warningBoxText: {
+    color: '#B91C1C',
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 17,
+  },
+  emptyBox: {
+    backgroundColor: COLORS.surfaceCard,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    padding: 24,
+    alignItems: 'center',
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+    marginBottom: 4,
+  },
+  emptySub: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
   requestTabsRow: {
     flexDirection: 'row',
     gap: 8,
@@ -1366,8 +2065,6 @@ const styles = StyleSheet.create({
   tabButtonTextActive: {
     color: 'white',
   },
-
-  /* Booking Card */
   bookingCard: {
     backgroundColor: COLORS.surfaceCard,
     borderRadius: 14,
@@ -1392,14 +2089,14 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   pickupTimeBadge: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: '#FEF3C7',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 12,
     marginBottom: 4,
   },
   pickupTimeText: {
-    color: COLORS.errorRed,
+    color: '#B45309',
     fontSize: 11,
     fontWeight: '700',
   },
@@ -1408,8 +2105,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.textPrimary,
   },
-
-  /* Route Visualizer */
   routeContainer: {
     backgroundColor: '#F8FAFC',
     borderRadius: 10,
@@ -1442,18 +2137,11 @@ const styles = StyleSheet.create({
     marginLeft: 4,
     marginVertical: 2,
   },
-  distanceBadge: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
-    fontWeight: '500',
-  },
   testsPreview: {
     fontSize: 12,
     color: COLORS.textSecondary,
     marginBottom: 14,
   },
-
-  /* Card Action Buttons */
   actionsRow: {
     flexDirection: 'row',
     gap: 10,
@@ -1482,8 +2170,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 13,
   },
-
-  /* Navigation Bar for Subscreens */
   navBarHeader: {
     backgroundColor: COLORS.primaryDark,
     paddingHorizontal: 20,
@@ -1505,8 +2191,6 @@ const styles = StyleSheet.create({
     color: '#A7F3D0',
     fontSize: 12,
   },
-
-  /* Timeline Card in Details */
   timelineCard: {
     backgroundColor: COLORS.surfaceCard,
     borderRadius: 14,
@@ -1549,8 +2233,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-
-  /* Info Card */
   infoCard: {
     backgroundColor: COLORS.surfaceCard,
     borderRadius: 14,
@@ -1569,8 +2251,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: COLORS.textPrimary,
   },
-
-  /* Full Width CTA */
   ctaButton: {
     backgroundColor: COLORS.primaryTeal,
     paddingVertical: 14,
@@ -1583,18 +2263,16 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
   },
-
-  /* Sample Collection Screen */
   vialGraphicFrame: {
-    width: 160,
-    height: 160,
+    width: 170,
+    height: 150,
     borderRadius: 20,
     backgroundColor: '#F0FDFA',
     borderWidth: 2,
     borderColor: '#99F6E4',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 24,
+    marginBottom: 20,
   },
   barcodeReticle: {
     width: 100,
@@ -1621,19 +2299,33 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: COLORS.textSecondary,
     textAlign: 'center',
-    paddingHorizontal: 24,
-    marginBottom: 28,
+    paddingHorizontal: 16,
+    marginBottom: 20,
   },
-
-  /* Drop Sample & OTP */
+  inputLabelSm: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.textSecondary,
+    marginBottom: 6,
+  },
+  fieldInput: {
+    backgroundColor: 'white',
+    borderWidth: 1.5,
+    borderColor: COLORS.borderLight,
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+  },
   dropLabCard: {
     backgroundColor: COLORS.surfaceCard,
     borderRadius: 14,
-    padding: 24,
+    padding: 22,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: COLORS.borderLight,
-    marginBottom: 20,
+    marginBottom: 18,
   },
   dropLabTitle: {
     fontSize: 17,
@@ -1647,23 +2339,18 @@ const styles = StyleSheet.create({
   },
   handoverBanner: {
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 18,
   },
   handoverCheck: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '700',
-    color: COLORS.successGreen,
+    color: COLORS.primaryDark,
   },
   handoverSub: {
     fontSize: 12,
     color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  enterOtpPrompt: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-    marginTop: 14,
+    marginTop: 4,
+    textAlign: 'center',
   },
   otpBoxesRow: {
     flexDirection: 'row',
@@ -1684,9 +2371,8 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700',
     color: COLORS.textPrimary,
+    width: '100%',
   },
-
-  /* Completed Screen */
   successCheckCircle: {
     width: 80,
     height: 80,
@@ -1734,8 +2420,6 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: COLORS.borderLight,
   },
-
-  /* Persistent Bottom Tab Bar */
   bottomTabBar: {
     height: 60,
     backgroundColor: 'white',
@@ -1753,8 +2437,6 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginTop: 2,
   },
-
-  /* Inner Tabs Header */
   appHeaderBar: {
     backgroundColor: COLORS.primaryDark,
     paddingHorizontal: 20,
@@ -1787,8 +2469,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.textPrimary,
   },
-
-  /* History Card */
   historyCard: {
     backgroundColor: COLORS.surfaceCard,
     borderRadius: 14,
@@ -1855,8 +2535,6 @@ const styles = StyleSheet.create({
     color: COLORS.successGreen,
     fontWeight: '600',
   },
-
-  /* Earnings & Charts */
   sectionHeaderTitle: {
     fontSize: 15,
     fontWeight: '700',
@@ -1883,8 +2561,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   chartBarAmount: {
-    fontSize: 9,
-    color: COLORS.textSecondary,
+    fontSize: 11,
+    color: COLORS.textPrimary,
+    fontWeight: '700',
     marginBottom: 4,
   },
   chartBarTrack: {
@@ -1904,35 +2583,6 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginTop: 6,
     fontWeight: '500',
-  },
-  incentiveCard: {
-    backgroundColor: '#F0FDFA',
-    borderWidth: 1,
-    borderColor: '#CCFBF1',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 14,
-  },
-  incentiveTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: COLORS.primaryDark,
-  },
-  incentiveSubtitle: {
-    fontSize: 12,
-    color: COLORS.primaryTeal,
-    marginTop: 2,
-  },
-  progressBarTrack: {
-    height: 6,
-    backgroundColor: '#CCFBF1',
-    borderRadius: 3,
-    marginTop: 10,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: COLORS.primaryTeal,
   },
   tripLedgerRow: {
     flexDirection: 'row',
@@ -1959,33 +2609,13 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: COLORS.primaryTeal,
     marginTop: 2,
+    fontWeight: '600',
   },
   tripLedgerFee: {
     fontSize: 16,
     fontWeight: '700',
     color: COLORS.successGreen,
   },
-  bankAccountCard: {
-    backgroundColor: COLORS.surfaceCard,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    borderRadius: 12,
-    padding: 14,
-    marginTop: 10,
-    marginBottom: 14,
-  },
-  bankName: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  bankNumber: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-
-  /* Profile Styles */
   shiftSelectorRow: {
     flexDirection: 'row',
     gap: 8,
@@ -2026,27 +2656,6 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginTop: 2,
   },
-  complianceCard: {
-    backgroundColor: COLORS.surfaceCard,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    borderRadius: 14,
-    padding: 14,
-  },
-  docItemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  docTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-  },
-  docAuth: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
   sosButton: {
     backgroundColor: '#FEF2F2',
     borderWidth: 1.5,
@@ -2059,19 +2668,6 @@ const styles = StyleSheet.create({
     color: COLORS.errorRed,
     fontSize: 13,
     fontWeight: '700',
-  },
-  helpHotlineButton: {
-    backgroundColor: '#F0FDFA',
-    borderWidth: 1,
-    borderColor: COLORS.primaryTeal,
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  helpHotlineText: {
-    color: COLORS.primaryDark,
-    fontSize: 13,
-    fontWeight: '600',
   },
   signOutButton: {
     backgroundColor: '#FFFFFF',
@@ -2094,4 +2690,3 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
 });
-

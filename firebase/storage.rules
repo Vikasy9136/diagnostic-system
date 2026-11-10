@@ -6,30 +6,58 @@ service firebase.storage {
       return request.auth != null;
     }
 
+    function normalizedEmail() {
+      return request.auth.token.email != null ? request.auth.token.email.lower() : '';
+    }
+
+    function hasDirectoryRole(targetRole) {
+      return isAuthenticated()
+        && normalizedEmail() != ''
+        && firestore.exists(/databases/(default)/documents/user_directory/$(normalizedEmail()))
+        && firestore.get(/databases/(default)/documents/user_directory/$(normalizedEmail())).data.isActive != false
+        && firestore.get(/databases/(default)/documents/user_directory/$(normalizedEmail())).data.role == targetRole;
+    }
+
     function isAdmin() {
       return isAuthenticated()
         && (
-          request.auth.token.role == 'ADMIN'
-          || request.auth.token.email == 'lab.setu.admin@gmail.com'
+          normalizedEmail() == 'lab.setu.admin@gmail.com'
+          || request.auth.token.role == 'ADMIN'
+          || hasDirectoryRole('ADMIN')
         );
+    }
+
+    function isLargeLab() {
+      return isAuthenticated()
+        && (request.auth.token.role == 'LARGE_LAB' || hasDirectoryRole('LARGE_LAB'));
+    }
+
+    function isCourierOrLab() {
+      return isAdmin()
+        || (isAuthenticated() && (
+          request.auth.token.role in ['PHLEBOTOMIST', 'SMALL_LAB', 'LARGE_LAB']
+          || hasDirectoryRole('PHLEBOTOMIST')
+          || hasDirectoryRole('SMALL_LAB')
+          || hasDirectoryRole('LARGE_LAB')
+        ));
     }
 
     // Diagnostic Reports: reports/{orderId}/{fileName}
     match /reports/{orderId}/{fileName} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin() || (isAuthenticated() && request.auth.token.role == 'LARGE_LAB');
+      allow write: if isAdmin() || isLargeLab();
     }
 
     // Custody Handover Digital Signatures: signatures/{orderId}/{fileName}
     match /signatures/{orderId}/{fileName} {
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && (request.auth.token.role in ['PHLEBOTOMIST', 'SMALL_LAB', 'ADMIN'] || isAdmin());
+      allow write: if isCourierOrLab();
     }
 
     // Lab Verification & Compliance KYC Documents: documents/{labId}/{fileName}
     match /documents/{labId}/{fileName} {
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && (isAdmin() || request.auth.token.labId == labId);
+      allow write: if isAdmin() || isCourierOrLab();
     }
 
     // Deny all other unrestricted access by default

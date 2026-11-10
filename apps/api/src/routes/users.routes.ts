@@ -76,3 +76,4 @@ usersRouter.patch('/:identifier', async (req: Request, res: Response, next: Next
     next(err);
   }
 });
+

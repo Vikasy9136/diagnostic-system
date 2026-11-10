@@ -17,6 +17,7 @@ export const API_BASE_URL =
   import.meta.env.VITE_API_URL || 'http://localhost:5000/api/v1';
 
 export const PORTAL_URLS = {
+  PORTAL: import.meta.env.VITE_PORTAL_URL || 'http://localhost:3003',
   ADMIN: import.meta.env.VITE_ADMIN_PORTAL_URL || 'http://localhost:3002',
   SMALL_LAB: import.meta.env.VITE_SMALL_LAB_PORTAL_URL || 'http://localhost:3000',
   LARGE_LAB: import.meta.env.VITE_LARGE_LAB_PORTAL_URL || 'http://localhost:3001',
@@ -40,10 +41,14 @@ export const storage: FirebaseStorage = getStorage(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-export async function uploadLabFile(path: string, file: File | Blob): Promise<string> {
+export async function uploadDiagnosticDocument(path: string, file: File | Blob): Promise<string> {
   const storageRef = ref(storage, path);
   await uploadBytes(storageRef, file);
   return getDownloadURL(storageRef);
+}
+
+export async function uploadLabFile(path: string, file: File | Blob): Promise<string> {
+  return uploadDiagnosticDocument(path, file);
 }
 
 if (import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'true') {

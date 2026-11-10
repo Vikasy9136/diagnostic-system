@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -41,7 +41,7 @@ import { type DynamicAlertVariant } from './DynamicAlertModal';
 export interface VerifiedPhleboSession {
   firebaseUser: User | null;
   profile: UserProfile;
-  authSource: 'firebase' | 'email-otp-dev';
+  authSource: 'firebase';
   bearerToken: string;
 }
 
@@ -80,6 +80,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
     email: string;
     assignedRole: UserRole;
   } | null>(null);
+  const mismatchTriggeredRef = useRef(false);
 
   useEffect(() => {
     if (otpCooldown <= 0) return;
@@ -89,12 +90,27 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
     return () => clearInterval(timer);
   }, [otpCooldown]);
 
-  const resolveWebPortalUrl = (role: UserRole): string | null => {
+  const resolveWebPortalUrl = (role: UserRole): string => {
     if (role === UserRole.ADMIN) return PORTAL_URLS.ADMIN;
     if (role === UserRole.SMALL_LAB) return PORTAL_URLS.SMALL_LAB;
     if (role === UserRole.LARGE_LAB) return PORTAL_URLS.LARGE_LAB;
-    return null;
+    return PORTAL_URLS.PORTAL;
   };
+
+  async function rejectRoleMismatch(email: string, assignedRole: UserRole): Promise<void> {
+    mismatchTriggeredRef.current = true;
+    setRoleMismatch({ email, assignedRole });
+    if (auth.currentUser) {
+      await signOut(auth);
+    }
+    onAuthenticated(null);
+    onShowAlert({
+      variant: 'error',
+      title: 'Strict Role Lock: Access Denied',
+      message: `${email} is provisioned ONLY for "${ROLE_LABELS[assignedRole]}" and cannot open ${ROLE_LABELS[REQUIRED_ROLE]}.`,
+      detail: `Assigned Role: ${ROLE_LABELS[assignedRole]} • Signed Out Automatically`,
+    });
+  }
 
   async function verifyFirebaseUserRole(user: User): Promise<void> {
     const email = user.email?.trim().toLowerCase() || '';
@@ -132,8 +148,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
       } else if (res.status === 403 && json?.error?.code === 'ROLE_MISMATCH') {
         const assignedRole =
           (json.error?.details?.assignedRole as UserRole) || UserRole.SMALL_LAB;
-        setRoleMismatch({ email, assignedRole });
-        onAuthenticated(null);
+        await rejectRoleMismatch(email, assignedRole);
         return;
       } else if (res.status === 403 && json?.error?.code === 'ACCOUNT_SUSPENDED') {
         await signOut(auth);
@@ -165,8 +180,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
         return;
       }
       if (apiProfile.role !== REQUIRED_ROLE) {
-        setRoleMismatch({ email, assignedRole: apiProfile.role });
-        onAuthenticated(null);
+        await rejectRoleMismatch(email, apiProfile.role);
         return;
       }
 
@@ -228,8 +242,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
     }
 
     if (resolvedRole !== REQUIRED_ROLE) {
-      setRoleMismatch({ email, assignedRole: resolvedRole });
-      onAuthenticated(null);
+      await rejectRoleMismatch(email, resolvedRole);
       return;
     }
 
@@ -242,8 +255,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
       labId: dirProfile?.labId || (tokenResult.claims?.labId as string | undefined),
       phlebotomistId:
         dirProfile?.phlebotomistId ||
-        (tokenResult.claims?.phlebotomistId as string | undefined) ||
-        'PHL-204',
+        (tokenResult.claims?.phlebotomistId as string | undefined),
       phoneNumber: dirProfile?.phoneNumber,
       isActive: true,
       createdByAdmin: true,
@@ -264,7 +276,10 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
-        setRoleMismatch(null);
+        if (!mismatchTriggeredRef.current) {
+          setRoleMismatch(null);
+        }
+        mismatchTriggeredRef.current = false;
         onAuthenticated(null);
         setAuthLoading(false);
         return;
@@ -420,9 +435,13 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
       if (!res.ok) {
         const errCode = json?.error?.code;
         if (errCode === 'ROLE_MISMATCH' && json?.error?.details?.assignedRole) {
-          setRoleMismatch({
-            email: normalized,
-            assignedRole: json.error.details.assignedRole as UserRole,
+          const assignedRole = json.error.details.assignedRole as UserRole;
+          setRoleMismatch({ email: normalized, assignedRole });
+          onShowAlert({
+            variant: 'error',
+            title: 'Strict Role Lock: Access Denied',
+            message: `${normalized} is assigned "${ROLE_LABELS[assignedRole]}" and cannot sign in as ${ROLE_LABELS[REQUIRED_ROLE]}.`,
+            detail: `Assigned Role: ${ROLE_LABELS[assignedRole]}`,
           });
           return;
         }
@@ -497,13 +516,12 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
         return;
       }
 
-      const isDevMode = typeof __DEV__ !== 'undefined' ? __DEV__ : true;
-      if (isDevMode && profile && devSessionToken && profile.role === REQUIRED_ROLE) {
-        onAuthenticated({
-          firebaseUser: null,
-          profile,
-          authSource: 'email-otp-dev',
-          bearerToken: devSessionToken,
+      if (profile && devSessionToken && profile.role === REQUIRED_ROLE) {
+        onShowAlert({
+          variant: 'warning',
+          title: 'Direct Firestore Requires Firebase Auth',
+          message:
+            'OTP verified against API dev mode, but Firebase Admin serviceAccountKey.json is not attached yet for Custom Tokens. Use Google Sign-In or Email & Password so live Cloud Firestore reads & writes succeed!',
         });
         return;
       }
@@ -512,7 +530,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
         variant: 'error',
         title: 'Custom Token Configuration Needed',
         message:
-          'Place serviceAccountKey.json in diagnostic-platform/ to mint Firebase Custom Tokens in production.',
+          'Place serviceAccountKey.json in diagnostic-platform/ to mint Firebase Custom Tokens, or sign in with Google / Password.',
       });
     } catch {
       onShowAlert({
@@ -552,8 +570,8 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
               <Text style={styles.brandIcon}>🛡️</Text>
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.bannerTitle}>Role Access Mismatch</Text>
-              <Text style={styles.bannerSub}>Strict Role-Based Dashboard Protection</Text>
+              <Text style={styles.bannerTitle}>Strict Role Lock</Text>
+              <Text style={styles.bannerSub}>Signed Out Automatically • Role Mismatch</Text>
             </View>
           </View>
 
@@ -581,16 +599,21 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
               </View>
             </View>
 
-            {webPortalUrl ? (
-              <TouchableOpacity
-                style={[styles.primaryBtn, { marginBottom: 10 }]}
-                onPress={() => void Linking.openURL(webPortalUrl)}
-              >
-                <Text style={styles.primaryBtnText}>
-                  Open {ROLE_LABELS[roleMismatch.assignedRole]} Portal →
-                </Text>
-              </TouchableOpacity>
-            ) : null}
+            <TouchableOpacity
+              style={[styles.primaryBtn, { marginBottom: 10 }]}
+              onPress={() => void Linking.openURL(webPortalUrl)}
+            >
+              <Text style={styles.primaryBtnText}>
+                Open {ROLE_LABELS[roleMismatch.assignedRole]} Portal →
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.secondaryBtn, { marginBottom: 10 }]}
+              onPress={() => void Linking.openURL(PORTAL_URLS.PORTAL)}
+            >
+              <Text style={styles.secondaryBtnText}>← Open Unified LabSetu Portal</Text>
+            </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.secondaryBtn}
@@ -600,7 +623,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
                 if (auth.currentUser) await signOut(auth);
               }}
             >
-              <Text style={styles.secondaryBtnText}>Sign Out &amp; Switch Account</Text>
+              <Text style={styles.secondaryBtnText}>Use Different Account</Text>
             </TouchableOpacity>
           </View>
         </View>

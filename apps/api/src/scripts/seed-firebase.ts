@@ -114,28 +114,13 @@ async function seedFirebase(): Promise<void> {
     { merge: true }
   );
 
-  // 5. Initial Labs, Phlebotomists & System Notification
-  await db.collection('labs').doc('LAB-SM-001').set(
+  // 5. System Initialization Notification (only when real Admin bootstrap runs)
+  await db.collection('settings').doc('commission').set(
     {
-      id: 'LAB-SM-001',
-      name: 'Bhandup Care Lab',
-      type: 'SMALL_LAB',
-      city: 'Mumbai',
-      verified: true,
-      email: 'bhandup.lab@example.org',
-      updatedAt: now,
-    },
-    { merge: true }
-  );
-
-  await db.collection('labs').doc('LAB-LG-100').set(
-    {
-      id: 'LAB-LG-100',
-      name: 'Metro Diagnostics',
-      type: 'LARGE_LAB',
-      city: 'Mulund West, Mumbai',
-      verified: true,
-      email: 'metro.partner@example.org',
+      commissionPct: 15,
+      courierBaseFeeInr: 250,
+      statSurchargeInr: 150,
+      updatedBy: adminEmail,
       updatedAt: now,
     },
     { merge: true }
@@ -161,7 +146,7 @@ async function seedFirebase(): Promise<void> {
     { merge: true }
   );
 
-  console.log('✅ Seeded Firestore users, settings, labs, and initial admin notification.\n');
+  console.log('✅ Seeded Firebase Auth Admin, Firestore user_directory, settings, and admin welcome notification.\n');
   process.exit(0);
 }
 

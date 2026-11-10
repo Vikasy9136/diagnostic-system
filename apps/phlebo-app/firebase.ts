@@ -20,9 +20,10 @@ export const API_BASE_URL =
     : env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:5000/api/v1';
 
 export const PORTAL_URLS = {
-  ADMIN: 'http://localhost:3002',
-  SMALL_LAB: 'http://localhost:3000',
-  LARGE_LAB: 'http://localhost:3001',
+  PORTAL: env.EXPO_PUBLIC_PORTAL_URL || 'http://localhost:3003',
+  ADMIN: env.EXPO_PUBLIC_ADMIN_PORTAL_URL || 'http://localhost:3002',
+  SMALL_LAB: env.EXPO_PUBLIC_SMALL_LAB_PORTAL_URL || 'http://localhost:3000',
+  LARGE_LAB: env.EXPO_PUBLIC_LARGE_LAB_PORTAL_URL || 'http://localhost:3001',
 };
 
 const firebaseConfig = {
@@ -47,3 +48,4 @@ export const db: Firestore = getFirestore(app);
 
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
+

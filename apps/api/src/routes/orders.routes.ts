@@ -4,9 +4,7 @@ import {
   PickupOrder,
   OrderStatus,
   OrderPriority,
-  SpecimenType,
-  TubeType,
-  StorageTemperature,
+  CustodyEvent,
   CustodyEventType,
   NotificationCategory,
   NotificationChannel,
@@ -16,99 +14,69 @@ import {
   isTemperatureCompliant,
 } from '@diagnostic/shared';
 import { AppError } from '../middleware/errorHandler';
+import { AuthenticatedRequest, requireAuth } from '../middleware/auth';
 import { initializeFirebase } from '../config/firebase';
 import { config } from '../config/env';
 import { sendPlatformNotification } from '../services/notification.service';
 
 export const ordersRouter = Router();
 
-// Starter mock order (strictly adheres to PickupOrder type from @diagnostic/shared)
-const STARTER_ORDERS: PickupOrder[] = [
-  {
-    id: 'ord_mock_001',
-    orderNumber: 'ORD-202611-0001',
-    smallLabId: 'LAB-SM-001',
-    smallLabName: 'Apex Clinical Care Collection Center',
-    targetLabId: 'LAB-LG-100',
-    targetLabName: 'National Reference Diagnostics Core Lab',
-    phlebotomistId: 'PHL-204',
-    phlebotomistName: 'Rohan Sharma',
-    status: OrderStatus.READY_FOR_PICKUP,
-    priority: OrderPriority.URGENT,
-    patient: {
-      id: 'PT-9482',
-      pseudonym: 'PT-9482',
-      age: 42,
-      gender: 'MALE',
-    },
-    specimens: [
-      {
-        id: 'SMP-202611-0001',
-        barcode: 'SMP-202611-0001',
-        testCode: 'CBC-01',
-        testName: 'Complete Blood Count',
-        specimenType: SpecimenType.BLOOD,
-        tubeType: TubeType.EDTA_LAVENDER,
-        temperatureRequirement: StorageTemperature.REFRIGERATED,
-        collectedAt: new Date().toISOString(),
-      },
-    ],
-    custodyHistory: [
-      {
-        id: 'EVT-001',
-        orderId: 'ord_mock_001',
-        eventType: CustodyEventType.ORDER_CREATED,
-        timestamp: new Date().toISOString(),
-        operatorId: 'USR-SM-01',
-        operatorName: 'Dr. A. Verma',
-        operatorRole: UserRole.SMALL_LAB,
-        notes: 'Specimen collected and packed with cold ice gel pack',
-      },
-    ],
-    pickupLocation: {
-      address: 'Shop 4, Market Complex, Sector 15, Gurgaon, Haryana',
-      latitude: 28.4595,
-      longitude: 77.0266,
-      contactPhone: '+91 98000 00000',
-    },
-    deliveryLocation: {
-      address: 'Central Reference Lab, Okhla Phase 3, New Delhi',
-      latitude: 28.5355,
-      longitude: 77.2680,
-    },
-    scheduledPickupAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-];
+// Empty volatile store only when Admin SDK serviceAccountKey.json is not attached yet
+const VOLATILE_DEV_ORDERS: PickupOrder[] = [];
 
 /**
  * GET /api/v1/orders
- * Returns list of pickup orders
+ * Returns live Firestore pickup orders (no dummy seed records)
  */
-ordersRouter.get('/', async (_req: Request, res: Response, next: NextFunction) => {
+ordersRouter.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const { db, isMockMode } = initializeFirebase();
+    const role = req.user?.role;
+    const labId = req.user?.labId;
+    const phleboId = req.user?.phlebotomistId;
+
     if (db && !isMockMode) {
-      const snap = await db.collection('orders').orderBy('createdAt', 'desc').limit(50).get();
-      if (!snap.empty) {
-        const orders = snap.docs.map((doc) => ({ id: doc.id, ...(doc.data() as Omit<PickupOrder, 'id'>) }));
-        return res.json({
-          success: true,
-          data: orders,
-          message: 'Firestore pickup orders retrieved successfully',
-          timestamp: new Date().toISOString(),
-        });
+      let ref: FirebaseFirestore.Query = db.collection('orders');
+      if (role === UserRole.SMALL_LAB && labId) {
+        ref = ref.where('smallLabId', '==', labId);
+      } else if (role === UserRole.LARGE_LAB && labId) {
+        ref = ref.where('targetLabId', '==', labId);
       }
+
+      const snap = await ref.limit(200).get();
+      let orders = snap.docs.map((doc) => ({ id: doc.id, ...(doc.data() as Omit<PickupOrder, 'id'>) }));
+
+      if (role === UserRole.PHLEBOTOMIST && phleboId) {
+        orders = orders.filter(
+          (o) =>
+            o.phlebotomistId === phleboId ||
+            (o.status === OrderStatus.READY_FOR_PICKUP && !o.phlebotomistId)
+        );
+      }
+
+      orders.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+      return res.json({
+        success: true,
+        data: orders,
+        message: 'Live Firestore pickup orders retrieved successfully',
+        timestamp: new Date().toISOString(),
+      });
     }
 
-    const response: ApiResponse<PickupOrder[]> = {
+    let scoped = [...VOLATILE_DEV_ORDERS];
+    if (role === UserRole.SMALL_LAB && labId) {
+      scoped = scoped.filter((o) => o.smallLabId === labId);
+    } else if (role === UserRole.LARGE_LAB && labId) {
+      scoped = scoped.filter((o) => o.targetLabId === labId);
+    }
+
+    return res.json({
       success: true,
-      data: STARTER_ORDERS,
-      message: 'Starter mock orders retrieved successfully',
+      data: scoped,
+      message: 'Orders retrieved',
       timestamp: new Date().toISOString(),
-    };
-    return res.json(response);
+    });
   } catch (err) {
     return next(err);
   }
@@ -118,7 +86,7 @@ ordersRouter.get('/', async (_req: Request, res: Response, next: NextFunction) =
  * POST /api/v1/orders
  * Creates a pickup order in Firestore and dispatches email + in-app notification
  */
-ordersRouter.post('/', async (req: Request, res: Response, next: NextFunction) => {
+ordersRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const { smallLabName, targetLabName, patient, specimens, priority } = req.body || {};
     if (!smallLabName || !patient) {
@@ -126,14 +94,18 @@ ordersRouter.post('/', async (req: Request, res: Response, next: NextFunction) =
     }
 
     const now = new Date().toISOString();
-    const orderNumber = `BK-${Math.floor(10500 + Math.random() * 89000)}`;
+    const orderNumber =
+      req.body.orderNumber || `BK-${Math.floor(100000 + Math.random() * 899999)}`;
+
     const newOrder: PickupOrder = {
       id: orderNumber,
       orderNumber,
-      smallLabId: req.body.smallLabId || 'LAB-SM-001',
+      smallLabId: req.body.smallLabId || req.user?.labId || 'LAB-SM-UNASSIGNED',
       smallLabName,
-      targetLabId: req.body.targetLabId || 'LAB-LG-100',
-      targetLabName: targetLabName || 'Metro Diagnostics',
+      targetLabId: req.body.targetLabId || 'LAB-LG-UNASSIGNED',
+      targetLabName: targetLabName || 'Partner Reference Lab',
+      ...(req.body.phlebotomistId ? { phlebotomistId: req.body.phlebotomistId } : {}),
+      ...(req.body.phlebotomistName ? { phlebotomistName: req.body.phlebotomistName } : {}),
       status: OrderStatus.READY_FOR_PICKUP,
       priority: priority || OrderPriority.ROUTINE,
       patient,
@@ -145,11 +117,13 @@ ordersRouter.post('/', async (req: Request, res: Response, next: NextFunction) =
         longitude: 72.9378,
       },
       deliveryLocation: req.body.deliveryLocation || {
-        address: targetLabName || 'Metro Diagnostics',
+        address: targetLabName || 'Partner Reference Lab',
         latitude: 19.1726,
         longitude: 72.9565,
       },
       scheduledPickupAt: req.body.scheduledPickupAt || now,
+      ...(typeof req.body.totalAmountInr === 'number' ? { totalAmountInr: req.body.totalAmountInr } : {}),
+      ...(typeof req.body.courierFeeInr === 'number' ? { courierFeeInr: req.body.courierFeeInr } : {}),
       createdAt: now,
       updatedAt: now,
     };
@@ -158,7 +132,7 @@ ordersRouter.post('/', async (req: Request, res: Response, next: NextFunction) =
     if (db && !isMockMode) {
       await db.collection('orders').doc(orderNumber).set(newOrder);
     } else {
-      STARTER_ORDERS.unshift(newOrder);
+      VOLATILE_DEV_ORDERS.unshift(newOrder);
     }
 
     await sendPlatformNotification({
@@ -188,28 +162,125 @@ ordersRouter.post('/', async (req: Request, res: Response, next: NextFunction) =
 });
 
 /**
- * GET /api/v1/orders/:id
- * Retrieve single order
+ * PATCH /api/v1/orders/:id
+ * Updates order lifecycle status, courier assignment, or QC details & records custody audit event
  */
-ordersRouter.get('/:id', (req: Request, res: Response, next) => {
-  const order = STARTER_ORDERS.find((o) => o.id === req.params.id);
-  if (!order) {
-    return next(new AppError(`Order not found: ${req.params.id}`, 404, 'NOT_FOUND'));
-  }
+ordersRouter.patch('/:id', requireAuth, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const orderId = req.params.id;
+    const updates = (req.body || {}) as Partial<PickupOrder> & {
+      custodyEventType?: CustodyEventType;
+      temperatureCelsius?: number;
+      custodyNotes?: string;
+    };
+    const now = new Date().toISOString();
 
-  const response: ApiResponse<PickupOrder> = {
-    success: true,
-    data: order,
-    timestamp: new Date().toISOString(),
-  };
-  res.json(response);
+    const { db, isMockMode } = initializeFirebase();
+    let existing: PickupOrder | null = null;
+
+    if (db && !isMockMode) {
+      const snap = await db.collection('orders').doc(orderId).get();
+      if (snap.exists) {
+        existing = { id: snap.id, ...(snap.data() as Omit<PickupOrder, 'id'>) };
+      }
+    } else {
+      existing = VOLATILE_DEV_ORDERS.find((o) => o.id === orderId) || null;
+    }
+
+    if (!existing) {
+      return next(new AppError(`Order not found: ${orderId}`, 404, 'NOT_FOUND'));
+    }
+
+    const patchPayload: Partial<PickupOrder> = {
+      ...(updates.status ? { status: updates.status } : {}),
+      ...(updates.phlebotomistId !== undefined ? { phlebotomistId: updates.phlebotomistId } : {}),
+      ...(updates.phlebotomistName !== undefined ? { phlebotomistName: updates.phlebotomistName } : {}),
+      ...(updates.actualPickupAt ? { actualPickupAt: updates.actualPickupAt } : {}),
+      ...(updates.actualDeliveredAt ? { actualDeliveredAt: updates.actualDeliveredAt } : {}),
+      ...(updates.arrivalTemperatureCelsius !== undefined
+        ? { arrivalTemperatureCelsius: updates.arrivalTemperatureCelsius }
+        : {}),
+      ...(updates.qualityStatus ? { qualityStatus: updates.qualityStatus } : {}),
+      ...(updates.reportDocumentUrl ? { reportDocumentUrl: updates.reportDocumentUrl } : {}),
+      ...(updates.reportId ? { reportId: updates.reportId } : {}),
+      ...(updates.rejectionReason ? { rejectionReason: updates.rejectionReason } : {}),
+      ...(updates.cancellationReason ? { cancellationReason: updates.cancellationReason } : {}),
+      updatedAt: now,
+    };
+
+    const merged = { ...existing, ...patchPayload };
+
+    if (db && !isMockMode) {
+      await db.collection('orders').doc(orderId).set(patchPayload, { merge: true });
+      if (updates.custodyEventType && req.user) {
+        const evt: Omit<CustodyEvent, 'id'> = {
+          orderId,
+          eventType: updates.custodyEventType,
+          timestamp: now,
+          operatorId: req.user.uid,
+          operatorName: req.user.email || req.user.uid,
+          operatorRole: req.user.role,
+          ...(typeof updates.temperatureCelsius === 'number'
+            ? { temperatureCelsius: updates.temperatureCelsius }
+            : {}),
+          ...(updates.custodyNotes ? { notes: updates.custodyNotes } : {}),
+        };
+        await db.collection('custody_events').add(evt);
+      }
+    } else {
+      const idx = VOLATILE_DEV_ORDERS.findIndex((o) => o.id === orderId);
+      if (idx >= 0) VOLATILE_DEV_ORDERS[idx] = merged;
+    }
+
+    return res.json({
+      success: true,
+      data: merged,
+      message: `Order ${orderId} updated`,
+      timestamp: now,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/**
+ * GET /api/v1/orders/:id
+ * Retrieve single order from Firestore
+ */
+ordersRouter.get('/:id', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const orderId = req.params.id;
+    const { db, isMockMode } = initializeFirebase();
+
+    let order: PickupOrder | null = null;
+    if (db && !isMockMode) {
+      const snap = await db.collection('orders').doc(orderId).get();
+      if (snap.exists) {
+        order = { id: snap.id, ...(snap.data() as Omit<PickupOrder, 'id'>) };
+      }
+    } else {
+      order = VOLATILE_DEV_ORDERS.find((o) => o.id === orderId) || null;
+    }
+
+    if (!order) {
+      return next(new AppError(`Order not found: ${orderId}`, 404, 'NOT_FOUND'));
+    }
+
+    return res.json({
+      success: true,
+      data: order,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    return next(err);
+  }
 });
 
 /**
  * POST /api/v1/orders/validate-specimen
  * Validates specimen barcode structure & temperature compliance
  */
-ordersRouter.post('/validate-specimen', (req: Request, res: Response, next) => {
+ordersRouter.post('/validate-specimen', (req: Request, res: Response, next: NextFunction) => {
   const { barcode, temperatureCelsius, temperatureRequirement } = req.body;
 
   if (!barcode) {
@@ -239,4 +310,3 @@ ordersRouter.post('/validate-specimen', (req: Request, res: Response, next) => {
 
   res.json(response);
 });
-

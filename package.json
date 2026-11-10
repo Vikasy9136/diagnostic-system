@@ -11,6 +11,7 @@
   ],
   "scripts": {
     "dev:api": "npm --workspace=@diagnostic/api run dev",
+    "dev:portal": "npm --workspace=@diagnostic/portal run dev",
     "dev:small-lab": "npm --workspace=@diagnostic/small-lab run dev",
     "dev:large-lab": "npm --workspace=@diagnostic/large-lab run dev",
     "dev:admin": "npm --workspace=@diagnostic/admin run dev",

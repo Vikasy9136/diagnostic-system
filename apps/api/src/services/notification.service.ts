@@ -11,42 +11,8 @@ import {
 import { initializeFirebase } from '../config/firebase';
 import { config } from '../config/env';
 
-// Local fallback store when Firebase Admin SDK serviceAccountKey.json is not attached yet
-const DEV_NOTIFICATIONS: PlatformNotification[] = [
-  {
-    id: 'notif-001',
-    title: 'Firebase Project Connected (labsetu-diagnostics)',
-    message:
-      'LabSetu Diagnostics cloud database, authentication framework, and notification pipeline are configured for lab.setu.admin@gmail.com.',
-    category: NotificationCategory.SYSTEM_ALERT,
-    priority: NotificationPriority.NORMAL,
-    recipientEmail: 'lab.setu.admin@gmail.com',
-    recipientRole: UserRole.ADMIN,
-    channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
-    read: false,
-    emailSent: false,
-    emailStatus: 'PENDING_SMTP_APP_PASSWORD',
-    pushSent: false,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'notif-002',
-    title: 'STAT Sample Dispatch Alert — BK-10456',
-    message:
-      'Urgent CBC + LFT pickup assigned to Rahul Yadav (Bhandup Care Lab -> Metro Diagnostics). Cold-chain sensor 4.2°C nominal.',
-    category: NotificationCategory.PICKUP_ASSIGNED,
-    priority: NotificationPriority.HIGH,
-    recipientEmail: 'lab.setu.admin@gmail.com',
-    recipientRole: UserRole.ADMIN,
-    orderId: 'BK-10456',
-    channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL, NotificationChannel.PUSH_FCM],
-    read: false,
-    emailSent: false,
-    emailStatus: 'QUEUED',
-    pushSent: false,
-    createdAt: new Date(Date.now() - 18 * 60 * 1000).toISOString(),
-  },
-];
+// Local volatile notification store used only until Admin SDK serviceAccountKey.json is attached
+const DEV_NOTIFICATIONS: PlatformNotification[] = [];
 
 let devEmailSettings: EmailDeliverySettings = {
   adminEmail: config.admin.email,
