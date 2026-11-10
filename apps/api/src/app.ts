@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import { config } from './config/env';
 import { healthRouter } from './routes/health.routes';
 import { ordersRouter } from './routes/orders.routes';
+import { notificationsRouter } from './routes/notifications.routes';
 import { errorHandler, AppError } from './middleware/errorHandler';
 
 export function createApp(): Application {
@@ -30,6 +31,7 @@ export function createApp(): Application {
   // API Routes
   app.use('/api/v1/health', healthRouter);
   app.use('/api/v1/orders', ordersRouter);
+  app.use('/api/v1/notifications', notificationsRouter);
 
   // 404 Not Found Handler
   app.use((req: Request, _res: Response, next: NextFunction) => {

@@ -1,4 +1,4 @@
-import { StorageTemperature, OrderPriority } from '../types';
+import { StorageTemperature, OrderPriority } from '../types/index.js';
 
 /**
  * Temperature range boundaries in Celsius

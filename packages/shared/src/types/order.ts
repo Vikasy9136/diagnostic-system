@@ -1,5 +1,5 @@
-import { SpecimenItem } from './specimen';
-import { CustodyEvent } from './custody';
+import { SpecimenItem } from './specimen.js';
+import { CustodyEvent } from './custody.js';
 
 /**
  * Status lifecycle of a diagnostic pickup order

@@ -19,6 +19,8 @@
     "build:api": "npm --workspace=@diagnostic/api run build",
     "build:web": "npm run build --workspaces --if-present",
     "build:all": "npm run build:shared && npm run build:api && npm run build:web",
+    "seed:firebase": "npm --workspace=@diagnostic/api run seed:firebase",
+    "firebase:deploy:rules": "firebase deploy --only firestore,storage --project labsetu-diagnostics --config firebase/firebase.json",
     "lint": "npm run lint --workspaces --if-present"
   },
   "keywords": [

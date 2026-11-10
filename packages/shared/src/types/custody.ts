@@ -1,4 +1,4 @@
-import { UserRole } from './user';
+import { UserRole } from './user.js';
 
 /**
  * Types of custody events in the logistics lifecycle

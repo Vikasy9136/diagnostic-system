@@ -13,8 +13,11 @@ healthRouter.get('/', (_req: Request, res: Response) => {
     environment: string;
     uptimeSeconds: number;
     nodeVersion: string;
+    firebaseProjectId: string;
     firebaseConnected: boolean;
     isMockMode: boolean;
+    adminEmail: string;
+    smtpConfigured: boolean;
   }> = {
     success: true,
     data: {
@@ -22,8 +25,11 @@ healthRouter.get('/', (_req: Request, res: Response) => {
       environment: config.env,
       uptimeSeconds: Math.floor(process.uptime()),
       nodeVersion: process.version,
+      firebaseProjectId: config.firebase.projectId,
       firebaseConnected: !firebaseStatus.isMockMode,
       isMockMode: firebaseStatus.isMockMode,
+      adminEmail: config.admin.email,
+      smtpConfigured: Boolean(config.smtp.pass),
     },
     message: 'Diagnostic Logistics Backend API is operational',
     timestamp: new Date().toISOString(),
@@ -31,4 +37,3 @@ healthRouter.get('/', (_req: Request, res: Response) => {
 
   res.json(response);
 });
-

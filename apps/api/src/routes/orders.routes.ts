@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import {
   ApiResponse,
   PickupOrder,
@@ -8,11 +8,17 @@ import {
   TubeType,
   StorageTemperature,
   CustodyEventType,
+  NotificationCategory,
+  NotificationChannel,
+  NotificationPriority,
   UserRole,
   isValidSpecimenBarcode,
   isTemperatureCompliant,
 } from '@diagnostic/shared';
 import { AppError } from '../middleware/errorHandler';
+import { initializeFirebase } from '../config/firebase';
+import { config } from '../config/env';
+import { sendPlatformNotification } from '../services/notification.service';
 
 export const ordersRouter = Router();
 
@@ -80,14 +86,105 @@ const STARTER_ORDERS: PickupOrder[] = [
  * GET /api/v1/orders
  * Returns list of pickup orders
  */
-ordersRouter.get('/', (_req: Request, res: Response) => {
-  const response: ApiResponse<PickupOrder[]> = {
-    success: true,
-    data: STARTER_ORDERS,
-    message: 'Starter mock orders retrieved successfully',
-    timestamp: new Date().toISOString(),
-  };
-  res.json(response);
+ordersRouter.get('/', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { db, isMockMode } = initializeFirebase();
+    if (db && !isMockMode) {
+      const snap = await db.collection('orders').orderBy('createdAt', 'desc').limit(50).get();
+      if (!snap.empty) {
+        const orders = snap.docs.map((doc) => ({ id: doc.id, ...(doc.data() as Omit<PickupOrder, 'id'>) }));
+        return res.json({
+          success: true,
+          data: orders,
+          message: 'Firestore pickup orders retrieved successfully',
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+
+    const response: ApiResponse<PickupOrder[]> = {
+      success: true,
+      data: STARTER_ORDERS,
+      message: 'Starter mock orders retrieved successfully',
+      timestamp: new Date().toISOString(),
+    };
+    return res.json(response);
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/**
+ * POST /api/v1/orders
+ * Creates a pickup order in Firestore and dispatches email + in-app notification
+ */
+ordersRouter.post('/', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { smallLabName, targetLabName, patient, specimens, priority } = req.body || {};
+    if (!smallLabName || !patient) {
+      return next(new AppError('Missing required fields: smallLabName and patient', 400, 'BAD_REQUEST'));
+    }
+
+    const now = new Date().toISOString();
+    const orderNumber = `BK-${Math.floor(10500 + Math.random() * 89000)}`;
+    const newOrder: PickupOrder = {
+      id: orderNumber,
+      orderNumber,
+      smallLabId: req.body.smallLabId || 'LAB-SM-001',
+      smallLabName,
+      targetLabId: req.body.targetLabId || 'LAB-LG-100',
+      targetLabName: targetLabName || 'Metro Diagnostics',
+      status: OrderStatus.READY_FOR_PICKUP,
+      priority: priority || OrderPriority.ROUTINE,
+      patient,
+      specimens: Array.isArray(specimens) ? specimens : [],
+      custodyHistory: [],
+      pickupLocation: req.body.pickupLocation || {
+        address: smallLabName,
+        latitude: 19.1438,
+        longitude: 72.9378,
+      },
+      deliveryLocation: req.body.deliveryLocation || {
+        address: targetLabName || 'Metro Diagnostics',
+        latitude: 19.1726,
+        longitude: 72.9565,
+      },
+      scheduledPickupAt: req.body.scheduledPickupAt || now,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const { db, isMockMode } = initializeFirebase();
+    if (db && !isMockMode) {
+      await db.collection('orders').doc(orderNumber).set(newOrder);
+    } else {
+      STARTER_ORDERS.unshift(newOrder);
+    }
+
+    await sendPlatformNotification({
+      title: `New Booking ${orderNumber} from ${smallLabName}`,
+      message: `Priority ${newOrder.priority} sample pickup requested to ${newOrder.targetLabName}.`,
+      category: NotificationCategory.BOOKING_CREATED,
+      priority:
+        newOrder.priority === OrderPriority.STAT_CRITICAL
+          ? NotificationPriority.CRITICAL
+          : NotificationPriority.NORMAL,
+      recipientEmail: config.admin.email,
+      recipientRole: UserRole.ADMIN,
+      orderId: orderNumber,
+      channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL, NotificationChannel.PUSH_FCM],
+    });
+
+    const response: ApiResponse<PickupOrder> = {
+      success: true,
+      data: newOrder,
+      message: 'Booking created and admin notification dispatched',
+      timestamp: now,
+    };
+    return res.status(201).json(response);
+  } catch (err) {
+    return next(err);
+  }
 });
 
 /**

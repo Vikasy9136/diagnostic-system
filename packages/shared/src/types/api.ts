@@ -1,5 +1,5 @@
-import { OrderStatus } from './order';
-import { CustodyEventType, GeoLocation } from './custody';
+import { OrderStatus } from './order.js';
+import { CustodyEventType, GeoLocation } from './custody.js';
 
 /**
  * Standard API Success Response

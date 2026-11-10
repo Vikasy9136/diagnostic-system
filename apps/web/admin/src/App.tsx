@@ -1,5 +1,75 @@
-import { useState } from 'react';
-import { LABSETU_THEME } from '@diagnostic/shared';
+import { useState, useEffect, type FormEvent } from 'react';
+import {
+  LABSETU_THEME,
+  NotificationCategory,
+  NotificationChannel,
+  NotificationPriority,
+  type EmailDeliverySettings,
+  type PlatformNotification,
+  UserRole,
+} from '@diagnostic/shared';
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+  signOut,
+  getIdTokenResult,
+  type User,
+} from 'firebase/auth';
+import {
+  collection,
+  doc,
+  getDoc,
+  setDoc,
+  addDoc,
+  updateDoc,
+  onSnapshot,
+  query,
+  orderBy,
+  limit,
+} from 'firebase/firestore';
+import {
+  ADMIN_LOGIN_EMAIL,
+  auth,
+  db,
+  uploadDiagnosticDocument,
+} from './firebase';
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api/v1';
+
+const FALLBACK_NOTIFICATIONS: PlatformNotification[] = [
+  {
+    id: 'notif-local-1',
+    title: 'Firebase Project Linked (labsetu-diagnostics)',
+    message:
+      'Admin login credential lab.setu.admin@gmail.com, Firestore database, storage rules, and email alert pipeline configured.',
+    category: NotificationCategory.SYSTEM_ALERT,
+    priority: NotificationPriority.NORMAL,
+    recipientEmail: ADMIN_LOGIN_EMAIL,
+    recipientRole: UserRole.ADMIN,
+    channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+    read: false,
+    emailSent: false,
+    pushSent: false,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'notif-local-2',
+    title: 'STAT Pickup Alert — BK-10456',
+    message:
+      'Rahul Yadav picked up CBC + LFT specimen from Bhandup Care Lab (Cold-chain cooler 4.2°C).',
+    category: NotificationCategory.PICKUP_ASSIGNED,
+    priority: NotificationPriority.HIGH,
+    recipientEmail: ADMIN_LOGIN_EMAIL,
+    recipientRole: UserRole.ADMIN,
+    orderId: 'BK-10456',
+    channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+    read: false,
+    emailSent: false,
+    pushSent: false,
+    createdAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+  },
+];
 
 interface ActiveCourier {
   id: string;
@@ -93,12 +163,442 @@ type AdminTab =
   | 'settings';
 
 export function App() {
+  // Authentication & Admin Session State
+  const [authLoading, setAuthLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [devPreviewSession, setDevPreviewSession] = useState(false);
+  const [loginEmail, setLoginEmail] = useState(ADMIN_LOGIN_EMAIL);
+  const [loginPassword, setLoginPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+
+  // Dashboard UI State
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const [labsMenuOpen, setLabsMenuOpen] = useState(true);
   const [selectedCourier, setSelectedCourier] = useState<ActiveCourier | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [dateRange, setDateRange] = useState('Last 30 Days');
   const [quickActionModal, setQuickActionModal] = useState<string | null>(null);
+
+  // Notifications & Settings State
+  const [notifications, setNotifications] = useState<PlatformNotification[]>(FALLBACK_NOTIFICATIONS);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifStatusMsg, setNotifStatusMsg] = useState<string | null>(null);
+  const [statSlaMinutes, setStatSlaMinutes] = useState(45);
+  const [delayThresholdMinutes, setDelayThresholdMinutes] = useState(15);
+  const [settingsStatusMsg, setSettingsStatusMsg] = useState<string | null>(null);
+  const [storageStatusMsg, setStorageStatusMsg] = useState<string | null>(null);
+  const [emailSettings, setEmailSettings] = useState<EmailDeliverySettings>({
+    adminEmail: ADMIN_LOGIN_EMAIL,
+    enableBookingEmails: true,
+    enableColdChainAlerts: true,
+    enableReportReadyEmails: true,
+    enableDailySummaryEmails: true,
+  });
+
+  // Listen to Firebase Auth state & enforce ADMIN role
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        setCurrentUser(null);
+        setAuthLoading(false);
+        return;
+      }
+
+      try {
+        const tokenResult = await getIdTokenResult(user);
+        const claimRole = tokenResult.claims?.role as string | undefined;
+        let firestoreRole: string | undefined;
+
+        try {
+          const userSnap = await getDoc(doc(db, 'users', user.uid));
+          if (userSnap.exists()) {
+            firestoreRole = userSnap.data()?.role as string | undefined;
+          }
+        } catch {
+          // Firestore offline/rules fallback checked below
+        }
+
+        const isAdminEmail = user.email?.toLowerCase() === ADMIN_LOGIN_EMAIL.toLowerCase();
+        if (claimRole === UserRole.ADMIN || firestoreRole === UserRole.ADMIN || isAdminEmail) {
+          setCurrentUser(user);
+          setAuthError(null);
+        } else {
+          await signOut(auth);
+          setCurrentUser(null);
+          setAuthError(`Access denied: ${user.email} is not authorized as a Platform Admin.`);
+        }
+      } catch (err) {
+        console.error('Admin auth verification error:', err);
+        setCurrentUser(user);
+      } finally {
+        setAuthLoading(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Subscribe to real-time Firestore notifications when authenticated
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const notifQuery = query(
+      collection(db, 'notifications'),
+      orderBy('createdAt', 'desc'),
+      limit(25)
+    );
+
+    const unsubscribe = onSnapshot(
+      notifQuery,
+      (snapshot) => {
+        if (!snapshot.empty) {
+          const liveItems = snapshot.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<PlatformNotification, 'id'>),
+          }));
+          setNotifications(liveItems);
+        }
+      },
+      (err) => {
+        console.warn('Firestore notifications listener skipped:', err.message);
+      }
+    );
+
+    // Load saved notification & platform settings if present
+    getDoc(doc(db, 'settings', 'notifications'))
+      .then((snap) => {
+        if (snap.exists()) {
+          setEmailSettings((prev) => ({
+            ...prev,
+            ...(snap.data() as Partial<EmailDeliverySettings>),
+          }));
+        }
+      })
+      .catch(() => {});
+
+    return () => unsubscribe();
+  }, [currentUser]);
+
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
+  async function handleAdminSignIn(e: FormEvent) {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthNotice(null);
+    setAuthSubmitting(true);
+
+    try {
+      await signInWithEmailAndPassword(auth, loginEmail.trim(), loginPassword);
+    } catch (err: unknown) {
+      const fbErr = err as { code?: string; message?: string };
+      if (fbErr.code === 'auth/configuration-not-found' || fbErr.code === 'auth/operation-not-allowed') {
+        setAuthError(
+          'Firebase Email/Password authentication needs to be enabled in Firebase Console (Authentication -> Sign-in method -> Email/Password).'
+        );
+      } else if (fbErr.code === 'auth/invalid-credential' || fbErr.code === 'auth/wrong-password' || fbErr.code === 'auth/user-not-found') {
+        setAuthError(
+          `Invalid email or password for ${loginEmail.trim()}. If you haven't set a password yet, click "Reset / Set Password via Email" below.`
+        );
+      } else {
+        setAuthError(fbErr.message || 'Sign in failed. Please check credentials.');
+      }
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  async function handlePasswordReset() {
+    setAuthError(null);
+    setAuthNotice(null);
+    const email = loginEmail.trim();
+    if (!email) {
+      setAuthError('Enter your admin email address first.');
+      return;
+    }
+
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setAuthNotice(`Password reset link sent to ${email}. Check your Gmail inbox.`);
+    } catch (err: unknown) {
+      const fbErr = err as { code?: string; message?: string };
+      if (fbErr.code === 'auth/configuration-not-found') {
+        setAuthError(
+          'Enable Email/Password sign-in in Firebase Console (Authentication -> Get Started) before sending reset emails.'
+        );
+      } else {
+        setAuthError(fbErr.message || 'Could not send password reset email.');
+      }
+    }
+  }
+
+  async function handleSignOut() {
+    setDevPreviewSession(false);
+    if (currentUser) {
+      await signOut(auth);
+    }
+    setNotifOpen(false);
+  }
+
+  async function handleMarkNotificationRead(id: string) {
+    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+    if (currentUser && !id.startsWith('notif-local-')) {
+      try {
+        await updateDoc(doc(db, 'notifications', id), { read: true });
+      } catch {
+        // fallback ignored
+      }
+    }
+  }
+
+  async function handleSendTestNotificationAndEmail() {
+    setNotifStatusMsg('Dispatching notification & email check...');
+    const now = new Date().toISOString();
+
+    try {
+      let authHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (currentUser) {
+        const token = await currentUser.getIdToken();
+        authHeaders.Authorization = `Bearer ${token}`;
+      } else if (import.meta.env.DEV) {
+        authHeaders['x-mock-role'] = UserRole.ADMIN;
+      }
+
+      const res = await fetch(`${API_BASE_URL}/notifications/test-email`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ recipientEmail: emailSettings.adminEmail || ADMIN_LOGIN_EMAIL }),
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        setNotifStatusMsg(json.message || 'Test notification dispatched cleanly.');
+        if (json.data) {
+          setNotifications((prev) => [json.data, ...prev]);
+        }
+        return;
+      }
+    } catch {
+      // Backend API may not be running locally; fallback to direct Firestore write when signed in
+    }
+
+    if (currentUser) {
+      try {
+        const notifPayload: Omit<PlatformNotification, 'id'> = {
+          title: 'Admin Test Email & Firestore Alert',
+          message: `Verification alert queued for ${emailSettings.adminEmail} at ${new Date(now).toLocaleTimeString('en-IN')}.`,
+          category: NotificationCategory.SYSTEM_ALERT,
+          priority: NotificationPriority.NORMAL,
+          recipientUid: currentUser.uid,
+          recipientEmail: emailSettings.adminEmail,
+          recipientRole: UserRole.ADMIN,
+          channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+          read: false,
+          emailSent: false,
+          emailStatus: 'QUEUED_IN_FIRESTORE_MAIL',
+          pushSent: false,
+          createdAt: now,
+        };
+
+        await addDoc(collection(db, 'notifications'), notifPayload);
+        await addDoc(collection(db, 'mail'), {
+          to: [emailSettings.adminEmail],
+          message: {
+            subject: `[LabSetu] ${notifPayload.title}`,
+            text: notifPayload.message,
+          },
+          createdAt: now,
+        });
+        setNotifStatusMsg(`Queued notification + email document in Firestore for ${emailSettings.adminEmail}.`);
+        return;
+      } catch (fsErr) {
+        setNotifStatusMsg(`Firestore write skipped: ${(fsErr as Error).message}`);
+        return;
+      }
+    }
+
+    setNotifications((prev) => [
+      {
+        id: `notif-local-${Date.now()}`,
+        title: 'Local Test Notification Dispatched',
+        message: `Simulated alert for ${emailSettings.adminEmail}. Start API or sign in with live Firebase Auth to deliver via Firestore/SMTP.`,
+        category: NotificationCategory.SYSTEM_ALERT,
+        priority: NotificationPriority.NORMAL,
+        recipientEmail: emailSettings.adminEmail,
+        recipientRole: UserRole.ADMIN,
+        channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+        read: false,
+        emailSent: false,
+        pushSent: false,
+        createdAt: now,
+      },
+      ...prev,
+    ]);
+    setNotifStatusMsg('Preview notification added (sign in with Firebase Auth + run API for live email delivery).');
+  }
+
+  async function handleSavePlatformSettings() {
+    setSettingsStatusMsg('Saving settings...');
+    const now = new Date().toISOString();
+
+    if (currentUser) {
+      try {
+        await setDoc(
+          doc(db, 'settings', 'platform'),
+          {
+            statPickupSlaMinutes: statSlaMinutes,
+            autoReassignDelayMinutes: delayThresholdMinutes,
+            updatedBy: currentUser.email,
+            updatedAt: now,
+          },
+          { merge: true }
+        );
+        await setDoc(
+          doc(db, 'settings', 'notifications'),
+          {
+            ...emailSettings,
+            updatedAt: now,
+          },
+          { merge: true }
+        );
+        setSettingsStatusMsg('Saved platform & email notification settings to Cloud Firestore.');
+        return;
+      } catch (err) {
+        setSettingsStatusMsg(`Firestore save note: ${(err as Error).message}`);
+        return;
+      }
+    }
+
+    setSettingsStatusMsg('Settings updated in local preview session.');
+  }
+
+  async function handleStorageUploadTest(file: File | undefined) {
+    if (!file) return;
+    setStorageStatusMsg('Uploading file to Firebase Storage...');
+    try {
+      const url = await uploadDiagnosticDocument(`documents/admin/${Date.now()}-${file.name}`, file);
+      setStorageStatusMsg(`Uploaded to Firebase Storage: ${url}`);
+    } catch (err) {
+      setStorageStatusMsg(
+        `Storage upload error: ${(err as Error).message}. Make sure Firebase Storage is initialized ("Get Started") in Console.`
+      );
+    }
+  }
+
+  if (authLoading) {
+    return (
+      <div className="admin-login-shell">
+        <div className="admin-login-card" style={{ padding: '40px', textAlign: 'center' }}>
+          <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#0F172A' }}>LabSetu Admin Console</div>
+          <p style={{ fontSize: '0.85rem', color: '#64748B', marginTop: '8px' }}>
+            Verifying Firebase Authentication session...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentUser && !devPreviewSession) {
+    return (
+      <div className="admin-login-shell">
+        <div className="admin-login-card">
+          <div className="admin-login-banner">
+            <div className="brand-logo-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10 2v7.31M14 2v7.31M8.5 2h7M14 9.3a6.5 6.5 0 1 1-4 0" />
+              </svg>
+            </div>
+            <div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 800, letterSpacing: '-0.02em' }}>
+                {LABSETU_THEME.brand.name} Admin
+              </div>
+              <div style={{ fontSize: '0.75rem', color: '#7DD3FC', fontWeight: 500 }}>
+                Firebase Command &amp; Logistics Control
+              </div>
+            </div>
+          </div>
+
+          <form className="admin-login-body" onSubmit={handleAdminSignIn}>
+            <h1 className="admin-login-title">Admin Sign In</h1>
+            <p className="admin-login-subtitle">
+              Sign in with your verified platform admin account (<strong>{ADMIN_LOGIN_EMAIL}</strong>) on project{' '}
+              <code>labsetu-diagnostics</code>.
+            </p>
+
+            {authError && <div className="admin-auth-alert error">{authError}</div>}
+            {authNotice && <div className="admin-auth-alert success">{authNotice}</div>}
+
+            <div className="form-group">
+              <label className="form-label" htmlFor="admin-email">
+                Admin Email Address
+              </label>
+              <input
+                id="admin-email"
+                type="email"
+                className="form-input"
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                placeholder="lab.setu.admin@gmail.com"
+                required
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" htmlFor="admin-password">
+                Password
+              </label>
+              <div className="admin-password-wrap">
+                <input
+                  id="admin-password"
+                  type={showPassword ? 'text' : 'password'}
+                  className="form-input"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  placeholder="Enter Firebase Admin password"
+                  style={{ paddingRight: '58px' }}
+                  required
+                />
+                <button
+                  type="button"
+                  className="admin-password-toggle"
+                  onClick={() => setShowPassword(!showPassword)}
+                >
+                  {showPassword ? 'Hide' : 'Show'}
+                </button>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+              <button type="button" className="btn-link-muted" onClick={() => setLoginEmail(ADMIN_LOGIN_EMAIL)}>
+                Fill {ADMIN_LOGIN_EMAIL}
+              </button>
+              <button type="button" className="btn-link-muted" onClick={handlePasswordReset}>
+                Reset / Set Password
+              </button>
+            </div>
+
+            <button type="submit" className="btn-primary btn-full" disabled={authSubmitting}>
+              {authSubmitting ? 'Authenticating...' : 'Sign In to Admin Dashboard'}
+            </button>
+
+            {import.meta.env.DEV && (
+              <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid #E2E8F0', textAlign: 'center' }}>
+                <button
+                  type="button"
+                  className="btn-secondary btn-full"
+                  onClick={() => setDevPreviewSession(true)}
+                >
+                  Enter Local Dev Preview (Offline UI Mode)
+                </button>
+              </div>
+            )}
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -317,17 +817,84 @@ export function App() {
 
           {/* Right Action Icons & Profile */}
           <div className="top-nav-right">
-            {/* Notification Bell */}
-            <div className="nav-icon-circle" title="Notifications">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-              </svg>
-              <span className="nav-alert-dot" />
+            {/* Live Notification Bell Popover */}
+            <div className="notif-wrapper">
+              <div
+                className="nav-icon-circle"
+                title="Notifications & Email Alerts"
+                onClick={() => setNotifOpen(!notifOpen)}
+                style={{ cursor: 'pointer', position: 'relative' }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                </svg>
+                {unreadCount > 0 && <span className="notif-count-badge">{unreadCount}</span>}
+              </div>
+
+              {notifOpen && (
+                <div className="notif-popover">
+                  <div className="notif-popover-header">
+                    <div>
+                      <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#0F172A' }}>
+                        Notifications &amp; Email Alerts
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
+                        Target: {emailSettings.adminEmail}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-link-muted"
+                      onClick={() => {
+                        void handleSendTestNotificationAndEmail();
+                      }}
+                    >
+                      + Test Email Alert
+                    </button>
+                  </div>
+
+                  {notifStatusMsg && (
+                    <div style={{ padding: '8px 14px', background: '#F0FDFA', color: '#0F766E', fontSize: '0.75rem', borderBottom: '1px solid #CCFBF1' }}>
+                      {notifStatusMsg}
+                    </div>
+                  )}
+
+                  <div className="notif-list">
+                    {notifications.map((notif) => (
+                      <div
+                        key={notif.id}
+                        className={`notif-item ${!notif.read ? 'unread' : ''}`}
+                        onClick={() => {
+                          void handleMarkNotificationRead(notif.id);
+                        }}
+                      >
+                        <div className="notif-item-title">{notif.title}</div>
+                        <div className="notif-item-msg">{notif.message}</div>
+                        <div className="notif-item-meta">
+                          <span>{notif.category}</span>
+                          <span>
+                            {notif.emailSent ? '✓ Email Sent' : '● In-App'} •{' '}
+                            {new Date(notif.createdAt).toLocaleTimeString('en-IN', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Help Question Icon */}
-            <div className="nav-icon-circle" title="Help / Documentation">
+            <div
+              className="nav-icon-circle"
+              title="Open Firebase & Notification Settings"
+              style={{ cursor: 'pointer' }}
+              onClick={() => setActiveTab('settings')}
+            >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="12" cy="12" r="10" />
                 <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
@@ -335,13 +902,26 @@ export function App() {
               </svg>
             </div>
 
-            {/* Admin User Profile */}
+            {/* Admin User Profile + Sign Out */}
             <div className="user-profile-badge">
               <div className="user-photo-avatar">AD</div>
               <div className="user-profile-info">
-                <span className="user-profile-name">Admin</span>
-                <span className="user-profile-role">Platform Owner</span>
+                <span className="user-profile-name">
+                  {currentUser?.displayName || 'Admin'}
+                </span>
+                <span className="user-profile-role">
+                  {currentUser?.email || (devPreviewSession ? 'Local Preview Mode' : 'Platform Owner')}
+                </span>
               </div>
+              <button
+                type="button"
+                className="signout-btn"
+                onClick={() => {
+                  void handleSignOut();
+                }}
+              >
+                Sign Out
+              </button>
             </div>
           </div>
         </header>
@@ -1322,36 +1902,161 @@ export function App() {
 
           {/* TAB 10: SETTINGS */}
           {activeTab === 'settings' && (
-            <div className="chart-card-modern" style={{ maxWidth: '640px' }}>
-              <div className="card-top-header">
-                <div>
-                  <h2 className="card-top-title">Platform Global Configuration</h2>
-                  <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '2px' }}>
-                    Temperature thresholds, SLA timeout triggers, and automated notification webhooks
-                  </p>
+            <div className="settings-grid-2">
+              <div className="chart-card-modern">
+                <div className="card-top-header">
+                  <div>
+                    <h2 className="card-top-title">Platform Global Configuration</h2>
+                    <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '2px' }}>
+                      Temperature thresholds, SLA timeout triggers &amp; Firestore settings
+                    </p>
+                  </div>
+                </div>
+
+                {settingsStatusMsg && (
+                  <div className="admin-auth-alert success" style={{ marginTop: '12px' }}>
+                    {settingsStatusMsg}
+                  </div>
+                )}
+
+                <div style={{ marginTop: '16px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Connected Firebase Project</label>
+                    <input type="text" className="form-input" value="labsetu-diagnostics (Mumbai / Asia-South)" disabled />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Default Cold-Chain Temperature Range</label>
+                    <input type="text" className="form-input" value="2.0°C to 8.0°C (Refrigerated)" disabled />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">STAT Emergency Pickup SLA (Minutes)</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      value={statSlaMinutes}
+                      onChange={(e) => setStatSlaMinutes(Number(e.target.value))}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Auto-Reassign Courier Delay Threshold (Minutes)</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      value={delayThresholdMinutes}
+                      onChange={(e) => setDelayThresholdMinutes(Number(e.target.value))}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={() => {
+                      void handleSavePlatformSettings();
+                    }}
+                  >
+                    Save Platform Settings
+                  </button>
                 </div>
               </div>
 
-              <div style={{ marginTop: '16px' }}>
-                <div className="form-group">
-                  <label className="form-label">Default Cold-Chain Temperature Range</label>
-                  <input type="text" className="form-input" value="2.0°C to 8.0°C (Refrigerated)" disabled />
+              <div className="chart-card-modern">
+                <div className="card-top-header">
+                  <div>
+                    <h2 className="card-top-title">Email Notifications &amp; Cloud Storage</h2>
+                    <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '2px' }}>
+                      Automated Gmail SMTP alerts, Firestore mail queue &amp; diagnostic document bucket
+                    </p>
+                  </div>
                 </div>
-                <div className="form-group">
-                  <label className="form-label">STAT Emergency Pickup SLA (Minutes)</label>
-                  <input type="number" className="form-input" defaultValue={45} />
+
+                {notifStatusMsg && (
+                  <div className="admin-auth-alert success" style={{ marginTop: '12px' }}>
+                    {notifStatusMsg}
+                  </div>
+                )}
+
+                <div style={{ marginTop: '16px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Admin Alert Email Address</label>
+                    <input
+                      type="email"
+                      className="form-input"
+                      value={emailSettings.adminEmail}
+                      onChange={(e) => setEmailSettings({ ...emailSettings, adminEmail: e.target.value })}
+                    />
+                  </div>
+
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={emailSettings.enableBookingEmails}
+                      onChange={(e) =>
+                        setEmailSettings({ ...emailSettings, enableBookingEmails: e.target.checked })
+                      }
+                    />
+                    <span>Send email alerts on New STAT / Pickup Bookings</span>
+                  </label>
+
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={emailSettings.enableColdChainAlerts}
+                      onChange={(e) =>
+                        setEmailSettings({ ...emailSettings, enableColdChainAlerts: e.target.checked })
+                      }
+                    />
+                    <span>Send urgent email alerts on Cold-Chain Temp Excursion (&gt; 8°C)</span>
+                  </label>
+
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={emailSettings.enableReportReadyEmails}
+                      onChange={(e) =>
+                        setEmailSettings({ ...emailSettings, enableReportReadyEmails: e.target.checked })
+                      }
+                    />
+                    <span>Notify small labs via email when Partner Reports upload</span>
+                  </label>
+
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '14px' }}>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => {
+                        void handleSendTestNotificationAndEmail();
+                      }}
+                    >
+                      Send Test Email &amp; Push Notification
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => {
+                        void handleSavePlatformSettings();
+                      }}
+                    >
+                      Save Email Rules
+                    </button>
+                  </div>
+
+                  <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid #E2E8F0' }}>
+                    <label className="form-label">
+                      Firebase Storage Bucket Test (<code>labsetu-diagnostics.firebasestorage.app</code>)
+                    </label>
+                    <input
+                      type="file"
+                      className="form-input"
+                      onChange={(e) => {
+                        void handleStorageUploadTest(e.target.files?.[0]);
+                      }}
+                    />
+                    {storageStatusMsg && (
+                      <p style={{ fontSize: '0.78rem', color: '#475569', marginTop: '8px', wordBreak: 'break-all' }}>
+                        {storageStatusMsg}
+                      </p>
+                    )}
+                  </div>
                 </div>
-                <div className="form-group">
-                  <label className="form-label">Auto-Reassign Courier Delay Threshold (Minutes)</label>
-                  <input type="number" className="form-input" defaultValue={15} />
-                </div>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={() => alert('Platform configurations saved.')}
-                >
-                  Save Platform Settings
-                </button>
               </div>
             </div>
           )}

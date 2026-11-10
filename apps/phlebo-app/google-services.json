@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "125622512041",
+    "project_id": "labsetu-diagnostics",
+    "storage_bucket": "labsetu-diagnostics.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:125622512041:android:5b37da8831aecea14cbcb8",
+        "android_client_info": {
+          "package_name": "com.diagnostic.phleboapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCJLiTrh0PdB08zqa3qfya3TC5iWzkI_w8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

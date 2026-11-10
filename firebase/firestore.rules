@@ -15,7 +15,11 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAuthenticated() && getUserRole() == 'ADMIN';
+      return isAuthenticated()
+        && (
+          getUserRole() == 'ADMIN'
+          || request.auth.token.email == 'lab.setu.admin@gmail.com'
+        );
     }
 
     function isSmallLab() {
@@ -43,7 +47,8 @@ service cloud.firestore {
     // =========================================================================
     match /users/{userId} {
       allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      allow write: if isAdmin();
+      allow create, update: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow delete: if isAdmin();
     }
 
     // =========================================================================
@@ -55,7 +60,15 @@ service cloud.firestore {
     }
 
     // =========================================================================
-    // 3. PICKUP ORDERS (`orders/{orderId}`)
+    // 3. PHLEBOTOMISTS FLEET (`phlebotomists/{phleboId}`)
+    // =========================================================================
+    match /phlebotomists/{phleboId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || (isPhlebotomist() && getPhlebotomistId() == phleboId);
+    }
+
+    // =========================================================================
+    // 4. PICKUP ORDERS (`orders/{orderId}`)
     // =========================================================================
     match /orders/{orderId} {
       // Admins have full access
@@ -65,34 +78,70 @@ service cloud.firestore {
       allow create: if isSmallLab() && request.resource.data.smallLabId == getLabId();
       allow read: if isSmallLab() && resource.data.smallLabId == getLabId();
       // Small Lab can cancel an order if it is still in CREATED or READY_FOR_PICKUP
-      allow update: if isSmallLab() 
-        && resource.data.smallLabId == getLabId() 
+      allow update: if isSmallLab()
+        && resource.data.smallLabId == getLabId()
         && resource.data.status in ['CREATED', 'READY_FOR_PICKUP']
         && request.resource.data.status in ['READY_FOR_PICKUP', 'CANCELLED'];
 
       // Large Partner Lab: Can read orders targeted to them and update accessioning/report status
       allow read: if isLargeLab() && resource.data.targetLabId == getLabId();
-      allow update: if isLargeLab() 
+      allow update: if isLargeLab()
         && resource.data.targetLabId == getLabId()
         && request.resource.data.status in ['UNDER_ANALYSIS', 'REPORT_UPLOADED', 'COMPLETED', 'REJECTED'];
 
       // Phlebotomist: Can read orders assigned to them and update status during pickup/transit
       allow read: if isPhlebotomist() && resource.data.phlebotomistId == getPhlebotomistId();
-      allow update: if isPhlebotomist() 
+      allow update: if isPhlebotomist()
         && resource.data.phlebotomistId == getPhlebotomistId()
         && request.resource.data.status in ['PICKED_UP', 'IN_TRANSIT', 'DELIVERED_TO_LAB'];
     }
 
     // =========================================================================
-    // 4. IMMUTABLE CHAIN-OF-CUSTODY AUDIT EVENTS (`custody_events/{eventId}`)
+    // 5. IMMUTABLE CHAIN-OF-CUSTODY AUDIT EVENTS (`custody_events/{eventId}`)
     // Chain-of-custody logs are strictly append-only. No edits or deletes!
     // =========================================================================
     match /custody_events/{eventId} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() 
+      allow create: if isAuthenticated()
         && request.resource.data.operatorId == request.auth.uid;
       allow update, delete: if false; // Strict immutability for compliance
     }
+
+    // =========================================================================
+    // 6. PLATFORM & EMAIL NOTIFICATIONS (`notifications/{notificationId}`)
+    // =========================================================================
+    match /notifications/{notificationId} {
+      allow read: if isAdmin()
+        || (isAuthenticated() && (
+          resource.data.recipientUid == request.auth.uid
+          || resource.data.recipientEmail == request.auth.token.email
+          || resource.data.recipientRole == getUserRole()
+          || resource.data.recipientRole == 'ALL'
+        ));
+      allow create: if isAuthenticated();
+      allow update: if isAdmin()
+        || (isAuthenticated() && (
+          resource.data.recipientUid == request.auth.uid
+          || resource.data.recipientEmail == request.auth.token.email
+        ));
+      allow delete: if isAdmin();
+    }
+
+    // =========================================================================
+    // 7. EMAIL DELIVERY QUEUE / AUDIT LOG (`mail/{mailId}`)
+    // Compatible with Firebase Trigger Email Extension & Node.js SMTP Worker
+    // =========================================================================
+    match /mail/{mailId} {
+      allow read, create: if isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    // =========================================================================
+    // 8. PLATFORM GLOBAL SETTINGS (`settings/{settingId}`)
+    // =========================================================================
+    match /settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
   }
 }
-

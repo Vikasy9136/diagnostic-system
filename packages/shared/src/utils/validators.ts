@@ -1,5 +1,5 @@
-import { StorageTemperature } from '../types';
-import { TEMPERATURE_LIMITS } from './constants';
+import { StorageTemperature } from '../types/index.js';
+import { TEMPERATURE_LIMITS } from './constants.js';
 
 /**
  * Checks whether a measured temperature satisfies the required cold-chain range
