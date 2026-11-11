@@ -5,6 +5,24 @@ export function formatInr(amount: number): string {
   return `₹${safe.toLocaleString('en-IN')}`;
 }
 
+export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
+  [OrderStatus.CREATED]: 'Created',
+  [OrderStatus.READY_FOR_PICKUP]: 'Ready for Pickup',
+  [OrderStatus.ASSIGNED_TO_PHLEBO]: 'Courier Assigned',
+  [OrderStatus.PICKED_UP]: 'Sample Picked Up',
+  [OrderStatus.IN_TRANSIT]: 'In Transit',
+  [OrderStatus.DELIVERED_TO_LAB]: 'Delivered to Lab',
+  [OrderStatus.UNDER_ANALYSIS]: 'Testing in Progress',
+  [OrderStatus.REPORT_UPLOADED]: 'Report Ready',
+  [OrderStatus.COMPLETED]: 'Completed',
+  [OrderStatus.CANCELLED]: 'Cancelled',
+  [OrderStatus.REJECTED]: 'Rejected',
+};
+
+export function formatOrderStatus(status: OrderStatus | string): string {
+  return ORDER_STATUS_LABELS[status as OrderStatus] || status.replace(/_/g, ' ');
+}
+
 export function isOrderCompleted(status: OrderStatus): boolean {
   return status === OrderStatus.REPORT_UPLOADED || status === OrderStatus.COMPLETED;
 }

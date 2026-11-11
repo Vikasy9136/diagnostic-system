@@ -146,7 +146,7 @@ notificationsRouter.post(
 
       const result = await sendPlatformNotification({
         title: 'LabSetu Test Email & Notification Check',
-        message: `This automated verification alert confirms that Firebase Database, Notification Logging, and Email Dispatch to ${targetEmail} are wired for project ${config.firebase.projectId}.`,
+        message: `This test confirms that instant alerts, notification history, and email delivery to ${targetEmail} are working properly.`,
         category: NotificationCategory.SYSTEM_ALERT,
         priority: NotificationPriority.NORMAL,
         recipientEmail: targetEmail,
@@ -158,8 +158,8 @@ notificationsRouter.post(
         success: true,
         data: result,
         message: result.emailSent
-          ? `Test email delivered via SMTP to ${targetEmail}`
-          : `Notification recorded in database; configure SMTP_PASS in .env to enable live Gmail SMTP delivery to ${targetEmail}`,
+          ? `Test email sent to ${targetEmail}`
+          : `Notification saved; email delivery to ${targetEmail} is pending configuration.`,
         timestamp: new Date().toISOString(),
       };
       res.status(201).json(response);

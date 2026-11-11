@@ -7,11 +7,11 @@ export const STORAGE_BUCKET =
   process.env.STORAGE_BUCKET || `${PROJECT_ID}.firebasestorage.app`;
 
 export const SMTP_CONFIG = {
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  host: (process.env.SMTP_HOST || 'smtp.gmail.com').trim(),
   port: parseInt(process.env.SMTP_PORT || '465', 10),
   secure: process.env.SMTP_SECURE !== 'false',
-  user: process.env.SMTP_USER || ADMIN_EMAIL,
-  pass: process.env.SMTP_PASS || '',
+  user: (process.env.SMTP_USER || ADMIN_EMAIL).trim(),
+  pass: (process.env.SMTP_PASS || '').replace(/\s+/g, ''),
   from: process.env.NOTIFICATION_FROM_EMAIL || `LabSetu Diagnostics <${ADMIN_EMAIL}>`,
 };
 

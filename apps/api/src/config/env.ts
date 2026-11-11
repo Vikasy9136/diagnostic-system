@@ -36,11 +36,14 @@ export const config = {
       process.env.FIREBASE_STORAGE_BUCKET || 'labsetu-diagnostics.firebasestorage.app',
   },
   smtp: {
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    host: (process.env.SMTP_HOST || 'smtp.gmail.com').trim(),
     port: parseInt(process.env.SMTP_PORT || '465', 10),
     secure: process.env.SMTP_SECURE !== 'false',
-    user: process.env.SMTP_USER || 'lab.setu.admin@gmail.com',
-    pass: process.env.SMTP_PASS || '',
+    user: (process.env.SMTP_USER || 'lab.setu.admin@gmail.com').trim(),
+    pass: (process.env.SMTP_PASS || '').replace(/\s+/g, ''),
     from: process.env.NOTIFICATION_FROM_EMAIL || 'LabSetu Diagnostics <lab.setu.admin@gmail.com>',
   },
+  cloudFunctionsApiUrl:
+    process.env.CLOUD_FUNCTIONS_API_URL ||
+    'https://us-central1-labsetu-diagnostics.cloudfunctions.net/api',
 };

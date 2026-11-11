@@ -59,7 +59,7 @@ ordersRouter.get('/', requireAuth, async (req: AuthenticatedRequest, res: Respon
       return res.json({
         success: true,
         data: orders,
-        message: 'Live Firestore pickup orders retrieved successfully',
+        message: 'Pickup orders loaded successfully',
         timestamp: new Date().toISOString(),
       });
     }

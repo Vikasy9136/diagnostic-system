@@ -212,16 +212,36 @@ export async function updateManagedUserStatus(
   return nextProfile;
 }
 
+function assertPlatformAccessPolicy(
+  profileRole: UserRole,
+  requestedRole?: UserRole,
+  clientType?: 'WEB' | 'MOBILE'
+): void {
+  const isWebClient = clientType === 'WEB';
+  if (
+    isWebClient &&
+    (profileRole === UserRole.PHLEBOTOMIST || requestedRole === UserRole.PHLEBOTOMIST)
+  ) {
+    throw new AppError(
+      'Field Phlebotomist accounts can only sign in using the LabSetu Mobile App, not on the website.',
+      403,
+      'MOBILE_APP_ONLY',
+      { assignedRole: profileRole }
+    );
+  }
+}
+
 export async function requestEmailOtp(
   email: string,
-  portalRole?: UserRole
+  portalRole?: UserRole,
+  clientType?: 'WEB' | 'MOBILE'
 ): Promise<{ sent: boolean; deliveryMode: 'SMTP' | 'QUEUED_NO_SMTP'; role: UserRole }> {
   const normalized = normalizeEmail(email);
   const profile = await findProvisionedUserByEmail(normalized);
 
   if (!profile) {
     throw new AppError(
-      `Account (${normalized}) has not been added by the Platform Admin. Only Admin-provisioned emails can sign in.`,
+      `Your email (${normalized}) has not been added yet. Please ask your LabSetu Admin (${ADMIN_EMAIL}) to create your account first.`,
       403,
       'USER_NOT_PROVISIONED'
     );
@@ -229,15 +249,17 @@ export async function requestEmailOtp(
 
   if (!profile.isActive) {
     throw new AppError(
-      `Account (${normalized}) is suspended. Contact Platform Admin (${ADMIN_EMAIL}).`,
+      `Your account (${normalized}) is currently paused. Please contact LabSetu Admin (${ADMIN_EMAIL}).`,
       403,
       'ACCOUNT_SUSPENDED'
     );
   }
 
+  assertPlatformAccessPolicy(profile.role, portalRole, clientType);
+
   if (portalRole && profile.role !== portalRole) {
     throw new AppError(
-      `Role mismatch: ${normalized} is assigned role ${profile.role}, not ${portalRole}.`,
+      `Your email (${normalized}) is registered as ${ROLE_LABELS[profile.role]}, not ${ROLE_LABELS[portalRole]}.`,
       403,
       'ROLE_MISMATCH',
       { assignedRole: profile.role }
@@ -257,50 +279,66 @@ export async function requestEmailOtp(
 
   const transporter = createMailTransporter();
   if (transporter) {
-    await transporter.sendMail({
-      from: SMTP_CONFIG.from,
-      to: normalized,
-      subject: `LabSetu Sign-In OTP Code: ${otpCode}`,
-      text: `Your LabSetu Diagnostics verification OTP is ${otpCode}. It expires in 10 minutes. Do not share this code with anyone.`,
-      html: `
-        <div style="font-family: Inter, -apple-system, sans-serif; max-width: 520px; margin: 0 auto; border: 1px solid #E2E8F0; border-radius: 12px; overflow: hidden;">
-          <div style="background: #062226; padding: 20px 24px; color: #FFFFFF;">
-            <div style="font-size: 18px; font-weight: 700;">LabSetu Diagnostics Sign-In</div>
-            <div style="font-size: 12px; color: #7DD3FC;">One-Time Email Verification Code</div>
-          </div>
-          <div style="padding: 24px; color: #0F172A;">
-            <p style="margin: 0 0 12px 0; font-size: 14px;">Hello <strong>${profile.displayName}</strong> (${ROLE_LABELS[profile.role]}),</p>
-            <p style="margin: 0 0 18px 0; font-size: 14px; color: #475569;">Use this 6-digit OTP to sign in to your LabSetu portal:</p>
-            <div style="background: #F0FDFA; border: 1px dashed #0D9488; border-radius: 10px; padding: 16px; text-align: center; font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #0F766E;">
-              ${otpCode}
+    try {
+      await transporter.sendMail({
+        from: SMTP_CONFIG.from,
+        to: normalized,
+        subject: `LabSetu Sign-In OTP: ${otpCode}`,
+        text: `Your LabSetu verification OTP is ${otpCode}. It stays valid for 10 minutes. Please do not share this code with anyone.`,
+        html: `
+          <div style="font-family: Inter, -apple-system, sans-serif; max-width: 520px; margin: 0 auto; border: 1px solid #E2E8F0; border-radius: 12px; overflow: hidden;">
+            <div style="background: #062226; padding: 20px 24px; color: #FFFFFF;">
+              <div style="font-size: 18px; font-weight: 700;">LabSetu Diagnostics Sign-In</div>
+              <div style="font-size: 12px; color: #7DD3FC;">One-Time Email Verification Code</div>
             </div>
-            <p style="margin: 16px 0 0 0; font-size: 12px; color: #64748B;">Valid for 10 minutes. If you did not request this code, ignore this email.</p>
+            <div style="padding: 24px; color: #0F172A;">
+              <p style="margin: 0 0 12px 0; font-size: 14px;">Hello <strong>${profile.displayName}</strong> (${ROLE_LABELS[profile.role]}),</p>
+              <p style="margin: 0 0 18px 0; font-size: 14px; color: #475569;">Use this 6-digit OTP to sign in to your LabSetu account:</p>
+              <div style="background: #F0FDFA; border: 1px dashed #0D9488; border-radius: 10px; padding: 16px; text-align: center; font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #0F766E;">
+                ${otpCode}
+              </div>
+              <p style="margin: 16px 0 0 0; font-size: 12px; color: #64748B;">Valid for 10 minutes. If you did not request this code, please ignore this email.</p>
+            </div>
           </div>
-        </div>
-      `,
-    });
-    return { sent: true, deliveryMode: 'SMTP', role: profile.role };
+        `,
+      });
+      return { sent: true, deliveryMode: 'SMTP', role: profile.role };
+    } catch (mailErr) {
+      console.error('OTP email delivery failed:', mailErr);
+      throw new AppError(
+        'We could not deliver the verification code to your email right now. Please try again in a moment or sign in with Google or your password.',
+        502,
+        'EMAIL_DELIVERY_FAILED'
+      );
+    }
   }
 
-  console.log(`[CLOUD FUNCTION OTP] Recipient: ${normalized} | Role: ${profile.role} (SMTP_PASS not set)`);
-  return { sent: true, deliveryMode: 'QUEUED_NO_SMTP', role: profile.role };
+  console.warn(`Email service is not configured for OTP delivery to ${normalized}.`);
+  throw new AppError(
+    'Email verification delivery is not configured yet. Please sign in with Google or your password.',
+    503,
+    'EMAIL_SERVICE_UNAVAILABLE'
+  );
 }
 
 export async function verifyEmailOtp(
   email: string,
   otp: string,
-  portalRole?: UserRole
+  portalRole?: UserRole,
+  clientType?: 'WEB' | 'MOBILE'
 ): Promise<{ customToken: string; userProfile: UserProfile }> {
   const normalized = normalizeEmail(email);
   const profile = await findProvisionedUserByEmail(normalized);
 
   if (!profile || !profile.isActive) {
-    throw new AppError('Account not provisioned or inactive.', 403, 'USER_NOT_PROVISIONED');
+    throw new AppError('Account not found or currently inactive.', 403, 'USER_NOT_PROVISIONED');
   }
+
+  assertPlatformAccessPolicy(profile.role, portalRole, clientType);
 
   if (portalRole && profile.role !== portalRole) {
     throw new AppError(
-      `Role mismatch: ${normalized} is assigned role ${profile.role}, cannot access ${portalRole} dashboard.`,
+      `Your email (${normalized}) is registered as ${ROLE_LABELS[profile.role]} and cannot open ${ROLE_LABELS[portalRole]}.`,
       403,
       'ROLE_MISMATCH',
       { assignedRole: profile.role }
@@ -311,13 +349,13 @@ export async function verifyEmailOtp(
   const record = otpSnap.exists ? (otpSnap.data() as StoredOtpRecord) : undefined;
 
   if (!record || record.used) {
-    throw new AppError('OTP not found or already used. Please request a new code.', 400, 'OTP_INVALID');
+    throw new AppError('This code is invalid or already used. Please request a new OTP.', 400, 'OTP_INVALID');
   }
   if (Date.now() > record.expiresAt) {
-    throw new AppError('OTP expired. Please request a fresh code.', 400, 'OTP_EXPIRED');
+    throw new AppError('This OTP has expired. Please request a new code.', 400, 'OTP_EXPIRED');
   }
   if (record.attempts >= 5) {
-    throw new AppError('Too many incorrect OTP attempts. Request a new OTP.', 429, 'OTP_LOCKED');
+    throw new AppError('Too many incorrect attempts. Please request a new OTP.', 429, 'OTP_LOCKED');
   }
 
   if (hashOtp(normalized, otp) !== record.otpHash) {
@@ -325,7 +363,7 @@ export async function verifyEmailOtp(
       .collection('email_otps')
       .doc(normalized)
       .set({ attempts: record.attempts + 1 }, { merge: true });
-    throw new AppError('Incorrect OTP code. Please verify and try again.', 401, 'OTP_MISMATCH');
+    throw new AppError('Incorrect OTP code. Please check your email and try again.', 401, 'OTP_MISMATCH');
   }
 
   await db.collection('email_otps').doc(normalized).set({ used: true }, { merge: true });
@@ -358,10 +396,11 @@ export async function verifyEmailOtp(
 export async function verifyAndSyncSessionRole(
   uid: string,
   email: string | undefined,
-  requiredRole?: UserRole
+  requiredRole?: UserRole,
+  clientType?: 'WEB' | 'MOBILE'
 ): Promise<UserProfile> {
   if (!email) {
-    throw new AppError('Authenticated user lacks a verified email address.', 403, 'FORBIDDEN');
+    throw new AppError('Signed-in account does not include a verified email address.', 403, 'FORBIDDEN');
   }
 
   const normalized = normalizeEmail(email);
@@ -369,7 +408,7 @@ export async function verifyAndSyncSessionRole(
 
   if (!profile) {
     throw new AppError(
-      `Account (${normalized}) is not provisioned by Platform Admin (${ADMIN_EMAIL}).`,
+      `Your email (${normalized}) has not been added yet. Please ask LabSetu Admin (${ADMIN_EMAIL}) to create your account.`,
       403,
       'USER_NOT_PROVISIONED'
     );
@@ -377,11 +416,13 @@ export async function verifyAndSyncSessionRole(
 
   if (!profile.isActive) {
     throw new AppError(
-      `Account (${normalized}) is currently suspended by Platform Admin.`,
+      `Your account (${normalized}) is currently paused by LabSetu Admin.`,
       403,
       'ACCOUNT_SUSPENDED'
     );
   }
+
+  assertPlatformAccessPolicy(profile.role, requiredRole, clientType);
 
   await auth.setCustomUserClaims(uid, {
     role: profile.role,
@@ -401,7 +442,7 @@ export async function verifyAndSyncSessionRole(
 
   if (requiredRole && profile.role !== requiredRole) {
     throw new AppError(
-      `Access restricted: Your account role is ${profile.role}, which cannot open the ${requiredRole} portal.`,
+      `Access denied: Your account role is ${ROLE_LABELS[profile.role]}, which cannot open ${ROLE_LABELS[requiredRole]}.`,
       403,
       'ROLE_MISMATCH',
       { assignedRole: profile.role }

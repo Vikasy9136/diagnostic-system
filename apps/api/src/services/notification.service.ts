@@ -32,6 +32,9 @@ function createMailTransporter(): Transporter | null {
     host: config.smtp.host,
     port: config.smtp.port,
     secure: config.smtp.secure,
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 15000,
     auth: {
       user: config.smtp.user,
       pass: config.smtp.pass,
@@ -67,7 +70,7 @@ function buildLabSetuEmailHtml(payload: SendNotificationPayload, createdAt: stri
             : ''
         }
         <div style="font-size: 12px; color: #64748B; border-top: 1px solid #E2E8F0; padding-top: 14px;">
-          Dispatched at ${new Date(createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST • LabSetu Platform (${config.firebase.projectId})
+          Sent at ${new Date(createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST • LabSetu Diagnostics Network
         </div>
       </div>
     </div>
@@ -206,7 +209,7 @@ export async function sendPlatformNotification(
         emailStatus = `SMTP_ERROR: ${smtpErr instanceof Error ? smtpErr.message : 'Unknown error'}`;
       }
     } else {
-      emailStatus = 'QUEUED_CONFIGURE_SMTP_PASS_IN_ENV';
+      emailStatus = 'QUEUED_FOR_EMAIL';
       console.log(`📧 [Email Notification Queued -> ${recipientEmail}] Subject: ${payload.title}`);
     }
 

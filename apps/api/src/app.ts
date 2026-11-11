@@ -8,6 +8,7 @@ import { notificationsRouter } from './routes/notifications.routes';
 import { authRouter } from './routes/auth.routes';
 import { usersRouter } from './routes/users.routes';
 import { errorHandler, AppError } from './middleware/errorHandler';
+import { forwardToCloudApiIfLocalMock } from './middleware/cloudProxy';
 
 export function createApp(): Application {
   const app = express();
@@ -32,6 +33,7 @@ export function createApp(): Application {
 
   // API Routes
   app.use('/api/v1/health', healthRouter);
+  app.use('/api/v1', forwardToCloudApiIfLocalMock);
   app.use('/api/v1/auth', authRouter);
   app.use('/api/v1/users', usersRouter);
   app.use('/api/v1/orders', ordersRouter);

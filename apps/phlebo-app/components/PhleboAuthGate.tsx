@@ -106,9 +106,9 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
     onAuthenticated(null);
     onShowAlert({
       variant: 'error',
-      title: 'Strict Role Lock: Access Denied',
-      message: `${email} is provisioned ONLY for "${ROLE_LABELS[assignedRole]}" and cannot open ${ROLE_LABELS[REQUIRED_ROLE]}.`,
-      detail: `Assigned Role: ${ROLE_LABELS[assignedRole]} • Signed Out Automatically`,
+      title: 'Wrong App for Your Role',
+      message: `${email} is registered as "${ROLE_LABELS[assignedRole]}". Please sign in on the website portal instead of the Field Phlebotomist app.`,
+      detail: `Account Role: ${ROLE_LABELS[assignedRole]} • Signed Out Automatically`,
     });
   }
 
@@ -120,7 +120,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
       onShowAlert({
         variant: 'error',
         title: 'Email Required',
-        message: 'Signed-in account does not include a verified email address.',
+        message: 'Your sign-in account does not include an email address.',
       });
       return;
     }
@@ -136,9 +136,14 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-Client-Platform': 'mobile',
           Authorization: `Bearer ${idToken}`,
         },
-        body: JSON.stringify({ requiredRole: REQUIRED_ROLE, email }),
+        body: JSON.stringify({
+          requiredRole: REQUIRED_ROLE,
+          email,
+          clientType: 'MOBILE',
+        }),
       });
 
       const json = await res.json().catch(() => null);
@@ -155,17 +160,28 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
         onAuthenticated(null);
         onShowAlert({
           variant: 'error',
-          title: 'Account Suspended',
+          title: 'Account Paused',
           message:
             json.error?.message ||
-            `Access for ${email} has been suspended by Platform Admin.`,
+            `Your account (${email}) has been paused by Platform Admin.`,
         });
         return;
       } else if (res.status === 403 && json?.error?.code === 'USER_NOT_PROVISIONED') {
-        apiProfile = null;
+        await signOut(auth);
+        onAuthenticated(null);
+        const msg =
+          json.error?.message ||
+          `Your email (${email}) has not been added yet. Please ask Platform Admin (${ADMIN_LOGIN_EMAIL}) to create your Field Phlebotomist account first.`;
+        setInlineError(msg);
+        onShowAlert({
+          variant: 'error',
+          title: 'Account Not Added Yet',
+          message: msg,
+        });
+        return;
       }
     } catch {
-      // Backend API offline; verify directly against Cloud Firestore directory + token claims below
+      // Fall through to direct account record check
     }
 
     if (apiProfile) {
@@ -174,8 +190,8 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
         onAuthenticated(null);
         onShowAlert({
           variant: 'error',
-          title: 'Account Inactive',
-          message: `Account ${email} is currently deactivated.`,
+          title: 'Account Paused',
+          message: `Account ${email} is currently inactive.`,
         });
         return;
       }
@@ -196,7 +212,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
       return;
     }
 
-    // 2. Fallback: Direct Cloud Firestore user_directory + token claims
+    // 2. Fallback: Direct directory + token claim lookup
     let dirProfile: Partial<UserProfile> | null = null;
     try {
       const dirSnap = await getDoc(doc(db, 'user_directory', email));
@@ -209,7 +225,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
         }
       }
     } catch {
-      // Firestore offline/rules fallback checked against claims below
+      // Offline/rules fallback checked against claims below
     }
 
     if (dirProfile && dirProfile.isActive === false) {
@@ -217,8 +233,8 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
       onAuthenticated(null);
       onShowAlert({
         variant: 'error',
-        title: 'Account Suspended',
-        message: `Your account (${email}) is suspended. Contact ${ADMIN_LOGIN_EMAIL}.`,
+        title: 'Account Paused',
+        message: `Your account (${email}) is currently paused. Contact ${ADMIN_LOGIN_EMAIL}.`,
       });
       return;
     }
@@ -230,11 +246,11 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
     if (!resolvedRole) {
       await signOut(auth);
       onAuthenticated(null);
-      const msg = `Account (${email}) has not been added by Platform Admin yet. Ask ${ADMIN_LOGIN_EMAIL} to add your email with role ${ROLE_LABELS[REQUIRED_ROLE]}.`;
+      const msg = `Your email (${email}) has not been added yet. Please ask Platform Admin (${ADMIN_LOGIN_EMAIL}) to add your email for ${ROLE_LABELS[REQUIRED_ROLE]}.`;
       setInlineError(msg);
       onShowAlert({
         variant: 'error',
-        title: 'Access Not Provisioned',
+        title: 'Account Not Added Yet',
         message: msg,
         detail: `Required App Role: ${ROLE_LABELS[REQUIRED_ROLE]}`,
       });
@@ -292,8 +308,8 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
         onAuthenticated(null);
         onShowAlert({
           variant: 'error',
-          title: 'Verification Failed',
-          message: (err as Error).message || 'Could not verify phlebotomist role.',
+          title: 'Account Check Failed',
+          message: (err as Error).message || 'Could not verify your Field Phlebotomist role.',
         });
       } finally {
         setAuthLoading(false);
@@ -311,10 +327,10 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
     if (Platform.OS !== 'web') {
       onShowAlert({
         variant: 'info',
-        title: 'Use Web or Email OTP / Password on Mobile',
+        title: 'Use Email & Password or OTP on Phone',
         message:
-          'Google browser popup SSO is supported when running the Phlebotomist companion in Web mode. On Android/iOS Expo Go, sign in directly using Email & Password or 6-Digit Email OTP.',
-        detail: `Admin-provisioned ${ROLE_LABELS[REQUIRED_ROLE]} accounts work with all 3 methods.`,
+          'Use your registered email with Password or 6-Digit Email OTP directly on your phone. Google quick sign-in works when opening the companion in a web browser.',
+        detail: `Ask Platform Admin (${ADMIN_LOGIN_EMAIL}) if you need your login details.`,
       });
       return;
     }
@@ -333,15 +349,15 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
         fbErr.code === 'auth/operation-not-allowed'
       ) {
         const msg =
-          'Enable Google Sign-In in Firebase Console (Authentication -> Sign-in method -> Google).';
+          'Google Sign-In is temporarily unavailable. Please sign in with Email & Password or Email OTP.';
         setInlineError(msg);
         onShowAlert({
           variant: 'warning',
-          title: 'Google Provider Setup Required',
+          title: 'Google Sign-In Unavailable',
           message: msg,
         });
       } else {
-        const msg = fbErr.message || 'Google sign-in failed.';
+        const msg = fbErr.message || 'Could not complete Google sign-in.';
         setInlineError(msg);
         onShowAlert({ variant: 'error', title: 'Google Sign-In Failed', message: msg });
       }
@@ -363,19 +379,18 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
       await signInWithEmailAndPassword(auth, loginEmail.trim(), loginPassword);
     } catch (err: unknown) {
       const fbErr = err as { code?: string; message?: string };
-      let msg = fbErr.message || 'Password sign-in failed.';
+      let msg = fbErr.message || 'Could not sign in with that email and password.';
       if (
         fbErr.code === 'auth/configuration-not-found' ||
         fbErr.code === 'auth/operation-not-allowed'
       ) {
-        msg =
-          'Enable Email/Password sign-in in Firebase Console (Authentication -> Sign-in method).';
+        msg = 'Password sign-in is not available right now. Please sign in using Email OTP.';
       } else if (
         fbErr.code === 'auth/invalid-credential' ||
         fbErr.code === 'auth/wrong-password' ||
         fbErr.code === 'auth/user-not-found'
       ) {
-        msg = `Invalid email or password for ${loginEmail.trim()}. Try Forgot / Set Password or Email OTP.`;
+        msg = `Incorrect email or password for ${loginEmail.trim()}. Tap "Forgot / Set Password" or use Email OTP.`;
       }
       setInlineError(msg);
       onShowAlert({ variant: 'error', title: 'Sign In Unsuccessful', message: msg });
@@ -399,18 +414,18 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
 
     try {
       await sendPasswordResetEmail(auth, email);
-      const msg = `Password setup / reset email sent to ${email}.`;
+      const msg = `We sent a password setup / reset link to ${email}. Check your inbox and spam folder.`;
       setInlineSuccess(msg);
       onShowAlert({
         variant: 'success',
-        title: 'Password Reset Sent',
+        title: 'Password Link Sent',
         message: msg,
       });
     } catch (err: unknown) {
       const fbErr = err as { code?: string; message?: string };
       const msg = fbErr.message || 'Unable to send password reset email.';
       setInlineError(msg);
-      onShowAlert({ variant: 'error', title: 'Reset Failed', message: msg });
+      onShowAlert({ variant: 'error', title: 'Unable to Send Reset Link', message: msg });
     }
   }
 
@@ -419,7 +434,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
     setInlineSuccess(null);
     const normalized = otpEmail.trim().toLowerCase();
     if (!normalized || !normalized.includes('@')) {
-      setInlineError('Please enter a valid Admin-provisioned email address.');
+      setInlineError('Please enter your registered email address.');
       return;
     }
 
@@ -427,8 +442,15 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
     try {
       const res = await fetch(`${API_BASE_URL}/auth/otp/send`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: normalized, portalRole: REQUIRED_ROLE }),
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Client-Platform': 'mobile',
+        },
+        body: JSON.stringify({
+          email: normalized,
+          portalRole: REQUIRED_ROLE,
+          clientType: 'MOBILE',
+        }),
       });
 
       const json = await res.json().catch(() => null);
@@ -437,22 +459,24 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
         if (errCode === 'ROLE_MISMATCH' && json?.error?.details?.assignedRole) {
           const assignedRole = json.error.details.assignedRole as UserRole;
           setRoleMismatch({ email: normalized, assignedRole });
+          const msg = `${normalized} is registered as "${ROLE_LABELS[assignedRole]}" and should sign in on the website portal instead of this mobile app.`;
+          setInlineError(msg);
           onShowAlert({
             variant: 'error',
-            title: 'Strict Role Lock: Access Denied',
-            message: `${normalized} is assigned "${ROLE_LABELS[assignedRole]}" and cannot sign in as ${ROLE_LABELS[REQUIRED_ROLE]}.`,
-            detail: `Assigned Role: ${ROLE_LABELS[assignedRole]}`,
+            title: 'Wrong App for Your Role',
+            message: msg,
+            detail: `Account Role: ${ROLE_LABELS[assignedRole]}`,
           });
           return;
         }
-        const errMsg = json?.error?.message || 'Unable to send Email OTP.';
+        const errMsg = json?.error?.message || 'Unable to send the verification email.';
         setInlineError(errMsg);
         onShowAlert({
           variant: 'error',
           title:
             errCode === 'USER_NOT_PROVISIONED'
-              ? 'Email Not Added by Admin'
-              : 'Email OTP Rejected',
+              ? 'Email Not Added Yet'
+              : 'Could Not Send OTP',
           message: errMsg,
         });
         return;
@@ -460,20 +484,18 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
 
       setOtpSent(true);
       setOtpCooldown(60);
-      const deliveryNote =
-        json?.data?.deliveryMode === 'SMTP'
-          ? `6-digit verification OTP sent via email to ${normalized}.`
-          : `6-digit OTP issued for ${normalized}. Configure SMTP_PASS in diagnostic-platform/.env for Gmail delivery, or check the running API server terminal.`;
+      const deliveryNote = `A 6-digit verification OTP has been sent to ${normalized}. Please check your inbox and spam folder.`;
       setInlineSuccess(deliveryNote);
       onShowAlert({
         variant: 'success',
-        title: 'OTP Dispatched',
+        title: 'OTP Sent to Email',
         message: deliveryNote,
       });
     } catch {
-      const msg = `Authentication API unreachable (${API_BASE_URL}). Ensure the API server is running.`;
+      const msg =
+        'Unable to send the verification code right now. Please check your internet connection or try Password sign-in.';
       setInlineError(msg);
-      onShowAlert({ variant: 'error', title: 'API Server Offline', message: msg });
+      onShowAlert({ variant: 'warning', title: 'Email Service Unavailable', message: msg });
     } finally {
       setAuthSubmitting(false);
     }
@@ -483,7 +505,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
     setInlineError(null);
     const normalized = otpEmail.trim().toLowerCase();
     if (otpCode.trim().length < 6) {
-      setInlineError('Enter the complete 6-digit verification OTP.');
+      setInlineError('Please enter all 6 digits of your OTP.');
       return;
     }
 
@@ -491,52 +513,43 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
     try {
       const res = await fetch(`${API_BASE_URL}/auth/otp/verify`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Client-Platform': 'mobile',
+        },
         body: JSON.stringify({
           email: normalized,
           otp: otpCode.trim(),
           portalRole: REQUIRED_ROLE,
+          clientType: 'MOBILE',
         }),
       });
 
       const json = await res.json().catch(() => null);
       if (!res.ok) {
-        const errMsg = json?.error?.message || 'OTP verification failed.';
+        const errMsg = json?.error?.message || 'OTP check failed.';
         setInlineError(errMsg);
         onShowAlert({ variant: 'error', title: 'Invalid OTP', message: errMsg });
         return;
       }
 
       const customToken = json?.data?.customToken as string | null;
-      const devSessionToken = json?.data?.devSessionToken as string | undefined;
-      const profile = json?.data?.userProfile as UserProfile | undefined;
-
       if (customToken) {
         await signInWithCustomToken(auth, customToken);
         return;
       }
 
-      if (profile && devSessionToken && profile.role === REQUIRED_ROLE) {
-        onShowAlert({
-          variant: 'warning',
-          title: 'Direct Firestore Requires Firebase Auth',
-          message:
-            'OTP verified against API dev mode, but Firebase Admin serviceAccountKey.json is not attached yet for Custom Tokens. Use Google Sign-In or Email & Password so live Cloud Firestore reads & writes succeed!',
-        });
-        return;
-      }
-
       onShowAlert({
         variant: 'error',
-        title: 'Custom Token Configuration Needed',
+        title: 'Sign-In Incomplete',
         message:
-          'Place serviceAccountKey.json in diagnostic-platform/ to mint Firebase Custom Tokens, or sign in with Google / Password.',
+          'Email OTP verified, but we could not finish signing you in. Please try signing in with your password.',
       });
     } catch {
       onShowAlert({
         variant: 'error',
         title: 'Verification Error',
-        message: 'Unable to reach API server for OTP verification.',
+        message: 'Could not reach the sign-in service. Please try again.',
       });
     } finally {
       setAuthSubmitting(false);
@@ -548,9 +561,9 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
       <View style={styles.loadingWrap}>
         <View style={styles.loadingCard}>
           <ActivityIndicator size="large" color="#0D9488" />
-          <Text style={styles.loadingTitle}>{LABSETU_THEME.brand.name} Companion</Text>
+          <Text style={styles.loadingTitle}>{LABSETU_THEME.brand.name} Mobile App</Text>
           <Text style={styles.loadingSub}>
-            Verifying Firebase session &amp; Field Phlebotomist access...
+            Checking your Field Phlebotomist access...
           </Text>
         </View>
       </View>
@@ -570,21 +583,21 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
               <Text style={styles.brandIcon}>🛡️</Text>
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.bannerTitle}>Strict Role Lock</Text>
-              <Text style={styles.bannerSub}>Signed Out Automatically • Role Mismatch</Text>
+              <Text style={styles.bannerTitle}>Wrong App Selected</Text>
+              <Text style={styles.bannerSub}>Signed Out • Use Website Portal</Text>
             </View>
           </View>
 
           <View style={styles.cardBody}>
             <View style={styles.errorBanner}>
               <Text style={styles.errorBannerText}>
-                {roleMismatch.email} is not assigned as {ROLE_LABELS[REQUIRED_ROLE]}.
+                {roleMismatch.email} is not registered as a {ROLE_LABELS[REQUIRED_ROLE]}.
               </Text>
             </View>
 
             <View style={styles.mismatchBox}>
               <View style={styles.mismatchRow}>
-                <Text style={styles.mismatchLabel}>Assigned Role:</Text>
+                <Text style={styles.mismatchLabel}>Account Role:</Text>
                 <View style={styles.pillBlue}>
                   <Text style={styles.pillBlueText}>
                     {ROLE_LABELS[roleMismatch.assignedRole]}
@@ -612,7 +625,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
               style={[styles.secondaryBtn, { marginBottom: 10 }]}
               onPress={() => void Linking.openURL(PORTAL_URLS.PORTAL)}
             >
-              <Text style={styles.secondaryBtnText}>← Open Unified LabSetu Portal</Text>
+              <Text style={styles.secondaryBtnText}>← Open LabSetu Website</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -650,13 +663,13 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
 
         <View style={styles.cardBody}>
           <View style={styles.roleReqBanner}>
-            <Text style={styles.roleReqLabel}>Required Role:</Text>
+            <Text style={styles.roleReqLabel}>App Role:</Text>
             <Text style={styles.roleReqValue}>{ROLE_LABELS[REQUIRED_ROLE]}</Text>
           </View>
 
           <Text style={styles.helperCopy}>
-            Only accounts added by Platform Admin ({ADMIN_LOGIN_EMAIL}) with role{' '}
-            {REQUIRED_ROLE} can open this app.
+            Only Field Phlebotomist accounts added by Platform Admin ({ADMIN_LOGIN_EMAIL})
+            can sign in to this mobile app.
           </Text>
 
           {/* Method 1: Google Sign-In */}
@@ -734,7 +747,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
                 style={styles.input}
                 value={loginEmail}
                 onChangeText={setLoginEmail}
-                placeholder="Enter Admin-provisioned email"
+                placeholder="Enter your registered email"
                 placeholderTextColor="#94A3B8"
                 autoCapitalize="none"
                 keyboardType="email-address"
@@ -781,7 +794,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
                 style={[styles.input, otpSent && { backgroundColor: '#F1F5F9' }]}
                 value={otpEmail}
                 onChangeText={setOtpEmail}
-                placeholder="Enter Admin-provisioned email"
+                placeholder="Enter your registered email"
                 placeholderTextColor="#94A3B8"
                 autoCapitalize="none"
                 keyboardType="email-address"

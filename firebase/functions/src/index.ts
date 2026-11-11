@@ -1,11 +1,19 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/firestore';
-import { createCloudApiApp } from './app';
-import { syncFirebaseUserFromDirectory } from './directory';
-import { processQueuedMailDocument } from './mailer';
+import { type Application } from 'express';
 import { type UserProfile } from './types';
 
-const cloudApp = createCloudApiApp();
+let cachedCloudApp: Application | null = null;
+
+function getCloudApp(): Application {
+  if (!cachedCloudApp) {
+    // Lazily load Express app + Firebase Admin SDK on first request so deploy discovery stays < 200ms
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { createCloudApiApp } = require('./app') as typeof import('./app');
+    cachedCloudApp = createCloudApiApp();
+  }
+  return cachedCloudApp;
+}
 
 /**
  * Main HTTPS API Function (rewritten from Firebase Hosting /api/v1/**)
@@ -14,9 +22,12 @@ export const api = onRequest(
   {
     region: 'us-central1',
     cors: true,
-    memory: '256MiB',
+    memory: '512MiB',
   },
-  cloudApp
+  (req, res) => {
+    const expressApp = getCloudApp();
+    expressApp(req, res);
+  }
 );
 
 /**
@@ -29,6 +40,8 @@ export const onUserDirectoryWrite = onDocumentWritten(
     region: 'us-central1',
   },
   async (event) => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { syncFirebaseUserFromDirectory } = require('./directory') as typeof import('./directory');
     const afterData = event.data?.after.exists
       ? (event.data.after.data() as Partial<UserProfile>)
       : undefined;
@@ -46,9 +59,10 @@ export const onMailDocumentCreated = onDocumentCreated(
     region: 'us-central1',
   },
   async (event) => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { processQueuedMailDocument } = require('./mailer') as typeof import('./mailer');
     const data = event.data?.data() as Record<string, unknown> | undefined;
     if (!data) return;
     await processQueuedMailDocument(event.params.mailId, data);
   }
 );
-

@@ -6,6 +6,7 @@ import {
   DiagnosticReportRecord,
   DiagnosticTestItem,
   formatInr,
+  formatOrderStatus,
   isOrderCompleted,
   LABSETU_THEME,
   LabFacility,
@@ -115,6 +116,12 @@ export function LargeLabDashboard({
   const [settingsNabl, setSettingsNabl] = useState('');
   const [settingsCutoff, setSettingsCutoff] = useState('08:30 PM Daily Cutoff');
 
+  const formatLabel = (raw: string) =>
+    raw
+      .replace(/_/g, ' ')
+      .toLowerCase()
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+
   useEffect(() => {
     if (!session.firebaseUser) return;
     const unsubs = [
@@ -222,16 +229,16 @@ export function LargeLabDashboard({
         qualityStatus: qcQuality,
         notes:
           decision === 'ACCEPT'
-            ? `QC Accessioning Passed (${qcQuality}) at ${numericTemp}°C`
-            : `Rejected during QC: ${qcRejectReason || qcQuality}`,
-        extraFields: decision === 'REJECT' ? { rejectionReason: qcRejectReason || qcQuality } : undefined,
+            ? `QC Accessioning Passed (${formatLabel(qcQuality)}) at ${numericTemp}°C`
+            : `Rejected during QC: ${qcRejectReason || formatLabel(qcQuality)}`,
+        extraFields: decision === 'REJECT' ? { rejectionReason: qcRejectReason || formatLabel(qcQuality) } : undefined,
       });
       setQcOrder(null);
       setQcRejectReason('');
       onShowAlert({
         variant: decision === 'ACCEPT' ? 'success' : 'warning',
         title: decision === 'ACCEPT' ? 'Specimen Accessioned' : 'Specimen Rejected',
-        message: `${qcOrder.orderNumber} logged at ${numericTemp}°C (${qcQuality}).`,
+        message: `${qcOrder.orderNumber} logged at ${numericTemp}°C (${formatLabel(qcQuality)}).`,
       });
     } catch (err) {
       onShowAlert({
@@ -257,8 +264,8 @@ export function LargeLabDashboard({
     });
     onShowAlert({
       variant: 'success',
-      title: 'Analyzer Run Started',
-      message: `${order.orderNumber} moved to UNDER_ANALYSIS.`,
+      title: 'Testing Started',
+      message: `${order.orderNumber} is now Under Analysis.`,
     });
   }
 
@@ -279,7 +286,7 @@ export function LargeLabDashboard({
       onShowAlert({
         variant: 'success',
         title: `Report ${rec.id} Published`,
-        message: `Uploaded to Firebase Storage & shared live with ${reportOrder.smallLabName}.`,
+        message: `Uploaded and shared immediately with ${reportOrder.smallLabName}.`,
       });
     } catch (err) {
       onShowAlert({
@@ -315,8 +322,8 @@ export function LargeLabDashboard({
     setTestName('');
     onShowAlert({
       variant: 'success',
-      title: 'B2B Test Tariff Published',
-      message: `${cleanCode} (${testName.trim()}) saved live to Firestore \`test_catalog\`.`,
+      title: 'Test Tariff Saved',
+      message: `${cleanCode} (${testName.trim()}) has been saved to your test catalogue.`,
     });
   }
 
@@ -437,7 +444,7 @@ export function LargeLabDashboard({
                           <div className="notif-item-title">{n.title}</div>
                           <div className="notif-item-msg">{n.message}</div>
                           <div className="notif-item-meta">
-                            <span>{n.category}</span>
+                            <span>{formatLabel(n.category)}</span>
                             <span>{new Date(n.createdAt).toLocaleString('en-IN')}</span>
                           </div>
                         </div>
@@ -505,7 +512,7 @@ export function LargeLabDashboard({
                   <div className="kpi-body">
                     <span className="kpi-title">Published Test Panels</span>
                     <span className="kpi-main-number">{testCatalog.length}</span>
-                    <span className="kpi-sub-split">Live Firestore tariffs</span>
+                    <span className="kpi-sub-split">Live partner test pricing</span>
                   </div>
                 </div>
                 <div className="kpi-card-modern">
@@ -529,7 +536,7 @@ export function LargeLabDashboard({
                   {filteredOrders.length === 0 ? (
                     <div className="empty-state-box">
                       <h4>No Specimens Routed to Your Hub Yet</h4>
-                      <p>Live bookings targeted to `{session.profile.labId}` appear here immediately.</p>
+                      <p>Live bookings sent to your Reference Lab appear here automatically.</p>
                     </div>
                   ) : (
                     <div className="data-table-container">
@@ -550,7 +557,7 @@ export function LargeLabDashboard({
                               <td>{o.smallLabName}</td>
                               <td>{o.specimens.map((s) => s.testCode).join(', ')}</td>
                               <td>{o.arrivalTemperatureCelsius !== undefined ? `${o.arrivalTemperatureCelsius}°C` : 'In Transit'}</td>
-                              <td><span className="status-pill-blue">{o.status}</span></td>
+                              <td><span className="status-pill-blue">{formatOrderStatus(o.status)}</span></td>
                             </tr>
                           ))}
                         </tbody>
@@ -592,7 +599,7 @@ export function LargeLabDashboard({
                   <div className="network-list-item"><span>Hub ID</span><strong>{session.profile.labId || 'N/A'}</strong></div>
                   <div className="network-list-item"><span>NABL Cert</span><strong>{myLab?.nablNumber || 'NABL ISO 15189'}</strong></div>
                   <div className="network-list-item"><span>Daily Cutoff</span><strong>{myLab?.cutoffWindow || '08:30 PM'}</strong></div>
-                  <div className="network-list-item"><span>Verification</span><span className="status-pill-green">{myLab?.verificationStatus || 'VERIFIED'}</span></div>
+                  <div className="network-list-item"><span>Verification</span><span className="status-pill-green">{formatLabel(myLab?.verificationStatus || 'VERIFIED')}</span></div>
                 </div>
               </section>
             </>
@@ -631,7 +638,7 @@ export function LargeLabDashboard({
                           <td>{o.patient.pseudonym}</td>
                           <td>{o.specimens.map((s) => `${s.testCode} (${s.barcode})`).join(', ')}</td>
                           <td>{o.arrivalTemperatureCelsius !== undefined ? `${o.arrivalTemperatureCelsius}°C` : 'Pending Check'}</td>
-                          <td><span className="status-pill-blue">{o.status}</span></td>
+                          <td><span className="status-pill-blue">{formatOrderStatus(o.status)}</span></td>
                           <td>
                             <button
                               type="button"
@@ -693,7 +700,7 @@ export function LargeLabDashboard({
                           <td>{o.patient.pseudonym}</td>
                           <td>{o.department || 'Pathology'}</td>
                           <td>{o.specimens.map((s) => s.testCode).join(', ')}</td>
-                          <td><span className="status-pill-blue">{o.status}</span></td>
+                          <td><span className="status-pill-blue">{formatOrderStatus(o.status)}</span></td>
                           <td style={{ display: 'flex', gap: '8px' }}>
                             {o.status === OrderStatus.DELIVERED_TO_LAB && (
                               <button type="button" className="btn-secondary" onClick={() => void handleMoveToAnalysis(o)}>
@@ -725,7 +732,7 @@ export function LargeLabDashboard({
             <div className="settings-grid-2">
               <div className="chart-card-modern">
                 <div className="card-top-header">
-                  <h2 className="card-top-title">Publish Signed PDF Report to Firebase Storage</h2>
+                  <h2 className="card-top-title">Upload &amp; Share Verified PDF Report</h2>
                 </div>
                 <form onSubmit={(e) => void handlePublishReportSubmit(e)}>
                   <div className="form-group">
@@ -741,7 +748,7 @@ export function LargeLabDashboard({
                         .filter((o) => !isOrderCompleted(o.status) && o.status !== OrderStatus.CANCELLED && o.status !== OrderStatus.REJECTED)
                         .map((o) => (
                           <option key={o.id} value={o.id}>
-                            {o.orderNumber} — {o.patient.pseudonym} ({o.smallLabName}) [{o.status}]
+                            {o.orderNumber} — {o.patient.pseudonym} ({o.smallLabName}) [{formatOrderStatus(o.status)}]
                           </option>
                         ))}
                     </select>
@@ -761,7 +768,7 @@ export function LargeLabDashboard({
                     <input type="file" accept=".pdf,.png,.jpg,.txt" className="form-input" onChange={(e) => setReportFile(e.target.files?.[0] || null)} />
                   </div>
                   <button type="submit" className="btn-primary btn-full" disabled={uploadingReport || !reportOrder}>
-                    {uploadingReport ? 'Uploading to Cloud Storage...' : 'Verify & Publish Report →'}
+                    {uploadingReport ? 'Uploading Report...' : 'Verify & Publish Report →'}
                   </button>
                 </form>
               </div>
@@ -771,7 +778,7 @@ export function LargeLabDashboard({
                   <h2 className="card-top-title">Published Reports ({reports.length})</h2>
                 </div>
                 {reports.length === 0 ? (
-                  <div className="empty-state-box"><h4>No Reports Uploaded Yet</h4><p>Uploaded PDFs save to Firebase Storage &amp; appear in the Small Lab&apos;s Reports tab immediately.</p></div>
+                  <div className="empty-state-box"><h4>No Reports Uploaded Yet</h4><p>Uploaded PDFs are shared immediately in the referring Collection Lab&apos;s Reports tab.</p></div>
                 ) : (
                   <div className="data-table-container">
                     <table className="modern-data-table">
@@ -818,7 +825,7 @@ export function LargeLabDashboard({
                           <td><strong>{t.code}</strong></td>
                           <td>{t.name}</td>
                           <td>{t.department}</td>
-                          <td>{t.tubeType}</td>
+                          <td>{formatLabel(t.tubeType)}</td>
                           <td><strong>{formatInr(t.b2bPriceInr)}</strong></td>
                           <td>{formatInr(t.mrpInr)}</td>
                           <td>{t.tatHours} hrs</td>
@@ -848,7 +855,7 @@ export function LargeLabDashboard({
                           <td>{s.orderNumber}</td>
                           <td>{s.smallLabName}</td>
                           <td><strong>{formatInr(s.labPayoutInr)}</strong></td>
-                          <td><span className={s.status === 'SETTLED' ? 'status-pill-green' : 'status-pill-amber'}>{s.status}</span></td>
+                          <td><span className={s.status === 'SETTLED' ? 'status-pill-green' : 'status-pill-amber'}>{formatLabel(s.status)}</span></td>
                         </tr>
                       ))}
                     </tbody>
@@ -886,7 +893,7 @@ export function LargeLabDashboard({
                 onSubmit={async (e) => {
                   e.preventDefault();
                   if (!session.profile.labId) {
-                    onShowAlert({ variant: 'warning', title: 'Missing Lab ID', message: 'Ask Admin to assign a labId to your account.' });
+                    onShowAlert({ variant: 'warning', title: 'Missing Lab Profile', message: 'Ask Admin to link a Reference Lab facility ID to your account.' });
                     return;
                   }
                   await updateLabOperationsProfile(session.profile.labId, {
@@ -896,7 +903,7 @@ export function LargeLabDashboard({
                     nablNumber: settingsNabl,
                     cutoffWindow: settingsCutoff,
                   });
-                  onShowAlert({ variant: 'success', title: 'Hub Settings Saved', message: 'Updated live in Firestore.' });
+                  onShowAlert({ variant: 'success', title: 'Hub Settings Saved', message: 'Facility profile updated successfully.' });
                 }}
               >
                 <div className="form-group"><label className="form-label">Hub Display Name</label><input className="form-input" value={settingsName} onChange={(e) => setSettingsName(e.target.value)} required /></div>
@@ -929,7 +936,7 @@ export function LargeLabDashboard({
                   <label className="form-label">Specimen Integrity Status</label>
                   <select className="form-select" value={qcQuality} onChange={(e) => setQcQuality(e.target.value as SpecimenQualityStatus)}>
                     {Object.values(SpecimenQualityStatus).map((st) => (
-                      <option key={st} value={st}>{st}</option>
+                      <option key={st} value={st}>{formatLabel(st)}</option>
                     ))}
                   </select>
                 </div>
@@ -967,10 +974,10 @@ export function LargeLabDashboard({
                 <div className="form-group"><label className="form-label">Test Name</label><input className="form-input" placeholder="Complete Blood Count" value={testName} onChange={(e) => setTestName(e.target.value)} required /></div>
                 <div className="form-group"><label className="form-label">Department</label><select className="form-select" value={testDept} onChange={(e) => setTestDept(e.target.value as DiagnosticDepartment)}><option value="Hematology">Hematology</option><option value="Biochemistry">Biochemistry</option><option value="Immunology">Immunology</option><option value="Molecular">Molecular</option></select></div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                  <div className="form-group"><label className="form-label">Specimen</label><select className="form-select" value={testSpecimen} onChange={(e) => setTestSpecimen(e.target.value as SpecimenType)}>{Object.values(SpecimenType).map((s) => <option key={s} value={s}>{s}</option>)}</select></div>
-                  <div className="form-group"><label className="form-label">Tube</label><select className="form-select" value={testTube} onChange={(e) => setTestTube(e.target.value as TubeType)}>{Object.values(TubeType).map((t) => <option key={t} value={t}>{t}</option>)}</select></div>
+                  <div className="form-group"><label className="form-label">Specimen</label><select className="form-select" value={testSpecimen} onChange={(e) => setTestSpecimen(e.target.value as SpecimenType)}>{Object.values(SpecimenType).map((s) => <option key={s} value={s}>{formatLabel(s)}</option>)}</select></div>
+                  <div className="form-group"><label className="form-label">Tube</label><select className="form-select" value={testTube} onChange={(e) => setTestTube(e.target.value as TubeType)}>{Object.values(TubeType).map((t) => <option key={t} value={t}>{formatLabel(t)}</option>)}</select></div>
                 </div>
-                <div className="form-group"><label className="form-label">Storage Band</label><select className="form-select" value={testTemp} onChange={(e) => setTestTemp(e.target.value as StorageTemperature)}>{Object.values(StorageTemperature).map((t) => <option key={t} value={t}>{t}</option>)}</select></div>
+                <div className="form-group"><label className="form-label">Storage Band</label><select className="form-select" value={testTemp} onChange={(e) => setTestTemp(e.target.value as StorageTemperature)}>{Object.values(StorageTemperature).map((t) => <option key={t} value={t}>{formatLabel(t)}</option>)}</select></div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
                   <div className="form-group"><label className="form-label">B2B Rate (₹)</label><input type="number" className="form-input" value={testB2bPrice} onChange={(e) => setTestB2bPrice(Number(e.target.value))} /></div>
                   <div className="form-group"><label className="form-label">MRP (₹)</label><input type="number" className="form-input" value={testMrp} onChange={(e) => setTestMrp(Number(e.target.value))} /></div>

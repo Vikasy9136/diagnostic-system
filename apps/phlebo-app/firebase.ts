@@ -5,8 +5,8 @@ import { getFirestore, Firestore } from 'firebase/firestore';
 
 declare const process:
   | {
-      env?: Record<string, string | undefined>;
-    }
+    env?: Record<string, string | undefined>;
+  }
   | undefined;
 
 const env = typeof process !== 'undefined' && process.env ? process.env : {};
@@ -14,17 +14,32 @@ const env = typeof process !== 'undefined' && process.env ? process.env : {};
 export const ADMIN_LOGIN_EMAIL =
   env.EXPO_PUBLIC_ADMIN_EMAIL || 'lab.setu.admin@gmail.com';
 
+const isLocalWebHost =
+  Platform.OS === 'web' &&
+  typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
 export const API_BASE_URL =
   env.EXPO_PUBLIC_API_URL ||
-  (Platform.OS === 'web'
+  (isLocalWebHost
     ? 'http://localhost:5000/api/v1'
-    : 'http://10.0.2.2:5000/api/v1');
+    : 'https://us-central1-labsetu-diagnostics.cloudfunctions.net/api/api/v1');
+
+const defaultPortalOrigin = isLocalWebHost
+  ? 'http://localhost:3003'
+  : 'https://labsetu-diagnostics.web.app';
 
 export const PORTAL_URLS = {
-  PORTAL: env.EXPO_PUBLIC_PORTAL_URL || 'http://localhost:3003',
-  ADMIN: env.EXPO_PUBLIC_ADMIN_PORTAL_URL || 'http://localhost:3002',
-  SMALL_LAB: env.EXPO_PUBLIC_SMALL_LAB_PORTAL_URL || 'http://localhost:3000',
-  LARGE_LAB: env.EXPO_PUBLIC_LARGE_LAB_PORTAL_URL || 'http://localhost:3001',
+  PORTAL: env.EXPO_PUBLIC_PORTAL_URL || defaultPortalOrigin,
+  ADMIN:
+    env.EXPO_PUBLIC_ADMIN_PORTAL_URL ||
+    (isLocalWebHost ? 'http://localhost:3002' : `${defaultPortalOrigin}/login?role=ADMIN`),
+  SMALL_LAB:
+    env.EXPO_PUBLIC_SMALL_LAB_PORTAL_URL ||
+    (isLocalWebHost ? 'http://localhost:3000' : `${defaultPortalOrigin}/login?role=SMALL_LAB`),
+  LARGE_LAB:
+    env.EXPO_PUBLIC_LARGE_LAB_PORTAL_URL ||
+    (isLocalWebHost ? 'http://localhost:3001' : `${defaultPortalOrigin}/login?role=LARGE_LAB`),
 };
 
 const firebaseConfig = {

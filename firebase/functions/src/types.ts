@@ -8,7 +8,7 @@ export enum UserRole {
 export const ROLE_LABELS: Record<UserRole, string> = {
   [UserRole.ADMIN]: 'Platform Admin',
   [UserRole.SMALL_LAB]: 'Small Collection Lab',
-  [UserRole.LARGE_LAB]: 'Large Partner Reference Lab',
+  [UserRole.LARGE_LAB]: 'Large Reference Lab',
   [UserRole.PHLEBOTOMIST]: 'Field Phlebotomist',
 };
 

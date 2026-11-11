@@ -23,7 +23,10 @@
     }
   ],
   "hosting": {
-    "public": "../apps/web/portal/dist",
+    "public": "hosting-dist",
+    "predeploy": [
+      "node ../scripts/sync-hosting.mjs"
+    ],
     "ignore": [
       "firebase.json",
       "**/.*",

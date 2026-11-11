@@ -113,6 +113,14 @@ function requireRoles(...allowedRoles: UserRole[]) {
   };
 }
 
+function resolveClientPlatform(req: Request): 'WEB' | 'MOBILE' | undefined {
+  const bodyType = req.body?.clientType;
+  if (bodyType === 'WEB' || bodyType === 'MOBILE') return bodyType;
+  const header = String(req.headers['x-client-platform'] || '').toUpperCase();
+  if (header === 'WEB' || header === 'MOBILE') return header as 'WEB' | 'MOBILE';
+  return undefined;
+}
+
 export function createCloudApiApp(): Application {
   const app = express();
 
@@ -152,17 +160,19 @@ export function createCloudApiApp(): Application {
   app.post('/api/v1/auth/otp/send', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { email, portalRole } = req.body || {};
+      const clientType = resolveClientPlatform(req);
       if (!email || typeof email !== 'string') {
-        return next(new AppError('Email address is required.', 400, 'BAD_REQUEST'));
+        return next(new AppError('Please enter your email address.', 400, 'BAD_REQUEST'));
       }
-      const result = await requestEmailOtp(email, portalRole as UserRole | undefined);
+      const result = await requestEmailOtp(
+        email,
+        portalRole as UserRole | undefined,
+        clientType
+      );
       return res.json({
         success: true,
         data: result,
-        message:
-          result.deliveryMode === 'SMTP'
-            ? `6-digit sign-in OTP sent via email to ${email.trim().toLowerCase()}`
-            : `6-digit OTP generated for ${email.trim().toLowerCase()} (configure SMTP_PASS in Firebase Functions env for Gmail delivery)`,
+        message: `6-digit OTP sent to ${email.trim().toLowerCase()}`,
         timestamp: new Date().toISOString(),
       });
     } catch (err) {
@@ -173,14 +183,20 @@ export function createCloudApiApp(): Application {
   app.post('/api/v1/auth/otp/verify', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { email, otp, portalRole } = req.body || {};
+      const clientType = resolveClientPlatform(req);
       if (!email || !otp) {
         return next(new AppError('Email and 6-digit OTP code are required.', 400, 'BAD_REQUEST'));
       }
-      const result = await verifyEmailOtp(email, String(otp), portalRole as UserRole | undefined);
+      const result = await verifyEmailOtp(
+        email,
+        String(otp),
+        portalRole as UserRole | undefined,
+        clientType
+      );
       return res.json({
         success: true,
         data: result,
-        message: `OTP verified for role ${result.userProfile.role}`,
+        message: 'OTP verified successfully',
         timestamp: new Date().toISOString(),
       });
     } catch (err) {
@@ -196,11 +212,17 @@ export function createCloudApiApp(): Application {
         const uid = req.user?.uid || 'unknown';
         const email = req.user?.email || (req.body?.email as string | undefined);
         const requiredRole = req.body?.requiredRole as UserRole | undefined;
-        const userProfile = await verifyAndSyncSessionRole(uid, email, requiredRole);
+        const clientType = resolveClientPlatform(req);
+        const userProfile = await verifyAndSyncSessionRole(
+          uid,
+          email,
+          requiredRole,
+          clientType
+        );
         return res.json({
           success: true,
           data: userProfile,
-          message: 'Role verified successfully',
+          message: 'Account verified successfully',
           timestamp: new Date().toISOString(),
         });
       } catch (err) {

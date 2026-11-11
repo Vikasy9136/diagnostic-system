@@ -592,7 +592,11 @@ export async function provisionRoleUser(
       to: [normalized],
       message: {
         subject: `Welcome to LabSetu — ${ROLE_LABELS[profile.role]} Account Ready`,
-        text: `Hello ${profile.displayName}, Admin (${ADMIN_LOGIN_EMAIL}) has provisioned your ${ROLE_LABELS[profile.role]} dashboard access for ${normalized}. Sign in at ${window.location.origin}/login using Google Sign-In, Email & Password, or Email OTP.`,
+        text: `Hello ${profile.displayName}, Admin (${ADMIN_LOGIN_EMAIL}) has created your ${ROLE_LABELS[profile.role]} account for ${normalized}. ${
+          profile.role === UserRole.PHLEBOTOMIST
+            ? 'Please open the LabSetu Mobile App and sign in using Google Sign-In, Email & Password, or Email OTP.'
+            : `Sign in at ${window.location.origin}/login using Google Sign-In, Email & Password, or Email OTP.`
+        }`,
       },
       createdAt: now,
     });
@@ -1165,7 +1169,7 @@ export async function dispatchPlatformAlert(opts: {
       : [NotificationChannel.IN_APP],
     read: false,
     emailSent: false,
-    emailStatus: opts.queueEmail ? 'QUEUED_IN_FIRESTORE_MAIL' : 'IN_APP_ONLY',
+    emailStatus: opts.queueEmail ? 'QUEUED_FOR_EMAIL' : 'IN_APP_ONLY',
     pushSent: false,
     createdAt: now,
   };

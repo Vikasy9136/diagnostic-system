@@ -268,17 +268,11 @@ body {
 
 .role-portal-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 20px;
 }
 
-@media (max-width: 1100px) {
-  .role-portal-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-@media (max-width: 640px) {
+@media (max-width: 960px) {
   .role-portal-grid {
     grid-template-columns: 1fr;
   }
@@ -400,15 +394,34 @@ body {
 
 .role-select-cards {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  margin: 20px 0;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin: 20px 0 14px 0;
 }
 
-@media (max-width: 600px) {
-  .role-select-cards {
-    grid-template-columns: 1fr;
-  }
+.phlebo-mobile-notice {
+  background: rgba(245, 158, 11, 0.14);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 12px;
+  padding: 13px 16px;
+  color: #FEF3C7;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
+.phlebo-mobile-notice strong {
+  color: #FCD34D;
+}
+
+.phlebo-mobile-notice.light {
+  background: #FFFBEB;
+  border-color: #FDE68A;
+  color: #92400E;
+}
+
+.phlebo-mobile-notice.light strong {
+  color: #78350F;
 }
 
 .role-select-card {

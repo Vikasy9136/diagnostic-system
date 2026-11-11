@@ -8,6 +8,7 @@ import {
   DiagnosticTestItem,
   EmailDeliverySettings,
   formatInr,
+  formatOrderStatus,
   isOrderCompleted,
   LABSETU_THEME,
   LabFacility,
@@ -30,7 +31,17 @@ import {
   type DiagnosticDepartment,
   type LabFacilityTier,
 } from '@diagnostic/shared';
-import { ADMIN_LOGIN_EMAIL, uploadDiagnosticDocument } from '../firebase';
+import {
+  EmailAuthProvider,
+  linkWithCredential,
+  updatePassword,
+} from 'firebase/auth';
+import {
+  ADMIN_LOGIN_EMAIL,
+  API_BASE_URL,
+  auth,
+  uploadDiagnosticDocument,
+} from '../firebase';
 import { type VerifiedPortalSession } from '../components/AuthGateScreen';
 import { type DynamicAlertVariant } from '../components/DynamicAlertModal';
 import {
@@ -173,6 +184,17 @@ export function AdminDashboard({
   const [storageStatusMsg, setStorageStatusMsg] = useState<string | null>(null);
   const [notifStatusMsg, setNotifStatusMsg] = useState<string | null>(null);
 
+  // Account Password Setup / Change
+  const [newAccountPassword, setNewAccountPassword] = useState('');
+  const [confirmAccountPassword, setConfirmAccountPassword] = useState('');
+  const [savingPassword, setSavingPassword] = useState(false);
+
+  const formatLabel = (raw: string) =>
+    raw
+      .replace(/_/g, ' ')
+      .toLowerCase()
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+
   useEffect(() => {
     if (!session.firebaseUser) return;
     const unsubs = [
@@ -302,17 +324,27 @@ export function AdminDashboard({
       setShowAddUserModal(false);
       onShowAlert({
         variant: 'success',
-        title: 'Role Account Provisioned',
-        message: `${profile.displayName} (${profile.email}) can now log in strictly under ${ROLE_LABELS[profile.role]}.`,
-        detail: `${profile.labId ? `Lab ID: ${profile.labId}` : profile.phlebotomistId ? `Phlebo ID: ${profile.phlebotomistId}` : 'Platform Admin'} • ${
-          apiSynced ? 'Firebase Auth + Custom Claims Synced' : 'Saved directly to Cloud Firestore directory'
+        title: 'Account Created',
+        message: `${profile.displayName} (${profile.email}) can now sign in as ${ROLE_LABELS[profile.role]}.`,
+        detail: `${
+          profile.labId
+            ? `Lab ID: ${profile.labId}`
+            : profile.phlebotomistId
+            ? `Courier ID: ${profile.phlebotomistId}`
+            : 'Platform Admin'
+        } • ${
+          profile.role === UserRole.PHLEBOTOMIST
+            ? 'Mobile App sign-in enabled'
+            : apiSynced
+            ? 'Website portal & email login ready'
+            : 'Saved to approved directory'
         }`,
       });
     } catch (err) {
       onShowAlert({
         variant: 'error',
-        title: 'User Provisioning Error',
-        message: (err as Error).message || 'Could not save user to Firestore.',
+        title: 'Could Not Save Account',
+        message: (err as Error).message || 'Could not create the user account.',
       });
     } finally {
       setSavingUser(false);
@@ -343,8 +375,8 @@ export function AdminDashboard({
     setLabPhone('');
     onShowAlert({
       variant: 'success',
-      title: 'Diagnostic Facility Saved',
-      message: `${labName.trim()} (${id}) stored directly in Cloud Firestore.`,
+      title: 'Lab Facility Added',
+      message: `${labName.trim()} (${id}) has been saved successfully.`,
     });
   }
 
@@ -372,8 +404,8 @@ export function AdminDashboard({
     setPhleboPhone('');
     onShowAlert({
       variant: 'success',
-      title: 'Phlebotomist Registered',
-      message: `${phleboName.trim()} (${id}) saved to Firestore Fleet.`,
+      title: 'Phlebotomist Added',
+      message: `${phleboName.trim()} (${id}) has been added to the active fleet.`,
     });
   }
 
@@ -399,8 +431,8 @@ export function AdminDashboard({
     setTestName('');
     onShowAlert({
       variant: 'success',
-      title: 'Master Test Saved',
-      message: `${cleanCode} (${testName.trim()}) stored in Firestore test_catalog.`,
+      title: 'Test Panel Saved',
+      message: `${cleanCode} (${testName.trim()}) has been added to the test catalogue.`,
     });
   }
 
@@ -425,9 +457,31 @@ export function AdminDashboard({
   }
 
   async function handleSendTestNotification() {
-    setNotifStatusMsg('Dispatching live alert & Firestore email queue...');
+    setNotifStatusMsg('Sending test alert & email...');
+    try {
+      const res = await fetch(`${API_BASE_URL}/notifications/test-email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.bearerToken}`,
+        },
+        body: JSON.stringify({ recipientEmail: emailSettings.adminEmail }),
+      });
+      const json = await res.json().catch(() => null);
+      if (res.ok && json?.data) {
+        setNotifStatusMsg(
+          json.data.emailSent
+            ? `Test email delivered to ${emailSettings.adminEmail}.`
+            : `Notification saved; email delivery to ${emailSettings.adminEmail} queued.`
+        );
+        return;
+      }
+    } catch {
+      // Fallback below
+    }
+
     await dispatchPlatformAlert({
-      title: 'LabSetu Live Firestore & Email Test Alert',
+      title: 'LabSetu Live Alert & Email Check',
       message: `Verified real-time alert for ${emailSettings.adminEmail} triggered at ${new Date().toLocaleTimeString('en-IN')}.`,
       category: NotificationCategory.SYSTEM_ALERT,
       priority: NotificationPriority.NORMAL,
@@ -435,28 +489,92 @@ export function AdminDashboard({
       recipientRole: UserRole.ADMIN,
       queueEmail: true,
     });
-    setNotifStatusMsg(`Saved to Firestore notifications & mail for ${emailSettings.adminEmail}.`);
+    setNotifStatusMsg(`Alert & email queued for ${emailSettings.adminEmail}.`);
   }
 
   async function handleStorageUploadTest(file: File | undefined) {
     if (!file) return;
-    setStorageStatusMsg('Uploading to labsetu-diagnostics Firebase Storage...');
+    setStorageStatusMsg('Uploading test document...');
     try {
       const url = await uploadDiagnosticDocument(
         `documents/admin/${Date.now()}-${file.name}`,
         file
       );
-      setStorageStatusMsg(`Uploaded cleanly: ${url}`);
+      setStorageStatusMsg(`Uploaded successfully: ${url}`);
       onShowAlert({
         variant: 'success',
-        title: 'Firebase Storage Upload Verified',
-        message: `${file.name} uploaded to Cloud Storage.`,
+        title: 'Document Upload Verified',
+        message: `${file.name} uploaded securely.`,
         detail: url,
       });
     } catch (err) {
       const msg = (err as Error).message;
-      setStorageStatusMsg(`Storage error: ${msg}`);
-      onShowAlert({ variant: 'warning', title: 'Storage Upload Error', message: msg });
+      setStorageStatusMsg(`Upload failed: ${msg}`);
+      onShowAlert({ variant: 'warning', title: 'Upload Error', message: msg });
+    }
+  }
+
+  async function handleUpdateAccountPassword(e: FormEvent) {
+    e.preventDefault();
+    const user = auth.currentUser;
+    if (!user || !user.email) {
+      onShowAlert({
+        variant: 'error',
+        title: 'Sign-In Required',
+        message: 'Please sign in again before updating your password.',
+      });
+      return;
+    }
+    if (newAccountPassword.length < 6) {
+      onShowAlert({
+        variant: 'warning',
+        title: 'Password Too Short',
+        message: 'Please enter a password of at least 6 characters.',
+      });
+      return;
+    }
+    if (newAccountPassword !== confirmAccountPassword) {
+      onShowAlert({
+        variant: 'warning',
+        title: 'Passwords Do Not Match',
+        message: 'Both password fields must match exactly.',
+      });
+      return;
+    }
+
+    setSavingPassword(true);
+    try {
+      const hasPasswordProvider = user.providerData.some((p) => p.providerId === 'password');
+      if (hasPasswordProvider) {
+        await updatePassword(user, newAccountPassword);
+      } else {
+        const cred = EmailAuthProvider.credential(user.email, newAccountPassword);
+        await linkWithCredential(user, cred);
+      }
+      setNewAccountPassword('');
+      setConfirmAccountPassword('');
+      onShowAlert({
+        variant: 'success',
+        title: 'Sign-In Password Updated',
+        message: `You can now sign in to ${user.email} using Email & Password anytime.`,
+      });
+    } catch (err: unknown) {
+      const fbErr = err as { code?: string; message?: string };
+      if (fbErr.code === 'auth/requires-recent-login') {
+        onShowAlert({
+          variant: 'warning',
+          title: 'Please Sign In Again',
+          message: 'For security reasons, please sign out and sign back in once before changing your password.',
+        });
+      } else {
+        onShowAlert({
+          variant: 'error',
+          title: 'Password Update Failed',
+          message: fbErr.message || 'Could not update your account password.',
+        });
+      }
+    } finally {
+      setSavingPassword(false);
     }
   }
 
@@ -478,7 +596,7 @@ export function AdminDashboard({
         `"${o.patient.pseudonym}"`,
         `"${o.specimens.map((s) => s.testCode).join(', ')}"`,
         `"${o.phlebotomistName || 'Unassigned'}"`,
-        o.status,
+        formatOrderStatus(o.status),
         o.totalAmountInr || 0,
         o.createdAt,
       ].join(',')
@@ -495,7 +613,7 @@ export function AdminDashboard({
     onShowAlert({
       variant: 'success',
       title: 'Bookings CSV Exported',
-      message: `Exported ${orders.length} live Firestore bookings.`,
+      message: `Exported ${orders.length} live bookings.`,
     });
   }
 
@@ -654,15 +772,15 @@ export function AdminDashboard({
           onClick={() =>
             onShowAlert({
               variant: 'info',
-              title: 'LabSetu Central Operations',
-              message: `Firestore Live Project: labsetu-diagnostics\nRoot Owner: ${ADMIN_LOGIN_EMAIL}`,
+              title: 'LabSetu Operations',
+              message: `Connected Live Dashboard\nPrimary Admin: ${ADMIN_LOGIN_EMAIL}`,
             })
           }
         >
           <div className="sidebar-footer-icon">🎧</div>
           <div>
             <div className="sidebar-footer-title">Admin Control Desk</div>
-            <div className="sidebar-footer-subtitle">Firestore Live Synced</div>
+            <div className="sidebar-footer-subtitle">Live Auto-Sync Active</div>
           </div>
         </div>
       </aside>
@@ -706,7 +824,7 @@ export function AdminDashboard({
                   <div className="notif-list">
                     {notifications.length === 0 ? (
                       <div style={{ padding: '20px', textAlign: 'center', fontSize: '0.82rem', color: '#64748B' }}>
-                        No notifications in Firestore yet.
+                        No notifications yet.
                       </div>
                     ) : (
                       notifications.map((n) => (
@@ -718,7 +836,7 @@ export function AdminDashboard({
                           <div className="notif-item-title">{n.title}</div>
                           <div className="notif-item-msg">{n.message}</div>
                           <div className="notif-item-meta">
-                            <span>{n.category}</span>
+                            <span>{formatLabel(n.category)}</span>
                             <span>{new Date(n.createdAt).toLocaleString('en-IN')}</span>
                           </div>
                         </div>
@@ -749,7 +867,7 @@ export function AdminDashboard({
               <div className="page-header-row">
                 <div className="page-title-group">
                   <h1>Admin Dashboard</h1>
-                  <p>Live metrics streamed directly from Cloud Firestore (`labsetu-diagnostics`)</p>
+                  <p>Live overview of bookings, samples, labs, and payouts</p>
                 </div>
                 <button
                   type="button"
@@ -800,7 +918,7 @@ export function AdminDashboard({
                   <div className="kpi-body">
                     <span className="kpi-title">Platform Revenue</span>
                     <span className="kpi-main-number">{formatInr(metrics.totalRevenue)}</span>
-                    <span className="kpi-sub-split">Live GMV from settlements</span>
+                    <span className="kpi-sub-split">Total from partner settlements</span>
                   </div>
                 </div>
               </section>
@@ -972,8 +1090,8 @@ export function AdminDashboard({
                   </div>
                   {orders.length === 0 ? (
                     <div className="empty-state-box">
-                      <h4>No Live Bookings in Firestore Yet</h4>
-                      <p>Once a Small Collection Lab dispatches a booking, it streams here in real time.</p>
+                      <h4>No Bookings Yet</h4>
+                      <p>Once a Collection Lab submits a sample pickup booking, it appears here right away.</p>
                     </div>
                   ) : (
                     <div className="data-table-container">
@@ -994,7 +1112,7 @@ export function AdminDashboard({
                               <td>{o.smallLabName}</td>
                               <td>{o.specimens.map((s) => s.testCode).join(', ')}</td>
                               <td>{o.phlebotomistName || 'Unassigned'}</td>
-                              <td><span className="status-pill-blue">{o.status}</span></td>
+                              <td><span className="status-pill-blue">{formatOrderStatus(o.status)}</span></td>
                             </tr>
                           ))}
                         </tbody>
@@ -1085,7 +1203,7 @@ export function AdminDashboard({
                       <th>Name / Facility</th>
                       <th>Email</th>
                       <th>Assigned Role</th>
-                      <th>Lab / Phlebo ID</th>
+                      <th>Lab / Courier ID</th>
                       <th>Status</th>
                       <th>Action</th>
                     </tr>
@@ -1099,12 +1217,12 @@ export function AdminDashboard({
                         <td>{u.labId || u.phlebotomistId || 'Global'}</td>
                         <td>
                           <span className={u.isActive ? 'status-pill-green' : 'status-pill-red'}>
-                            {u.isActive ? '● Active' : '● Suspended'}
+                            {u.isActive ? '● Active' : '● Paused'}
                           </span>
                         </td>
                         <td>
                           {u.email.toLowerCase() === ADMIN_LOGIN_EMAIL.toLowerCase() ? (
-                            <span style={{ fontSize: '0.75rem', color: '#64748B' }}>Root Owner</span>
+                            <span style={{ fontSize: '0.75rem', color: '#64748B' }}>Primary Admin</span>
                           ) : (
                             <button
                               type="button"
@@ -1112,15 +1230,15 @@ export function AdminDashboard({
                               onClick={() =>
                                 onShowAlert({
                                   variant: 'confirm',
-                                  title: u.isActive ? 'Suspend Account?' : 'Restore Account?',
-                                  message: `${u.isActive ? 'Block' : 'Restore'} sign-in for ${u.email}?`,
+                                  title: u.isActive ? 'Pause Account?' : 'Activate Account?',
+                                  message: `${u.isActive ? 'Pause' : 'Restore'} sign-in access for ${u.email}?`,
                                   onConfirm: () => {
                                     void toggleManagedUserStatus(session.bearerToken, u, !u.isActive);
                                   },
                                 })
                               }
                             >
-                              {u.isActive ? 'Suspend' : 'Activate'}
+                              {u.isActive ? 'Pause' : 'Activate'}
                             </button>
                           )}
                         </td>
@@ -1138,13 +1256,13 @@ export function AdminDashboard({
               <div className="card-top-header">
                 <div>
                   <h2 className="card-top-title">Live Specimen Pickup Bookings ({filteredOrders.length})</h2>
-                  <p style={{ fontSize: '0.8rem', color: '#64748B' }}>Real-time Firestore orders collection</p>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B' }}>Real-time bookings across all connected labs</p>
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <select className="form-select" style={{ width: '180px' }} value={orderStatusFilter} onChange={(e) => setOrderStatusFilter(e.target.value)}>
+                  <select className="form-select" style={{ width: '210px' }} value={orderStatusFilter} onChange={(e) => setOrderStatusFilter(e.target.value)}>
                     <option value="ALL">All Statuses</option>
                     {Object.values(OrderStatus).map((st) => (
-                      <option key={st} value={st}>{st}</option>
+                      <option key={st} value={st}>{formatOrderStatus(st)}</option>
                     ))}
                   </select>
                   <button type="button" className="btn-primary" onClick={handleExportCsv}>
@@ -1156,7 +1274,7 @@ export function AdminDashboard({
               {filteredOrders.length === 0 ? (
                 <div className="empty-state-box">
                   <h4>No Matching Bookings Found</h4>
-                  <p>Live orders submitted from Small Lab portals will appear here automatically.</p>
+                  <p>Live orders submitted from Collection Centers will appear here automatically.</p>
                 </div>
               ) : (
                 <div className="data-table-container">
@@ -1184,7 +1302,7 @@ export function AdminDashboard({
                           <td>{o.specimens.map((s) => s.testCode).join(', ')}</td>
                           <td>{o.phlebotomistName || 'Unassigned'}</td>
                           <td>{formatInr(o.totalAmountInr || 0)}</td>
-                          <td><span className="status-pill-blue">{o.status}</span></td>
+                          <td><span className="status-pill-blue">{formatOrderStatus(o.status)}</span></td>
                           <td>
                             <button
                               type="button"
@@ -1212,7 +1330,7 @@ export function AdminDashboard({
               <div className="card-top-header">
                 <div>
                   <h2 className="card-top-title">Registered Laboratories Directory</h2>
-                  <p style={{ fontSize: '0.8rem', color: '#64748B' }}>Synced with Firestore `labs` collection</p>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B' }}>All Collection Centers and Reference Testing Labs</p>
                 </div>
                 <button type="button" className="btn-primary" onClick={() => setShowAddLabModal(true)}>
                   + Add Lab Facility
@@ -1221,7 +1339,7 @@ export function AdminDashboard({
               {labs.length === 0 ? (
                 <div className="empty-state-box">
                   <h4>No Laboratories Added Yet</h4>
-                  <p>Add a Small Lab Collection Center or Large Reference Hub to start routing specimens.</p>
+                  <p>Add a Collection Center or Reference Lab to start routing sample pickups.</p>
                   <button type="button" className="btn-primary" onClick={() => setShowAddLabModal(true)}>
                     + Register First Lab
                   </button>
@@ -1233,7 +1351,7 @@ export function AdminDashboard({
                       <tr>
                         <th>Lab ID</th>
                         <th>Name</th>
-                        <th>Tier</th>
+                        <th>Type</th>
                         <th>City</th>
                         <th>Email</th>
                         <th>Verification</th>
@@ -1252,12 +1370,12 @@ export function AdminDashboard({
                           <tr key={lab.id}>
                             <td><strong>{lab.id}</strong></td>
                             <td>{lab.name}</td>
-                            <td>{lab.type}</td>
+                            <td>{lab.type === 'SMALL_LAB' ? 'Collection Center' : 'Reference Hub'}</td>
                             <td>{lab.city}</td>
                             <td>{lab.email}</td>
                             <td>
                               <span className={lab.verificationStatus === 'VERIFIED' ? 'status-pill-green' : 'status-pill-amber'}>
-                                {lab.verificationStatus}
+                                {formatLabel(lab.verificationStatus)}
                               </span>
                             </td>
                             <td>
@@ -1277,7 +1395,7 @@ export function AdminDashboard({
                                     onShowAlert({
                                       variant: 'info',
                                       title: lab.name,
-                                      message: `ID: ${lab.id}\nTier: ${lab.type}\nCity: ${lab.city}\nAccreditation: ${lab.nablNumber || 'Standard'}`,
+                                      message: `ID: ${lab.id}\nType: ${lab.type === 'SMALL_LAB' ? 'Collection Center' : 'Reference Hub'}\nCity: ${lab.city}\nAccreditation: ${lab.nablNumber || 'Standard'}`,
                                     })
                                   }
                                 >
@@ -1300,7 +1418,7 @@ export function AdminDashboard({
               <div className="card-top-header">
                 <div>
                   <h2 className="card-top-title">Field Phlebotomist Fleet ({phlebotomists.length})</h2>
-                  <p style={{ fontSize: '0.8rem', color: '#64748B' }}>Live telemetry &amp; shift status</p>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B' }}>Live rider status &amp; cooling box details (Mobile App accounts)</p>
                 </div>
                 <button type="button" className="btn-primary" onClick={() => setShowAddPhleboModal(true)}>
                   + Add Phlebotomist
@@ -1309,7 +1427,7 @@ export function AdminDashboard({
               {phlebotomists.length === 0 ? (
                 <div className="empty-state-box">
                   <h4>No Phlebotomists in Fleet</h4>
-                  <p>Add a field phlebotomist or provision one in Users &amp; Roles.</p>
+                  <p>Add a field phlebotomist here or create a courier account in Users &amp; Roles.</p>
                   <button type="button" className="btn-primary" onClick={() => setShowAddPhleboModal(true)}>
                     + Add Phlebotomist
                   </button>
@@ -1324,7 +1442,7 @@ export function AdminDashboard({
                         <th>Email / Phone</th>
                         <th>Shift</th>
                         <th>Location</th>
-                        <th>Chiller Temp</th>
+                        <th>Cooler Temp</th>
                         <th>Action</th>
                       </tr>
                     </thead>
@@ -1334,12 +1452,12 @@ export function AdminDashboard({
                           <td><strong>{p.id}</strong></td>
                           <td>{p.name}</td>
                           <td>{p.email}</td>
-                          <td><span className={p.status === 'ONLINE' ? 'status-pill-green' : 'status-pill-amber'}>{p.status}</span></td>
+                          <td><span className={p.status === 'ONLINE' ? 'status-pill-green' : 'status-pill-amber'}>{formatLabel(p.status)}</span></td>
                           <td>{p.currentLocation}</td>
                           <td>{p.chillerTempCelsius}°C</td>
                           <td>
                             <button type="button" className="btn-secondary" onClick={() => setSelectedCourier(p)}>
-                              Telemetry
+                              Live Details
                             </button>
                           </td>
                         </tr>
@@ -1355,12 +1473,12 @@ export function AdminDashboard({
           {activeTab === 'samples' && (
             <div className="chart-card-modern">
               <div className="card-top-header">
-                <h2 className="card-top-title">Chain-of-Custody Audit Stream ({custodyEvents.length} Events)</h2>
+                <h2 className="card-top-title">Sample Handover &amp; Temperature Log ({custodyEvents.length} Events)</h2>
               </div>
               {custodyEvents.length === 0 ? (
                 <div className="empty-state-box">
                   <h4>No Custody Events Recorded Yet</h4>
-                  <p>Every pickup scan, cold-chain check, and handover appends an immutable event here.</p>
+                  <p>Every pickup scan, temperature reading, and handover is logged here.</p>
                 </div>
               ) : (
                 <div className="data-table-container">
@@ -1368,8 +1486,8 @@ export function AdminDashboard({
                     <thead>
                       <tr>
                         <th>Order ID</th>
-                        <th>Event Type</th>
-                        <th>Operator</th>
+                        <th>Event</th>
+                        <th>Updated By</th>
                         <th>Role</th>
                         <th>Temp Logged</th>
                         <th>Timestamp</th>
@@ -1379,9 +1497,9 @@ export function AdminDashboard({
                       {custodyEvents.map((ev) => (
                         <tr key={ev.id}>
                           <td><strong>{ev.orderId}</strong></td>
-                          <td><span className="status-pill-blue">{ev.eventType}</span></td>
+                          <td><span className="status-pill-blue">{formatLabel(ev.eventType)}</span></td>
                           <td>{ev.operatorName}</td>
-                          <td>{ev.operatorRole}</td>
+                          <td>{ROLE_LABELS[ev.operatorRole] || formatLabel(ev.operatorRole)}</td>
                           <td>{ev.temperatureCelsius !== undefined ? `${ev.temperatureCelsius}°C` : '—'}</td>
                           <td>{new Date(ev.timestamp).toLocaleString('en-IN')}</td>
                         </tr>
@@ -1402,7 +1520,7 @@ export function AdminDashboard({
               {reports.length === 0 ? (
                 <div className="empty-state-box">
                   <h4>No Verified Reports Uploaded Yet</h4>
-                  <p>Partner reference labs upload signed PDF reports to Firebase Storage.</p>
+                  <p>Partner reference labs upload signed PDF reports once testing finishes.</p>
                 </div>
               ) : (
                 <div className="data-table-container">
@@ -1446,13 +1564,13 @@ export function AdminDashboard({
                 <h2 className="card-top-title">Payments &amp; B2B Settlements ({settlements.length})</h2>
               </div>
               <div className="kpi-row" style={{ marginBottom: '20px' }}>
-                <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Gross GMV</span><span className="kpi-main-number">{formatInr(metrics.grossGmv)}</span></div></div>
+                <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Total Billing</span><span className="kpi-main-number">{formatInr(metrics.grossGmv)}</span></div></div>
                 <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Platform Fees</span><span className="kpi-main-number">{formatInr(metrics.platformFees)}</span></div></div>
                 <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Lab Payouts</span><span className="kpi-main-number">{formatInr(metrics.labPayouts)}</span></div></div>
                 <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Courier Payouts</span><span className="kpi-main-number">{formatInr(metrics.phleboPayouts)}</span></div></div>
               </div>
               {settlements.length === 0 ? (
-                <div className="empty-state-box"><h4>No Settlement Entries Yet</h4><p>Settlements are automatically generated for every live booking.</p></div>
+                <div className="empty-state-box"><h4>No Settlement Entries Yet</h4><p>Settlements are created automatically for every booking.</p></div>
               ) : (
                 <div className="data-table-container">
                   <table className="modern-data-table">
@@ -1461,7 +1579,7 @@ export function AdminDashboard({
                         <th>ID</th>
                         <th>Order</th>
                         <th>Source Lab</th>
-                        <th>Gross</th>
+                        <th>Total</th>
                         <th>Status</th>
                         <th>Action</th>
                       </tr>
@@ -1473,7 +1591,7 @@ export function AdminDashboard({
                           <td>{s.orderNumber}</td>
                           <td>{s.smallLabName}</td>
                           <td>{formatInr(s.grossAmountInr)}</td>
-                          <td><span className={s.status === 'SETTLED' ? 'status-pill-green' : 'status-pill-amber'}>{s.status}</span></td>
+                          <td><span className={s.status === 'SETTLED' ? 'status-pill-green' : 'status-pill-amber'}>{formatLabel(s.status)}</span></td>
                           <td>
                             {s.status !== 'SETTLED' && (
                               <button type="button" className="btn-primary" onClick={() => void markSettlementSettled(s.id)}>
@@ -1493,7 +1611,7 @@ export function AdminDashboard({
           {/* TAB 9: COMMISSION */}
           {activeTab === 'commission' && (
             <div className="chart-card-modern" style={{ maxWidth: '640px' }}>
-              <h2 className="card-top-title">Commission &amp; Fee Rules (Live in Firestore)</h2>
+              <h2 className="card-top-title">Commission &amp; Service Fee Rules</h2>
               <div style={{ marginTop: '16px' }}>
                 <div className="form-group">
                   <label className="form-label">Platform Fee (%)</label>
@@ -1512,7 +1630,7 @@ export function AdminDashboard({
                   className="btn-primary"
                   onClick={async () => {
                     await saveCommissionSettings(commConfig, session.profile.email);
-                    onShowAlert({ variant: 'success', title: 'Commission Rules Saved', message: 'Updated settings/commission in Firestore.' });
+                    onShowAlert({ variant: 'success', title: 'Commission Rules Saved', message: 'Commission and service fee rules have been saved.' });
                   }}
                 >
                   Save Commission Rules
@@ -1545,8 +1663,8 @@ export function AdminDashboard({
             <div className="chart-card-modern">
               <div className="card-top-header">
                 <div>
-                  <h2 className="card-top-title">Diagnostic Master Test Catalogue ({testCatalog.length})</h2>
-                  <p style={{ fontSize: '0.8rem', color: '#64748B' }}>Synced directly from Firestore `test_catalog`</p>
+                  <h2 className="card-top-title">Master Test Catalogue ({testCatalog.length})</h2>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B' }}>Tests, tube types, and partner pricing available for bookings</p>
                 </div>
                 <button type="button" className="btn-primary" onClick={() => setShowAddTestModal(true)}>
                   + Add Test Panel
@@ -1555,7 +1673,7 @@ export function AdminDashboard({
               {testCatalog.length === 0 ? (
                 <div className="empty-state-box">
                   <h4>Test Catalogue Is Empty</h4>
-                  <p>Add diagnostic tests (e.g., CBC, LFT, TSH) so Small Labs can book specimen pickups.</p>
+                  <p>Add diagnostic tests (e.g., CBC, LFT, TSH) so Collection Labs can book sample pickups.</p>
                   <button type="button" className="btn-primary" onClick={() => setShowAddTestModal(true)}>+ Add First Test Panel</button>
                 </div>
               ) : (
@@ -1578,7 +1696,7 @@ export function AdminDashboard({
                           <td><strong>{t.code}</strong></td>
                           <td>{t.name}</td>
                           <td>{t.department}</td>
-                          <td>{t.tubeType}</td>
+                          <td>{formatLabel(t.tubeType)}</td>
                           <td>{formatInr(t.b2bPriceInr)}</td>
                           <td>{t.tatHours} hrs</td>
                           <td>
@@ -1599,10 +1717,10 @@ export function AdminDashboard({
           {activeTab === 'settings' && (
             <div className="settings-grid-2">
               <div className="chart-card-modern">
-                <h2 className="card-top-title">Platform SLA &amp; Email Configuration</h2>
+                <h2 className="card-top-title">Pickup Targets &amp; Email Preferences</h2>
                 <div style={{ marginTop: '16px' }}>
                   <div className="form-group">
-                    <label className="form-label">STAT Pickup SLA (Minutes)</label>
+                    <label className="form-label">Urgent Pickup Target (Minutes)</label>
                     <input type="number" className="form-input" value={slaConfig.statPickupSlaMinutes} onChange={(e) => setSlaConfig({ ...slaConfig, statPickupSlaMinutes: Number(e.target.value) })} />
                   </div>
                   <div className="form-group">
@@ -1618,23 +1736,57 @@ export function AdminDashboard({
                     className="btn-primary"
                     onClick={async () => {
                       await saveAdminSettings({ sla: slaConfig, email: emailSettings, adminEmail: session.profile.email });
-                      onShowAlert({ variant: 'success', title: 'Settings Synced', message: 'Saved SLA & notification rules to Cloud Firestore.' });
+                      onShowAlert({ variant: 'success', title: 'Settings Saved', message: 'Pickup targets and email notification preferences saved.' });
                     }}
                   >
-                    Save to Firestore
+                    Save Settings
                   </button>
                 </div>
               </div>
 
               <div className="chart-card-modern">
-                <h2 className="card-top-title">Cloud Storage &amp; Alert Diagnostics</h2>
+                <h2 className="card-top-title">Account Sign-In Password</h2>
+                <p style={{ fontSize: '0.82rem', color: '#64748B', marginTop: '4px' }}>
+                  Set or change the password for <strong>{session.profile.email}</strong>.
+                </p>
+                <form onSubmit={(e) => void handleUpdateAccountPassword(e)} style={{ marginTop: '14px' }}>
+                  <div className="form-group">
+                    <label className="form-label">New Password</label>
+                    <input
+                      type="password"
+                      className="form-input"
+                      placeholder="Minimum 6 characters"
+                      value={newAccountPassword}
+                      onChange={(e) => setNewAccountPassword(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Confirm Password</label>
+                    <input
+                      type="password"
+                      className="form-input"
+                      placeholder="Re-enter password"
+                      value={confirmAccountPassword}
+                      onChange={(e) => setConfirmAccountPassword(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <button type="submit" className="btn-primary" disabled={savingPassword}>
+                    {savingPassword ? 'Updating...' : 'Set / Update Password'}
+                  </button>
+                </form>
+              </div>
+
+              <div className="chart-card-modern">
+                <h2 className="card-top-title">Document Upload &amp; Email Check</h2>
                 <div style={{ marginTop: '16px' }}>
                   <button type="button" className="btn-primary" onClick={() => void handleSendTestNotification()}>
-                    Send Live Test Notification
+                    Send Live Test Email &amp; Alert
                   </button>
                   {notifStatusMsg && <p style={{ fontSize: '0.8rem', color: '#0F766E', marginTop: '8px' }}>{notifStatusMsg}</p>}
                   <div className="form-group" style={{ marginTop: '20px' }}>
-                    <label className="form-label">Test Firebase Storage Upload</label>
+                    <label className="form-label">Test Document Upload</label>
                     <input type="file" className="form-input" onChange={(e) => void handleStorageUploadTest(e.target.files?.[0])} />
                     {storageStatusMsg && <p style={{ fontSize: '0.78rem', marginTop: '8px', wordBreak: 'break-all' }}>{storageStatusMsg}</p>}
                   </div>
@@ -1650,7 +1802,7 @@ export function AdminDashboard({
         <div className="modal-overlay" onClick={() => setShowAddUserModal(false)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Add Role-Locked Account</h3>
+              <h3>Add Team or Partner Account</h3>
               <button type="button" className="btn-secondary" onClick={() => setShowAddUserModal(false)}>✕</button>
             </div>
             <form onSubmit={(e) => void handleProvisionUserSubmit(e)}>
@@ -1659,11 +1811,16 @@ export function AdminDashboard({
                   <label className="form-label">Role</label>
                   <select className="form-select" value={newUserRole} onChange={(e) => setNewUserRole(e.target.value as UserRole)}>
                     <option value={UserRole.SMALL_LAB}>Small Collection Lab</option>
-                    <option value={UserRole.LARGE_LAB}>Partner Reference Lab</option>
-                    <option value={UserRole.PHLEBOTOMIST}>Field Phlebotomist</option>
+                    <option value={UserRole.LARGE_LAB}>Large Reference Lab</option>
+                    <option value={UserRole.PHLEBOTOMIST}>Field Phlebotomist (Mobile App Only)</option>
                     <option value={UserRole.ADMIN}>Platform Admin</option>
                   </select>
                 </div>
+                {newUserRole === UserRole.PHLEBOTOMIST && (
+                  <div className="admin-auth-alert success" style={{ marginBottom: '12px', fontSize: '0.8rem' }}>
+                    Field Phlebotomists sign in only on the LabSetu Mobile App.
+                  </div>
+                )}
                 <div className="form-group">
                   <label className="form-label">Name / Facility</label>
                   <input className="form-input" value={newUserName} onChange={(e) => setNewUserName(e.target.value)} required />
@@ -1674,7 +1831,7 @@ export function AdminDashboard({
                 </div>
                 {(newUserRole === UserRole.SMALL_LAB || newUserRole === UserRole.LARGE_LAB) && (
                   <div className="form-group">
-                    <label className="form-label">Lab ID (Auto-linked facility in Firestore)</label>
+                    <label className="form-label">Lab ID (Linked automatically to facility profile)</label>
                     <input className="form-input" value={newUserLabId} onChange={(e) => setNewUserLabId(e.target.value)} />
                   </div>
                 )}
@@ -1693,13 +1850,13 @@ export function AdminDashboard({
                   <input className="form-input" value={newUserPhone} onChange={(e) => setNewUserPhone(e.target.value)} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Initial Password (Optional if API Admin SDK active)</label>
+                  <label className="form-label">Initial Password (Optional)</label>
                   <input type="password" className="form-input" value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} />
                 </div>
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn-secondary" onClick={() => setShowAddUserModal(false)}>Cancel</button>
-                <button type="submit" className="btn-primary" disabled={savingUser}>{savingUser ? 'Saving...' : 'Provision User'}</button>
+                <button type="submit" className="btn-primary" disabled={savingUser}>{savingUser ? 'Saving...' : 'Create Account'}</button>
               </div>
             </form>
           </div>
@@ -1716,7 +1873,7 @@ export function AdminDashboard({
             </div>
             <form onSubmit={(e) => void handleSaveNewLab(e)}>
               <div className="modal-body">
-                <div className="form-group"><label className="form-label">Tier</label><select className="form-select" value={labTier} onChange={(e) => setLabTier(e.target.value as LabFacilityTier)}><option value="SMALL_LAB">Small Collection Center</option><option value="LARGE_LAB">Large Reference Hub</option></select></div>
+                <div className="form-group"><label className="form-label">Facility Type</label><select className="form-select" value={labTier} onChange={(e) => setLabTier(e.target.value as LabFacilityTier)}><option value="SMALL_LAB">Small Collection Center</option><option value="LARGE_LAB">Large Reference Hub</option></select></div>
                 <div className="form-group"><label className="form-label">Lab Name</label><input className="form-input" value={labName} onChange={(e) => setLabName(e.target.value)} required /></div>
                 <div className="form-group"><label className="form-label">City</label><input className="form-input" value={labCity} onChange={(e) => setLabCity(e.target.value)} required /></div>
                 <div className="form-group"><label className="form-label">Address</label><input className="form-input" value={labAddress} onChange={(e) => setLabAddress(e.target.value)} required /></div>
@@ -1726,7 +1883,7 @@ export function AdminDashboard({
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn-secondary" onClick={() => setShowAddLabModal(false)}>Cancel</button>
-                <button type="submit" className="btn-primary">Save to Firestore</button>
+                <button type="submit" className="btn-primary">Save Facility</button>
               </div>
             </form>
           </div>
@@ -1762,9 +1919,9 @@ export function AdminDashboard({
                 <div className="form-group"><label className="form-label">Test Code</label><input className="form-input" placeholder="e.g. CBC" value={testCode} onChange={(e) => setTestCode(e.target.value)} required /></div>
                 <div className="form-group"><label className="form-label">Test Name</label><input className="form-input" placeholder="Complete Blood Count" value={testName} onChange={(e) => setTestName(e.target.value)} required /></div>
                 <div className="form-group"><label className="form-label">Department</label><select className="form-select" value={testDept} onChange={(e) => setTestDept(e.target.value as DiagnosticDepartment)}><option value="Hematology">Hematology</option><option value="Biochemistry">Biochemistry</option><option value="Immunology">Immunology</option><option value="Molecular">Molecular</option><option value="Microbiology">Microbiology</option></select></div>
-                <div className="form-group"><label className="form-label">Specimen Type</label><select className="form-select" value={testSpecimen} onChange={(e) => setTestSpecimen(e.target.value as SpecimenType)}>{Object.values(SpecimenType).map((s) => <option key={s} value={s}>{s}</option>)}</select></div>
-                <div className="form-group"><label className="form-label">Tube Type</label><select className="form-select" value={testTube} onChange={(e) => setTestTube(e.target.value as TubeType)}>{Object.values(TubeType).map((t) => <option key={t} value={t}>{t}</option>)}</select></div>
-                <div className="form-group"><label className="form-label">Cold-Chain Band</label><select className="form-select" value={testTemp} onChange={(e) => setTestTemp(e.target.value as StorageTemperature)}>{Object.values(StorageTemperature).map((t) => <option key={t} value={t}>{t}</option>)}</select></div>
+                <div className="form-group"><label className="form-label">Specimen Type</label><select className="form-select" value={testSpecimen} onChange={(e) => setTestSpecimen(e.target.value as SpecimenType)}>{Object.values(SpecimenType).map((s) => <option key={s} value={s}>{formatLabel(s)}</option>)}</select></div>
+                <div className="form-group"><label className="form-label">Tube Type</label><select className="form-select" value={testTube} onChange={(e) => setTestTube(e.target.value as TubeType)}>{Object.values(TubeType).map((t) => <option key={t} value={t}>{formatLabel(t)}</option>)}</select></div>
+                <div className="form-group"><label className="form-label">Cold-Chain Band</label><select className="form-select" value={testTemp} onChange={(e) => setTestTemp(e.target.value as StorageTemperature)}>{Object.values(StorageTemperature).map((t) => <option key={t} value={t}>{formatLabel(t)}</option>)}</select></div>
                 <div className="form-group"><label className="form-label">B2B Rate (₹)</label><input type="number" className="form-input" value={testB2bPrice} onChange={(e) => setTestB2bPrice(Number(e.target.value))} /></div>
                 <div className="form-group"><label className="form-label">Retail MRP (₹) &amp; TAT Hours</label><div style={{ display: 'flex', gap: '8px' }}><input type="number" className="form-input" value={testMrp} onChange={(e) => setTestMrp(Number(e.target.value))} /><input type="number" className="form-input" value={testTat} onChange={(e) => setTestTat(Number(e.target.value))} /></div></div>
               </div>
@@ -1788,7 +1945,7 @@ export function AdminDashboard({
                     <label className="form-label">Select Phlebotomist</label>
                     <select className="form-select" value={assignPhleboId} onChange={(e) => setAssignPhleboId(e.target.value)}>
                       {phlebotomists.map((p) => (
-                        <option key={p.id} value={p.id}>{p.name} ({p.id}) — {p.status}</option>
+                        <option key={p.id} value={p.id}>{p.name} ({p.id}) — {formatLabel(p.status)}</option>
                       ))}
                     </select>
                   </div>
@@ -1800,17 +1957,17 @@ export function AdminDashboard({
         </div>
       )}
 
-      {/* MODAL: COURIER TELEMETRY */}
+      {/* MODAL: COURIER DETAILS */}
       {selectedCourier && (
         <div className="modal-overlay" onClick={() => setSelectedCourier(null)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header"><h3>Telemetry: {selectedCourier.name}</h3><button type="button" className="btn-secondary" onClick={() => setSelectedCourier(null)}>✕</button></div>
+            <div className="modal-header"><h3>Courier Details: {selectedCourier.name}</h3><button type="button" className="btn-secondary" onClick={() => setSelectedCourier(null)}>✕</button></div>
             <div className="modal-body">
               <p><strong>ID:</strong> {selectedCourier.id}</p>
               <p><strong>Location:</strong> {selectedCourier.currentLocation}</p>
-              <p><strong>Chiller Box Temp:</strong> {selectedCourier.chillerTempCelsius}°C</p>
+              <p><strong>Cooler Box Temp:</strong> {selectedCourier.chillerTempCelsius}°C</p>
               <p><strong>Battery:</strong> {selectedCourier.batteryPct}%</p>
-              <p><strong>Status:</strong> {selectedCourier.status}</p>
+              <p><strong>Status:</strong> {formatLabel(selectedCourier.status)}</p>
             </div>
           </div>
         </div>

@@ -71,7 +71,7 @@ export default function App() {
         <AuthGateScreen
           requiredRole={UserRole.ADMIN}
           portalTitle="Admin Control Tower"
-          portalSubtitle="Strict RBAC Platform Owner Operations & Provisioning"
+          portalSubtitle="Central Operations & Account Management"
           onShowAlert={(opts) => showDynamicAlert(opts)}
           onAuthenticated={(verified) => setSession(verified)}
         />

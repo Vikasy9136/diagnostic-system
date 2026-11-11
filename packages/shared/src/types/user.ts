@@ -61,17 +61,19 @@ export interface CreateManagedUserPayload {
 export interface EmailOtpSendPayload {
   email: string;
   portalRole?: UserRole;
+  clientType?: 'WEB' | 'MOBILE';
 }
 
 export interface EmailOtpVerifyPayload {
   email: string;
   otp: string;
   portalRole?: UserRole;
+  clientType?: 'WEB' | 'MOBILE';
 }
 
 export const ROLE_LABELS: Record<UserRole, string> = {
   [UserRole.ADMIN]: 'Platform Admin',
   [UserRole.SMALL_LAB]: 'Small Collection Lab',
-  [UserRole.LARGE_LAB]: 'Large Partner Reference Lab',
+  [UserRole.LARGE_LAB]: 'Large Reference Lab',
   [UserRole.PHLEBOTOMIST]: 'Field Phlebotomist',
 };

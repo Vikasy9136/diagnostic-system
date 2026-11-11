@@ -50,15 +50,14 @@ interface LoginPageProps {
 
 type AuthTabMode = 'password' | 'otp';
 
-const ROLE_META: {
+const WEB_ROLE_META: {
   role: UserRole;
   icon: string;
   tagline: string;
 }[] = [
-  { role: UserRole.ADMIN, icon: '🛡️', tagline: 'Network control & provisioning' },
-  { role: UserRole.SMALL_LAB, icon: '🏥', tagline: 'Bookings, patients & reports' },
-  { role: UserRole.LARGE_LAB, icon: '🔬', tagline: 'QC accessioning & analyzer worklist' },
-  { role: UserRole.PHLEBOTOMIST, icon: '🏍️', tagline: 'Pickups, barcodes, OTP & earnings' },
+  { role: UserRole.ADMIN, icon: '🛡️', tagline: 'Manage partners, live pickups & billing' },
+  { role: UserRole.SMALL_LAB, icon: '🏥', tagline: 'Book sample pickups, patients & reports' },
+  { role: UserRole.LARGE_LAB, icon: '🔬', tagline: 'Sample checks, testing & PDF reports' },
 ];
 
 export function LoginPage({
@@ -105,7 +104,7 @@ export function LoginPage({
     return () => clearInterval(t);
   }, [otpCooldown]);
 
-  async function verifyFirebaseUserAgainstSelectedRole(
+  async function verifySignedInUserAgainstSelectedRole(
     user: User,
     targetRole: UserRole
   ): Promise<void> {
@@ -114,9 +113,18 @@ export function LoginPage({
       await signOut(auth);
       onShowAlert({
         variant: 'error',
-        title: 'Verified Email Required',
-        message: 'Signed-in Firebase account does not contain an email address.',
+        title: 'Email Required',
+        message: 'Your sign-in account does not include an email address.',
       });
+      return;
+    }
+
+    if (targetRole === UserRole.PHLEBOTOMIST) {
+      await signOut(auth);
+      const msg =
+        'Field Phlebotomist accounts can only sign in using the LabSetu Mobile App, not on the website.';
+      setInlineError(msg);
+      onShowAlert({ variant: 'error', title: 'Mobile App Only', message: msg });
       return;
     }
 
@@ -131,62 +139,109 @@ export function LoginPage({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-Client-Platform': 'web',
           Authorization: `Bearer ${idToken}`,
         },
-        body: JSON.stringify({ requiredRole: targetRole, email }),
+        body: JSON.stringify({
+          requiredRole: targetRole,
+          email,
+          clientType: 'WEB',
+        }),
       });
 
       const json = await res.json().catch(() => null);
       if (res.ok && json?.data) {
         apiProfile = json.data as UserProfile;
-      } else if (res.status === 403 && json?.error?.code === 'ROLE_MISMATCH') {
-        const assignedRole = (json.error?.details?.assignedRole as UserRole) || UserRole.SMALL_LAB;
+      } else if (res.status === 403 && json?.error?.code === 'MOBILE_APP_ONLY') {
         await signOut(auth);
-        setSuggestedCorrectRole(assignedRole);
-        const msg = `${email} is provisioned ONLY for "${ROLE_LABELS[assignedRole]}" and cannot log in as "${ROLE_LABELS[targetRole]}".`;
+        setSuggestedCorrectRole(null);
+        const msg =
+          json.error?.message ||
+          'Field Phlebotomist accounts can only sign in using the LabSetu Mobile App, not on the website.';
         setInlineError(msg);
         onShowAlert({
           variant: 'error',
-          title: 'Strict Role Lock: Access Denied',
+          title: 'Mobile App Only',
           message: msg,
-          detail: `Assigned Role: ${ROLE_LABELS[assignedRole]} • Selected Role: ${ROLE_LABELS[targetRole]}`,
+        });
+        return;
+      } else if (res.status === 403 && json?.error?.code === 'ROLE_MISMATCH') {
+        const assignedRole = (json.error?.details?.assignedRole as UserRole) || UserRole.SMALL_LAB;
+        await signOut(auth);
+        if (assignedRole === UserRole.PHLEBOTOMIST) {
+          setSuggestedCorrectRole(null);
+          const msg =
+            'Field Phlebotomist accounts can only sign in using the LabSetu Mobile App, not on the website.';
+          setInlineError(msg);
+          onShowAlert({ variant: 'error', title: 'Mobile App Only', message: msg });
+          return;
+        }
+        setSuggestedCorrectRole(assignedRole);
+        const msg = `${email} is assigned to "${ROLE_LABELS[assignedRole]}" and cannot sign in to "${ROLE_LABELS[targetRole]}".`;
+        setInlineError(msg);
+        onShowAlert({
+          variant: 'error',
+          title: 'Wrong Portal Selected',
+          message: msg,
+          detail: `Your Account Role: ${ROLE_LABELS[assignedRole]} • Selected Portal: ${ROLE_LABELS[targetRole]}`,
         });
         return;
       } else if (res.status === 403 && json?.error?.code === 'ACCOUNT_SUSPENDED') {
         await signOut(auth);
         const msg =
           json.error?.message ||
-          `Access for ${email} has been suspended by Platform Admin.`;
+          `Your account (${email}) has been paused by Platform Admin.`;
         setInlineError(msg);
         onShowAlert({
           variant: 'error',
-          title: 'Account Suspended',
+          title: 'Account Paused',
+          message: msg,
+        });
+        return;
+      } else if (res.status === 403 && json?.error?.code === 'USER_NOT_PROVISIONED') {
+        await signOut(auth);
+        const msg =
+          json.error?.message ||
+          `Your email (${email}) has not been added yet. Please ask Platform Admin (${ADMIN_LOGIN_EMAIL}) to add your account first.`;
+        setInlineError(msg);
+        onShowAlert({
+          variant: 'error',
+          title: 'Account Not Added Yet',
           message: msg,
         });
         return;
       }
     } catch {
-      // Backend API optional; proceed with direct Firestore user_directory & Auth claims check
+      // Fall through to direct account record check
     }
 
     if (apiProfile) {
+      if (apiProfile.role === UserRole.PHLEBOTOMIST) {
+        await signOut(auth);
+        setSuggestedCorrectRole(null);
+        const msg =
+          'Field Phlebotomist accounts can only sign in using the LabSetu Mobile App, not on the website.';
+        setInlineError(msg);
+        onShowAlert({ variant: 'error', title: 'Mobile App Only', message: msg });
+        return;
+      }
       if (!apiProfile.isActive) {
         await signOut(auth);
         onShowAlert({
           variant: 'error',
-          title: 'Account Inactive',
-          message: `Account ${email} is currently deactivated.`,
+          title: 'Account Paused',
+          message: `Account ${email} is currently inactive.`,
         });
         return;
       }
       if (apiProfile.role !== targetRole) {
         await signOut(auth);
         setSuggestedCorrectRole(apiProfile.role);
-        const msg = `${email} is restricted to "${ROLE_LABELS[apiProfile.role]}". Select your assigned role card before signing in.`;
+        const msg = `${email} is registered as "${ROLE_LABELS[apiProfile.role]}". Please choose that role before signing in.`;
         setInlineError(msg);
         onShowAlert({
           variant: 'error',
-          title: 'Strict Role Lock: Access Denied',
+          title: 'Wrong Portal Selected',
           message: msg,
         });
         return;
@@ -206,7 +261,7 @@ export function LoginPage({
       return;
     }
 
-    // 2. Direct Cloud Firestore user_directory + Custom Claims check
+    // 2. Direct account lookup fallback
     let dirProfile: Partial<UserProfile> | null = null;
     try {
       const dirSnap = await getDoc(doc(db, 'user_directory', email));
@@ -228,11 +283,11 @@ export function LoginPage({
 
     if (dirProfile && dirProfile.isActive === false) {
       await signOut(auth);
-      const msg = `Account ${email} has been suspended. Contact Platform Admin (${ADMIN_LOGIN_EMAIL}).`;
+      const msg = `Your account (${email}) is currently paused. Please contact Platform Admin (${ADMIN_LOGIN_EMAIL}).`;
       setInlineError(msg);
       onShowAlert({
         variant: 'error',
-        title: 'Account Suspended',
+        title: 'Account Paused',
         message: msg,
       });
       return;
@@ -240,13 +295,27 @@ export function LoginPage({
 
     if (!resolvedRole) {
       await signOut(auth);
-      const msg = `Account (${email}) is not registered by Platform Admin. Only Admin-provisioned emails can access LabSetu dashboards.`;
+      const msg = `Your email (${email}) has not been added yet. Please ask Platform Admin (${ADMIN_LOGIN_EMAIL}) to create your account first.`;
       setInlineError(msg);
       onShowAlert({
         variant: 'error',
-        title: 'Account Not Provisioned',
+        title: 'Account Not Added Yet',
         message: msg,
-        detail: `Ask ${ADMIN_LOGIN_EMAIL} to add ${email} in Admin -> Users & Roles.`,
+        detail: `Contact ${ADMIN_LOGIN_EMAIL} to add ${email} under Team & Partner Accounts.`,
+      });
+      return;
+    }
+
+    if (resolvedRole === UserRole.PHLEBOTOMIST) {
+      await signOut(auth);
+      setSuggestedCorrectRole(null);
+      const msg =
+        'Field Phlebotomist accounts can only sign in using the LabSetu Mobile App, not on the website.';
+      setInlineError(msg);
+      onShowAlert({
+        variant: 'error',
+        title: 'Mobile App Only',
+        message: msg,
       });
       return;
     }
@@ -254,11 +323,11 @@ export function LoginPage({
     if (resolvedRole !== targetRole) {
       await signOut(auth);
       setSuggestedCorrectRole(resolvedRole);
-      const msg = `${email} is assigned role "${ROLE_LABELS[resolvedRole]}" — NOT "${ROLE_LABELS[targetRole]}". You cannot open another role's dashboard.`;
+      const msg = `${email} is assigned to "${ROLE_LABELS[resolvedRole]}" — not "${ROLE_LABELS[targetRole]}". You cannot open another role's dashboard.`;
       setInlineError(msg);
       onShowAlert({
         variant: 'error',
-        title: 'Strict Role Lock: Access Denied',
+        title: 'Wrong Portal Selected',
         message: msg,
         detail: `Please select "${ROLE_LABELS[resolvedRole]}" and sign in again.`,
       });
@@ -304,13 +373,13 @@ export function LoginPage({
         return;
       }
       try {
-        await verifyFirebaseUserAgainstSelectedRole(user, selectedRole);
+        await verifySignedInUserAgainstSelectedRole(user, selectedRole);
       } catch (err) {
         await signOut(auth);
         onShowAlert({
           variant: 'error',
-          title: 'Role Verification Error',
-          message: (err as Error).message || 'Could not verify assigned portal role.',
+          title: 'Account Check Failed',
+          message: (err as Error).message || 'Could not verify your account role.',
         });
       } finally {
         setCheckingExisting(false);
@@ -333,17 +402,17 @@ export function LoginPage({
       if (fbErr.code === 'auth/popup-blocked') {
         await signInWithRedirect(auth, googleProvider);
       } else if (fbErr.code === 'auth/popup-closed-by-user') {
-        setInlineError('Google sign-in popup was closed before completing.');
+        setInlineError('Google sign-in window was closed before finishing.');
       } else if (
         fbErr.code === 'auth/configuration-not-found' ||
         fbErr.code === 'auth/operation-not-allowed'
       ) {
         const msg =
-          'Enable Google Sign-In in Firebase Console -> Authentication -> Sign-in method -> Google.';
+          'Google Sign-In is temporarily unavailable. Please sign in with Email & Password or Email OTP.';
         setInlineError(msg);
-        onShowAlert({ variant: 'warning', title: 'Google Sign-In Setup Required', message: msg });
+        onShowAlert({ variant: 'warning', title: 'Google Sign-In Unavailable', message: msg });
       } else {
-        const msg = fbErr.message || 'Google sign-in failed.';
+        const msg = fbErr.message || 'Could not complete Google sign-in.';
         setInlineError(msg);
         onShowAlert({ variant: 'error', title: 'Google Sign-In Failed', message: msg });
       }
@@ -363,18 +432,18 @@ export function LoginPage({
       await signInWithEmailAndPassword(auth, loginEmail.trim(), loginPassword);
     } catch (err: unknown) {
       const fbErr = err as { code?: string; message?: string };
-      let msg = fbErr.message || 'Password sign-in failed.';
+      let msg = fbErr.message || 'Could not sign in with that email and password.';
       if (
         fbErr.code === 'auth/configuration-not-found' ||
         fbErr.code === 'auth/operation-not-allowed'
       ) {
-        msg = 'Enable Email/Password sign-in in Firebase Console Authentication settings.';
+        msg = 'Password sign-in is not available right now. Please sign in using Google or Email OTP.';
       } else if (
         fbErr.code === 'auth/invalid-credential' ||
         fbErr.code === 'auth/wrong-password' ||
         fbErr.code === 'auth/user-not-found'
       ) {
-        msg = `Invalid credentials for ${loginEmail.trim()}. Use "Forgot / Set Password" or sign in with Google / Email OTP.`;
+        msg = `Incorrect email or password for ${loginEmail.trim()}. Tap "Forgot / Set Password" or sign in with Google / Email OTP.`;
       }
       setInlineError(msg);
       onShowAlert({ variant: 'error', title: 'Sign In Unsuccessful', message: msg });
@@ -391,24 +460,24 @@ export function LoginPage({
       onShowAlert({
         variant: 'warning',
         title: 'Email Required',
-        message: 'Enter your registered email address before requesting password setup.',
+        message: 'Please enter your registered email address first.',
       });
       return;
     }
 
     try {
       await sendPasswordResetEmail(auth, email);
-      const msg = `Password setup / reset link dispatched to ${email}.`;
+      const msg = `We sent a password setup / reset link to ${email}. Please check your inbox and spam folder.`;
       setInlineSuccess(msg);
       onShowAlert({
         variant: 'success',
-        title: 'Password Email Dispatched',
+        title: 'Password Link Sent',
         message: msg,
       });
     } catch (err: unknown) {
       const msg = (err as Error).message || 'Could not send password reset email.';
       setInlineError(msg);
-      onShowAlert({ variant: 'error', title: 'Password Reset Failed', message: msg });
+      onShowAlert({ variant: 'error', title: 'Unable to Send Reset Link', message: msg });
     }
   }
 
@@ -419,7 +488,7 @@ export function LoginPage({
     setSuggestedCorrectRole(null);
     const normalized = otpEmail.trim().toLowerCase();
     if (!normalized || !normalized.includes('@')) {
-      setInlineError('Enter a valid Admin-provisioned email address.');
+      setInlineError('Please enter your registered email address.');
       return;
     }
 
@@ -427,30 +496,54 @@ export function LoginPage({
     try {
       const res = await fetch(`${API_BASE_URL}/auth/otp/send`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: normalized, portalRole: selectedRole }),
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Client-Platform': 'web',
+        },
+        body: JSON.stringify({
+          email: normalized,
+          portalRole: selectedRole,
+          clientType: 'WEB',
+        }),
       });
 
       const json = await res.json().catch(() => null);
       if (!res.ok) {
         const errCode = json?.error?.code;
+        if (errCode === 'MOBILE_APP_ONLY') {
+          setSuggestedCorrectRole(null);
+          const msg =
+            json?.error?.message ||
+            'Field Phlebotomist accounts can only sign in using the LabSetu Mobile App, not on the website.';
+          setInlineError(msg);
+          onShowAlert({ variant: 'error', title: 'Mobile App Only', message: msg });
+          return;
+        }
         if (errCode === 'ROLE_MISMATCH' && json?.error?.details?.assignedRole) {
           const assigned = json.error.details.assignedRole as UserRole;
+          if (assigned === UserRole.PHLEBOTOMIST) {
+            setSuggestedCorrectRole(null);
+            const msg =
+              'Field Phlebotomist accounts can only sign in using the LabSetu Mobile App, not on the website.';
+            setInlineError(msg);
+            onShowAlert({ variant: 'error', title: 'Mobile App Only', message: msg });
+            return;
+          }
           setSuggestedCorrectRole(assigned);
-          const msg = `${normalized} is assigned "${ROLE_LABELS[assigned]}" and cannot sign in under "${ROLE_LABELS[selectedRole]}".`;
+          const msg = `${normalized} is registered as "${ROLE_LABELS[assigned]}" and cannot sign in under "${ROLE_LABELS[selectedRole]}".`;
           setInlineError(msg);
           onShowAlert({
             variant: 'error',
-            title: 'Strict Role Lock: Access Denied',
+            title: 'Wrong Portal Selected',
             message: msg,
           });
           return;
         }
-        const errMsg = json?.error?.message || 'Unable to send Email OTP.';
+        const errMsg = json?.error?.message || 'Unable to send the verification email.';
         setInlineError(errMsg);
         onShowAlert({
           variant: 'error',
-          title: errCode === 'USER_NOT_PROVISIONED' ? 'Email Not Added by Admin' : 'OTP Request Rejected',
+          title: errCode === 'USER_NOT_PROVISIONED' ? 'Email Not Added Yet' : 'Could Not Send OTP',
           message: errMsg,
         });
         return;
@@ -458,17 +551,14 @@ export function LoginPage({
 
       setOtpSent(true);
       setOtpCooldown(60);
-      const deliveryNote =
-        json?.data?.deliveryMode === 'SMTP'
-          ? `6-digit verification OTP sent via email to ${normalized}.`
-          : `6-digit OTP issued for ${normalized}. Check the API server terminal or configure SMTP_PASS in .env for Gmail delivery.`;
+      const deliveryNote = `A 6-digit verification OTP has been sent to ${normalized}. Please check your inbox and spam folder.`;
       setInlineSuccess(deliveryNote);
-      onShowAlert({ variant: 'success', title: 'OTP Dispatched', message: deliveryNote });
+      onShowAlert({ variant: 'success', title: 'OTP Sent to Email', message: deliveryNote });
     } catch {
       const msg =
-        'Email OTP backend (/api/v1) is offline. Run `npm run dev` locally or deploy Firebase Cloud Functions, or sign in directly via Google or Email & Password.';
+        'Unable to send the verification code right now. Please check your internet connection or try Google / Password sign-in.';
       setInlineError(msg);
-      onShowAlert({ variant: 'warning', title: 'OTP Backend Offline', message: msg });
+      onShowAlert({ variant: 'warning', title: 'Email Service Unavailable', message: msg });
     } finally {
       setSubmitting(false);
     }
@@ -479,7 +569,7 @@ export function LoginPage({
     setInlineError(null);
     const normalized = otpEmail.trim().toLowerCase();
     if (otpCode.trim().length < 6) {
-      setInlineError('Enter all 6 digits of your Email OTP.');
+      setInlineError('Please enter all 6 digits of your OTP.');
       return;
     }
 
@@ -487,50 +577,49 @@ export function LoginPage({
     try {
       const res = await fetch(`${API_BASE_URL}/auth/otp/verify`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Client-Platform': 'web',
+        },
         body: JSON.stringify({
           email: normalized,
           otp: otpCode.trim(),
           portalRole: selectedRole,
+          clientType: 'WEB',
         }),
       });
       const json = await res.json().catch(() => null);
       if (!res.ok) {
-        const errMsg = json?.error?.message || 'OTP verification failed.';
+        const errCode = json?.error?.code;
+        if (errCode === 'MOBILE_APP_ONLY') {
+          setSuggestedCorrectRole(null);
+        }
+        const errMsg = json?.error?.message || 'OTP check failed.';
         setInlineError(errMsg);
-        onShowAlert({ variant: 'error', title: 'Invalid OTP', message: errMsg });
+        onShowAlert({
+          variant: 'error',
+          title: errCode === 'MOBILE_APP_ONLY' ? 'Mobile App Only' : 'Invalid OTP',
+          message: errMsg,
+        });
         return;
       }
 
       const customToken = json?.data?.customToken as string | null;
-      const devSessionToken = json?.data?.devSessionToken as string | undefined;
-      const profile = json?.data?.userProfile as UserProfile | undefined;
-
       if (customToken) {
         await signInWithCustomToken(auth, customToken);
         return;
       }
 
-      if (profile && devSessionToken && profile.role === selectedRole) {
-        onShowAlert({
-          variant: 'warning',
-          title: 'Direct Firestore Requires Firebase Auth',
-          message:
-            'OTP verified against API dev mode, but Firebase Admin serviceAccountKey.json is not configured yet for Custom Tokens. Use Google Sign-In or Email & Password so live Cloud Firestore reads/writes succeed!',
-        });
-        return;
-      }
-
       onShowAlert({
         variant: 'error',
-        title: 'Firebase Custom Token Missing',
-        message: 'Add serviceAccountKey.json to diagnostic-platform/ or sign in with Google / Password.',
+        title: 'Sign-In Incomplete',
+        message: 'Email OTP verified, but we could not finish signing you in. Please try signing in with Google or your password.',
       });
     } catch {
       onShowAlert({
         variant: 'error',
         title: 'Verification Error',
-        message: 'Unable to reach OTP verification endpoint.',
+        message: 'Could not reach the sign-in service. Please try again.',
       });
     } finally {
       setSubmitting(false);
@@ -541,9 +630,9 @@ export function LoginPage({
     return (
       <div className="portal-login-shell" style={{ justifyContent: 'center', alignItems: 'center' }}>
         <div className="admin-login-card" style={{ maxWidth: '420px', padding: '40px', textAlign: 'center' }}>
-          <h3 style={{ color: '#0F172A' }}>{LABSETU_THEME.brand.name} Role Gate</h3>
+          <h3 style={{ color: '#0F172A' }}>{LABSETU_THEME.brand.name} Sign-In</h3>
           <p style={{ color: '#64748B', fontSize: '0.86rem', marginTop: '8px' }}>
-            Verifying Firebase authentication &amp; strict role assignment...
+            Checking your account access...
           </p>
         </div>
       </div>
@@ -564,7 +653,7 @@ export function LoginPage({
         </button>
 
         <div style={{ color: '#99F6E4', fontSize: '0.8rem', fontWeight: 600 }}>
-          Firebase Project: <code>labsetu-diagnostics</code>
+          LabSetu Partner Access
         </div>
       </div>
 
@@ -574,19 +663,19 @@ export function LoginPage({
         <div className="role-selector-panel">
           <div>
             <div className="landing-eyebrow" style={{ marginBottom: '12px' }}>
-              Step 1 • Select Your Dashboard Role
+              Step 1 • Choose Your Portal
             </div>
             <h1 style={{ fontSize: '1.85rem', fontWeight: 800, lineHeight: 1.2 }}>
-              Strict Role-Locked Portal Access
+              Sign In to Your Assigned Workspace
             </h1>
             <p style={{ fontSize: '0.9rem', color: '#CBD5E1', marginTop: '8px', lineHeight: 1.55 }}>
-              Choose the exact dashboard role provisioned for your email by Platform Admin (
-              <strong style={{ color: '#FFFFFF' }}>{ADMIN_LOGIN_EMAIL}</strong>). Selecting an
-              unassigned role will deny access and immediately sign you out.
+              Select the exact role assigned to your email by Platform Admin (
+              <strong style={{ color: '#FFFFFF' }}>{ADMIN_LOGIN_EMAIL}</strong>). Choosing another
+              role will not grant access to a different dashboard.
             </p>
 
             <div className="role-select-cards">
-              {ROLE_META.map((item) => {
+              {WEB_ROLE_META.map((item) => {
                 const active = selectedRole === item.role;
                 return (
                   <button
@@ -608,30 +697,37 @@ export function LoginPage({
                       }
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                      <span style={{ fontSize: '1.35rem' }}>{item.icon}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ fontSize: '1.3rem' }}>{item.icon}</span>
+                        <span style={{ fontWeight: 700, fontSize: '0.96rem' }}>
+                          {ROLE_LABELS[item.role]}
+                        </span>
+                      </div>
                       {active && (
                         <span style={{ fontSize: '0.68rem', background: '#14B8A6', color: '#042F2E', fontWeight: 800, padding: '2px 8px', borderRadius: '999px' }}>
                           SELECTED
                         </span>
                       )}
                     </div>
-                    <div style={{ fontWeight: 700, fontSize: '0.95rem', marginBottom: '4px' }}>
-                      {ROLE_LABELS[item.role]}
-                    </div>
-                    <div style={{ fontSize: '0.76rem', color: '#CBD5E1' }}>
+                    <div style={{ fontSize: '0.78rem', color: '#CBD5E1' }}>
                       {item.tagline}
                     </div>
                   </button>
                 );
               })}
             </div>
+
+            <div className="phlebo-mobile-notice">
+              <strong>🏍️ Field Phlebotomists:</strong> Courier accounts can only sign in using the{' '}
+              <strong>LabSetu Mobile App</strong> and cannot log in through this website.
+            </div>
           </div>
 
           <div style={{ background: 'rgba(6, 34, 38, 0.55)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '12px', padding: '14px 16px', fontSize: '0.8rem', color: '#CBD5E1', lineHeight: 1.5 }}>
-            <strong style={{ color: '#5EEAD4' }}>Security Guarantee:</strong> Client-side selection
-            only sets the target portal filter. True authorization is enforced against Firestore{' '}
-            <code>user_directory</code> and Firebase Security Rules on every query.
+            <strong style={{ color: '#5EEAD4' }}>Protected Login:</strong> Selecting a role here
+            chooses the portal you wish to enter. Your registered account role is always verified
+            before opening any dashboard.
           </div>
         </div>
 
@@ -648,21 +744,21 @@ export function LoginPage({
                 Sign In • {ROLE_LABELS[selectedRole]}
               </div>
               <div style={{ fontSize: '0.74rem', color: '#7DD3FC' }}>
-                Step 2 • Verify Identity (Google, Password, or Email OTP)
+                Step 2 • Sign in with Google, Password, or Email OTP
               </div>
             </div>
           </div>
 
           <div className="admin-login-body">
             <div className="role-requirement-banner">
-              <span>Locked Role Target:</span>
+              <span>Selected Portal:</span>
               <strong>{ROLE_LABELS[selectedRole]}</strong>
             </div>
 
             {inlineError && (
               <div className="admin-auth-alert error">
                 <div>{inlineError}</div>
-                {suggestedCorrectRole && (
+                {suggestedCorrectRole && suggestedCorrectRole !== UserRole.PHLEBOTOMIST && (
                   <button
                     type="button"
                     className="btn-secondary"
@@ -673,7 +769,7 @@ export function LoginPage({
                       setInlineError(null);
                     }}
                   >
-                    Switch Role Card to {ROLE_LABELS[suggestedCorrectRole]} →
+                    Switch Portal to {ROLE_LABELS[suggestedCorrectRole]} →
                   </button>
                 )}
               </div>
@@ -735,7 +831,7 @@ export function LoginPage({
                     className="form-input"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="Enter Admin-provisioned email"
+                    placeholder="Enter your registered email"
                     required
                   />
                 </div>
@@ -798,7 +894,7 @@ export function LoginPage({
                   disabled={submitting}
                 >
                   {submitting
-                    ? 'Verifying Role...'
+                    ? 'Checking Account...'
                     : `Sign In to ${ROLE_LABELS[selectedRole]}`}
                 </button>
               </form>
@@ -818,7 +914,7 @@ export function LoginPage({
                     className="form-input"
                     value={otpEmail}
                     onChange={(e) => setOtpEmail(e.target.value)}
-                    placeholder="Enter Admin-provisioned email"
+                    placeholder="Enter your registered email"
                     disabled={otpSent}
                     required
                   />
@@ -827,7 +923,7 @@ export function LoginPage({
                 {otpSent && (
                   <div className="form-group">
                     <label className="form-label" htmlFor="otp-code">
-                      6-Digit Verification OTP
+                      6-Digit Email OTP
                     </label>
                     <input
                       id="otp-code"
@@ -849,9 +945,9 @@ export function LoginPage({
                   disabled={submitting}
                 >
                   {submitting
-                    ? 'Processing...'
+                    ? 'Please Wait...'
                     : otpSent
-                    ? `Verify OTP & Enter ${ROLE_LABELS[selectedRole]}`
+                    ? `Verify Code & Enter ${ROLE_LABELS[selectedRole]}`
                     : 'Send 6-Digit Email OTP'}
                 </button>
 

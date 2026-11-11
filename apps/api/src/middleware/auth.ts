@@ -51,7 +51,7 @@ export async function requireAuth(
         if (provisioned && !provisioned.isActive) {
           return next(
             new AppError(
-              `Account (${decoded.email}) is suspended by Platform Admin.`,
+              `Your account (${decoded.email}) is currently paused. Please contact LabSetu Admin.`,
               403,
               'ACCOUNT_SUSPENDED'
             )
@@ -68,7 +68,7 @@ export async function requireAuth(
         if (!tokenRole || !Object.values(UserRole).includes(tokenRole)) {
           return next(
             new AppError(
-              `Account (${decoded.email || decoded.uid}) has not been provisioned by Platform Admin (${config.admin.email}).`,
+              `Your account (${decoded.email || decoded.uid}) has not been added yet. Please ask LabSetu Admin (${config.admin.email}) to set up your access.`,
               403,
               'USER_NOT_PROVISIONED'
             )
@@ -87,7 +87,7 @@ export async function requireAuth(
         return next();
       } catch (err) {
         return next(
-          new AppError('Invalid or expired Firebase authentication token.', 401, 'UNAUTHORIZED', err)
+          new AppError('Your sign-in session has expired. Please sign in again.', 401, 'UNAUTHORIZED', err)
         );
       }
     }
@@ -100,7 +100,7 @@ export async function requireAuth(
         if (!currentProfile) {
           return next(
             new AppError(
-              `Account (${devOtpSession.email}) is no longer provisioned by Platform Admin.`,
+              `Your account (${devOtpSession.email}) is not currently active in LabSetu.`,
               403,
               'USER_NOT_PROVISIONED'
             )
@@ -109,7 +109,7 @@ export async function requireAuth(
         if (!currentProfile.isActive) {
           return next(
             new AppError(
-              `Account (${devOtpSession.email}) is suspended by Platform Admin.`,
+              `Your account (${devOtpSession.email}) is currently paused by LabSetu Admin.`,
               403,
               'ACCOUNT_SUSPENDED'
             )
@@ -138,7 +138,7 @@ export async function requireAuth(
         if (!provisioned) {
           return next(
             new AppError(
-              `Account (${email || uid}) is not provisioned by Platform Admin (${config.admin.email}).`,
+              `Your account (${email || uid}) has not been added yet. Please ask LabSetu Admin (${config.admin.email}) to set up your access.`,
               403,
               'USER_NOT_PROVISIONED'
             )
@@ -148,7 +148,7 @@ export async function requireAuth(
         if (!provisioned.isActive) {
           return next(
             new AppError(
-              `Account (${email}) is currently suspended by Platform Admin.`,
+              `Your account (${email}) is currently paused by LabSetu Admin.`,
               403,
               'ACCOUNT_SUSPENDED'
             )
@@ -166,7 +166,7 @@ export async function requireAuth(
       }
 
       return next(
-        new AppError('Invalid development authentication token.', 401, 'UNAUTHORIZED')
+        new AppError('Your sign-in session is invalid. Please sign in again.', 401, 'UNAUTHORIZED')
       );
     }
   }
@@ -187,7 +187,7 @@ export async function requireAuth(
     return next();
   }
 
-  return next(new AppError('Authentication required. Missing Bearer token.', 401, 'UNAUTHORIZED'));
+  return next(new AppError('Please sign in to continue.', 401, 'UNAUTHORIZED'));
 }
 
 /**
@@ -196,13 +196,13 @@ export async function requireAuth(
 export function requireRoles(...allowedRoles: UserRole[]) {
   return (req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
     if (!req.user) {
-      return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'));
+      return next(new AppError('Please sign in to continue.', 401, 'UNAUTHORIZED'));
     }
 
     if (!allowedRoles.includes(req.user.role)) {
       return next(
         new AppError(
-          `Forbidden. Requires one of [${allowedRoles.join(', ')}], got [${req.user.role}]`,
+          'You do not have permission to access this action.',
           403,
           'FORBIDDEN'
         )

@@ -6,6 +6,7 @@ import {
   DiagnosticReportRecord,
   DiagnosticTestItem,
   formatInr,
+  formatOrderStatus,
   isOrderCompleted,
   LABSETU_THEME,
   LabFacility,
@@ -110,6 +111,12 @@ export function SmallLabDashboard({
   const [bookingPriority, setBookingPriority] = useState<OrderPriority>(OrderPriority.ROUTINE);
   const [pickupSlot, setPickupSlot] = useState<string>('Within 45 Mins (Express)');
   const [submittingBooking, setSubmittingBooking] = useState(false);
+
+  const formatLabel = (raw: string) =>
+    raw
+      .replace(/_/g, ' ')
+      .toLowerCase()
+      .replace(/\b\w/g, (c) => c.toUpperCase());
 
   useEffect(() => {
     if (!session.firebaseUser) return;
@@ -264,8 +271,8 @@ export function SmallLabDashboard({
       setSelectedPatientId(saved.id);
       onShowAlert({
         variant: 'success',
-        title: 'Patient Added to Firestore',
-        message: `${saved.name} (${saved.id}) saved to your Small Lab registry.`,
+        title: 'Patient Saved',
+        message: `${saved.name} (${saved.id}) has been added to your patient directory.`,
       });
     } catch (err) {
       onShowAlert({
@@ -365,7 +372,7 @@ export function SmallLabDashboard({
       onShowAlert({
         variant: 'error',
         title: 'Booking Failed',
-        message: (err as Error).message || 'Unable to write booking to Firestore.',
+        message: (err as Error).message || 'Could not create the pickup booking.',
       });
     } finally {
       setSubmittingBooking(false);
@@ -508,7 +515,7 @@ export function SmallLabDashboard({
                   <div className="notif-list">
                     {notifications.length === 0 ? (
                       <div style={{ padding: '20px', textAlign: 'center', fontSize: '0.82rem', color: '#64748B' }}>
-                        No alerts in Firestore yet.
+                        No alerts yet.
                       </div>
                     ) : (
                       notifications.map((n) => (
@@ -520,7 +527,7 @@ export function SmallLabDashboard({
                           <div className="notif-item-title">{n.title}</div>
                           <div className="notif-item-msg">{n.message}</div>
                           <div className="notif-item-meta">
-                            <span>{n.category}</span>
+                            <span>{formatLabel(n.category)}</span>
                             <span>{new Date(n.createdAt).toLocaleString('en-IN')}</span>
                           </div>
                         </div>
@@ -552,7 +559,7 @@ export function SmallLabDashboard({
                 <div className="page-title-group">
                   <h1>Small Lab Dashboard</h1>
                   <p>
-                    {myLabFacility.name} ({myLabFacility.id}) — live Cloud Firestore orders &amp; custody
+                    {myLabFacility.name} ({myLabFacility.id}) — live pickup orders &amp; sample tracking
                   </p>
                 </div>
                 <div style={{ display: 'flex', gap: '10px' }}>
@@ -599,7 +606,7 @@ export function SmallLabDashboard({
                   <div className="kpi-body">
                     <span className="kpi-title">Registered Patients</span>
                     <span className="kpi-main-number">{patients.length}</span>
-                    <span className="kpi-sub-split">Saved in Firestore</span>
+                    <span className="kpi-sub-split">Saved at your center</span>
                   </div>
                 </div>
                 <div className="kpi-card-modern">
@@ -746,7 +753,7 @@ export function SmallLabDashboard({
                               <td>{o.targetLabName}</td>
                               <td>{o.specimens.map((s) => s.testCode).join(', ')}</td>
                               <td><code>{o.handoverOtp || '—'}</code></td>
-                              <td><span className="status-pill-blue">{o.status}</span></td>
+                              <td><span className="status-pill-blue">{formatOrderStatus(o.status)}</span></td>
                             </tr>
                           ))}
                         </tbody>
@@ -810,7 +817,7 @@ export function SmallLabDashboard({
                   <div>
                     <h2 className="card-top-title">Create Cold-Chain Pickup Booking</h2>
                     <p style={{ fontSize: '0.8rem', color: '#64748B' }}>
-                      Writes directly to Firestore `orders`, `custody_events`, `settlements` &amp; `notifications`
+                      Live bookings automatically update sample tracking, billing, and notifications
                     </p>
                   </div>
                 </div>
@@ -892,10 +899,10 @@ export function SmallLabDashboard({
                       value={bookingPriority}
                       onChange={(e) => setBookingPriority(e.target.value as OrderPriority)}
                     >
-                      <option value={OrderPriority.ROUTINE}>ROUTINE (Standard Cold-Chain)</option>
-                      <option value={OrderPriority.URGENT}>URGENT (Priority Batch)</option>
+                      <option value={OrderPriority.ROUTINE}>Routine (Standard Cold-Chain)</option>
+                      <option value={OrderPriority.URGENT}>Urgent (Priority Batch)</option>
                       <option value={OrderPriority.STAT_CRITICAL}>
-                        STAT CRITICAL (+{formatInr(commConfig.statSurchargeInr)})
+                        Critical Urgent (+{formatInr(commConfig.statSurchargeInr)})
                       </option>
                     </select>
                   </div>
@@ -924,7 +931,7 @@ export function SmallLabDashboard({
                     <option value="">Open Dispatch Pool (First Available Courier)</option>
                     {phlebotomists.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.name} ({p.id}) — {p.status} • {p.currentLocation}
+                        {p.name} ({p.id}) — {formatLabel(p.status)} • {p.currentLocation}
                       </option>
                     ))}
                   </select>
@@ -935,7 +942,7 @@ export function SmallLabDashboard({
                   {testCatalog.length === 0 ? (
                     <div className="empty-state-box">
                       <h4>Test Catalogue Is Empty</h4>
-                      <p>Ask Admin or a Reference Lab to publish active tests in `test_catalog`.</p>
+                      <p>Ask Admin or a Reference Lab to add tests to the test catalogue.</p>
                     </div>
                   ) : (
                     <div style={{ maxHeight: '220px', overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: '10px', padding: '8px' }}>
@@ -953,7 +960,7 @@ export function SmallLabDashboard({
                               <div style={{ flex: 1 }}>
                                 <strong>{test.code}</strong> — {test.name}
                                 <div style={{ fontSize: '0.73rem', color: '#64748B' }}>
-                                  {test.department} • {test.tubeType} • TAT {test.tatHours}h
+                                  {test.department} • {formatLabel(test.tubeType)} • TAT {test.tatHours}h
                                 </div>
                               </div>
                               <strong>{formatInr(test.b2bPriceInr)}</strong>
@@ -969,7 +976,7 @@ export function SmallLabDashboard({
                   className="btn-primary btn-full"
                   disabled={submittingBooking || verifiedLargeLabs.length === 0 || testCatalog.length === 0}
                 >
-                  {submittingBooking ? 'Creating Booking in Firestore...' : 'Dispatch Live Pickup Booking →'}
+                  {submittingBooking ? 'Creating Booking...' : 'Create Pickup Booking →'}
                 </button>
               </form>
 
@@ -1009,7 +1016,7 @@ export function SmallLabDashboard({
               <div className="card-top-header">
                 <div>
                   <h2 className="card-top-title">Patient Directory ({filteredPatients.length})</h2>
-                  <p style={{ fontSize: '0.8rem', color: '#64748B' }}>Scoped directly to {myLabFacility.id} in Firestore</p>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B' }}>Saved directly for {myLabFacility.name}</p>
                 </div>
                 <button type="button" className="btn-primary" onClick={() => setShowAddPatientModal(true)}>
                   + Add Patient
@@ -1074,7 +1081,7 @@ export function SmallLabDashboard({
               {testCatalog.length === 0 ? (
                 <div className="empty-state-box">
                   <h4>No Tests Published Yet</h4>
-                  <p>Admin or Large Reference Labs publish diagnostic tests into Firestore `test_catalog`.</p>
+                  <p>Tests and prices appear here as soon as Admin or Reference Labs add them.</p>
                 </div>
               ) : (
                 <div className="data-table-container">
@@ -1097,8 +1104,8 @@ export function SmallLabDashboard({
                           <td><strong>{t.code}</strong></td>
                           <td>{t.name}</td>
                           <td>{t.department}</td>
-                          <td>{t.tubeType} ({t.specimenType})</td>
-                          <td><span className="status-pill-blue">{t.temperatureRequirement}</span></td>
+                          <td>{formatLabel(t.tubeType)} ({formatLabel(t.specimenType)})</td>
+                          <td><span className="status-pill-blue">{formatLabel(t.temperatureRequirement)}</span></td>
                           <td>{t.tatHours} hrs</td>
                           <td><strong>{formatInr(t.b2bPriceInr)}</strong></td>
                           <td>
@@ -1133,7 +1140,7 @@ export function SmallLabDashboard({
               {verifiedLargeLabs.length === 0 ? (
                 <div className="empty-state-box">
                   <h4>No Verified Large Reference Labs Yet</h4>
-                  <p>Platform Admin adds and verifies partner testing labs in Firestore `labs`.</p>
+                  <p>Partner reference labs appear here once added and verified by Platform Admin.</p>
                 </div>
               ) : (
                 <div className="data-table-container">
@@ -1185,10 +1192,10 @@ export function SmallLabDashboard({
                   <h2 className="card-top-title">All Dispatch Bookings ({filteredOrders.length})</h2>
                   <p style={{ fontSize: '0.8rem', color: '#64748B' }}>Real-time tracking &amp; chain-of-custody logs</p>
                 </div>
-                <select className="form-select" style={{ width: '200px' }} value={orderFilter} onChange={(e) => setOrderFilter(e.target.value)}>
+                <select className="form-select" style={{ width: '210px' }} value={orderFilter} onChange={(e) => setOrderFilter(e.target.value)}>
                   <option value="ALL">All Statuses</option>
                   {Object.values(OrderStatus).map((st) => (
-                    <option key={st} value={st}>{st}</option>
+                    <option key={st} value={st}>{formatOrderStatus(st)}</option>
                   ))}
                 </select>
               </div>
@@ -1229,7 +1236,7 @@ export function SmallLabDashboard({
                             <td>{o.specimens.map((s) => s.testCode).join(', ')}</td>
                             <td>{o.phlebotomistName || 'Open Pool'}</td>
                             <td><code>{o.handoverOtp || '—'}</code></td>
-                            <td><span className="status-pill-blue">{o.status}</span></td>
+                            <td><span className="status-pill-blue">{formatOrderStatus(o.status)}</span></td>
                             <td style={{ display: 'flex', gap: '6px' }}>
                               <button type="button" className="btn-secondary" onClick={() => setCustodyModalOrder(o)}>
                                 Track Custody
@@ -1352,7 +1359,7 @@ export function SmallLabDashboard({
                           <td>{s.targetLabName}</td>
                           <td>{s.billingPeriod}</td>
                           <td><strong>{formatInr(s.grossAmountInr)}</strong></td>
-                          <td><span className={s.status === 'SETTLED' ? 'status-pill-green' : 'status-pill-amber'}>{s.status}</span></td>
+                          <td><span className={s.status === 'SETTLED' ? 'status-pill-green' : 'status-pill-amber'}>{formatLabel(s.status)}</span></td>
                         </tr>
                       ))}
                     </tbody>
@@ -1391,7 +1398,7 @@ export function SmallLabDashboard({
         <div className="modal-overlay" onClick={() => setShowAddPatientModal(false)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Register Patient in Firestore</h3>
+              <h3>Add New Patient</h3>
               <button type="button" className="btn-secondary" onClick={() => setShowAddPatientModal(false)}>✕</button>
             </div>
             <form onSubmit={(e) => void handleSavePatient(e)}>
@@ -1430,9 +1437,9 @@ export function SmallLabDashboard({
               ) : (
                 custodyModalOrder.custodyHistory.map((ev) => (
                   <div key={ev.id} style={{ padding: '10px 12px', borderLeft: '3px solid #0D9488', background: '#F8FAFC', borderRadius: '6px', marginBottom: '8px' }}>
-                    <div style={{ fontWeight: 700, fontSize: '0.84rem' }}>{ev.eventType}</div>
+                    <div style={{ fontWeight: 700, fontSize: '0.84rem' }}>{formatLabel(ev.eventType)}</div>
                     <div style={{ fontSize: '0.78rem', color: '#475569' }}>
-                      {ev.operatorName} ({ev.operatorRole}) {ev.temperatureCelsius !== undefined ? `• Temp: ${ev.temperatureCelsius}°C` : ''}
+                      {ev.operatorName} ({ROLE_LABELS[ev.operatorRole] || formatLabel(ev.operatorRole)}) {ev.temperatureCelsius !== undefined ? `• Temp: ${ev.temperatureCelsius}°C` : ''}
                     </div>
                     {ev.notes && <div style={{ fontSize: '0.76rem', color: '#64748B', marginTop: '2px' }}>{ev.notes}</div>}
                     <div style={{ fontSize: '0.72rem', color: '#94A3B8', marginTop: '4px' }}>{new Date(ev.timestamp).toLocaleString('en-IN')}</div>

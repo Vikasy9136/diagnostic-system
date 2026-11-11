@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { ApiResponse, CreateManagedUserPayload, UserProfile, UserRole } from '@diagnostic/shared';
+import { ApiResponse, CreateManagedUserPayload, ROLE_LABELS, UserProfile, UserRole } from '@diagnostic/shared';
 import { requireAuth, requireRoles } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import {
@@ -23,7 +23,7 @@ usersRouter.get('/', async (_req: Request, res: Response, next: NextFunction) =>
     const response: ApiResponse<UserProfile[]> = {
       success: true,
       data: users,
-      message: 'Provisioned platform users retrieved successfully',
+      message: 'Team and partner accounts loaded successfully',
       timestamp: new Date().toISOString(),
     };
     res.json(response);
@@ -41,7 +41,7 @@ usersRouter.post('/', async (req: Request, res: Response, next: NextFunction) =>
     const payload = req.body as CreateManagedUserPayload;
     if (!payload?.email || !payload?.displayName || !payload?.role) {
       return next(
-        new AppError('Missing required fields: email, displayName, and role', 400, 'BAD_REQUEST')
+        new AppError('Please fill in the email, full name, and role.', 400, 'BAD_REQUEST')
       );
     }
 
@@ -49,7 +49,7 @@ usersRouter.post('/', async (req: Request, res: Response, next: NextFunction) =>
     const response: ApiResponse<UserProfile> = {
       success: true,
       data: user,
-      message: `User ${user.email} provisioned with role ${user.role}`,
+      message: `Account created for ${user.email} as ${ROLE_LABELS[user.role]}`,
       timestamp: new Date().toISOString(),
     };
     res.status(201).json(response);

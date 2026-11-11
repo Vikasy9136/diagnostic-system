@@ -13,25 +13,28 @@ import {
 import { AdminDashboard } from './dashboards/AdminDashboard';
 import { SmallLabDashboard } from './dashboards/SmallLabDashboard';
 import { LargeLabDashboard } from './dashboards/LargeLabDashboard';
-import { PhleboDashboard } from './dashboards/PhleboDashboard';
 
 type RouteView = 'landing' | 'login' | 'dashboard';
 
 const ACTIVE_ROLE_STORAGE_KEY = 'labsetu_active_role';
 
-function isValidRole(value: string | null | undefined): value is UserRole {
+function isValidWebRole(value: string | null | undefined): value is UserRole {
   return (
     value === UserRole.ADMIN ||
     value === UserRole.SMALL_LAB ||
-    value === UserRole.LARGE_LAB ||
-    value === UserRole.PHLEBOTOMIST
+    value === UserRole.LARGE_LAB
   );
 }
 
-function parseBrowserRoute(): { view: RouteView; role: UserRole } {
+function parseBrowserRoute(): {
+  view: RouteView;
+  role: UserRole;
+  blockedPhleboParam: boolean;
+} {
   const path = window.location.pathname.toLowerCase();
   const params = new URLSearchParams(window.location.search);
   const queryRole = params.get('role');
+  const blockedPhleboParam = queryRole === UserRole.PHLEBOTOMIST;
   const storedRole = (() => {
     try {
       return window.sessionStorage.getItem(ACTIVE_ROLE_STORAGE_KEY);
@@ -40,19 +43,19 @@ function parseBrowserRoute(): { view: RouteView; role: UserRole } {
     }
   })();
 
-  const resolvedRole: UserRole = isValidRole(queryRole)
+  const resolvedRole: UserRole = isValidWebRole(queryRole)
     ? queryRole
-    : isValidRole(storedRole)
+    : isValidWebRole(storedRole)
     ? storedRole
-    : UserRole.ADMIN;
+    : UserRole.SMALL_LAB;
 
   if (path.startsWith('/dashboard')) {
-    return { view: 'dashboard', role: resolvedRole };
+    return { view: 'dashboard', role: resolvedRole, blockedPhleboParam };
   }
   if (path.startsWith('/login')) {
-    return { view: 'login', role: resolvedRole };
+    return { view: 'login', role: resolvedRole, blockedPhleboParam };
   }
-  return { view: 'landing', role: resolvedRole };
+  return { view: 'landing', role: resolvedRole, blockedPhleboParam };
 }
 
 export function App() {
@@ -88,6 +91,19 @@ export function App() {
     []
   );
 
+  useEffect(() => {
+    if (initialRoute.blockedPhleboParam) {
+      window.history.replaceState({}, '', `/login?role=${initialRoute.role}`);
+      showAlert({
+        variant: 'info',
+        title: 'Mobile App Only',
+        message:
+          'Field Phlebotomist accounts can only sign in using the LabSetu Mobile App, not on the website.',
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const navigate = useCallback((nextPath: string, replace = false) => {
     if (replace) {
       window.history.replaceState({}, '', nextPath);
@@ -112,20 +128,51 @@ export function App() {
 
   const handleGoToLogin = useCallback(
     (role?: UserRole) => {
-      const targetRole = role && isValidRole(role) ? role : selectedRole;
+      if (role === UserRole.PHLEBOTOMIST) {
+        showAlert({
+          variant: 'info',
+          title: 'Mobile App Only',
+          message:
+            'Field Phlebotomist accounts can only sign in using the LabSetu Mobile App, not on the website.',
+        });
+        return;
+      }
+      const targetRole = role && isValidWebRole(role) ? role : selectedRole;
       setSelectedRole(targetRole);
       navigate(`/login?role=${targetRole}`);
     },
-    [navigate, selectedRole]
+    [navigate, selectedRole, showAlert]
   );
 
-  const handleSelectRoleOnLogin = useCallback((role: UserRole) => {
-    setSelectedRole(role);
-    window.history.replaceState({}, '', `/login?role=${role}`);
-  }, []);
+  const handleSelectRoleOnLogin = useCallback(
+    (role: UserRole) => {
+      if (!isValidWebRole(role)) {
+        showAlert({
+          variant: 'info',
+          title: 'Mobile App Only',
+          message:
+            'Field Phlebotomist accounts can only sign in using the LabSetu Mobile App, not on the website.',
+        });
+        return;
+      }
+      setSelectedRole(role);
+      window.history.replaceState({}, '', `/login?role=${role}`);
+    },
+    [showAlert]
+  );
 
   const handleAuthenticated = useCallback(
     (verifiedSession: VerifiedPortalSession) => {
+      if (verifiedSession.profile.role === UserRole.PHLEBOTOMIST) {
+        void signOut(auth).catch(() => {});
+        showAlert({
+          variant: 'error',
+          title: 'Mobile App Only',
+          message:
+            'Field Phlebotomist accounts can only sign in using the LabSetu Mobile App, not on the website.',
+        });
+        return;
+      }
       try {
         window.sessionStorage.setItem(ACTIVE_ROLE_STORAGE_KEY, verifiedSession.profile.role);
       } catch {
@@ -135,7 +182,7 @@ export function App() {
       setSelectedRole(verifiedSession.profile.role);
       navigate(`/dashboard?role=${verifiedSession.profile.role}`, true);
     },
-    [navigate]
+    [navigate, showAlert]
   );
 
   const handleSignOut = useCallback(() => {
@@ -202,14 +249,6 @@ export function App() {
       case UserRole.LARGE_LAB:
         return (
           <LargeLabDashboard
-            session={session}
-            onSignOut={handleSignOut}
-            onShowAlert={showAlert}
-          />
-        );
-      case UserRole.PHLEBOTOMIST:
-        return (
-          <PhleboDashboard
             session={session}
             onSignOut={handleSignOut}
             onShowAlert={showAlert}

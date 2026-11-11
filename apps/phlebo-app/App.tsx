@@ -14,6 +14,7 @@ import {
   type CustodyEvent,
   CustodyEventType,
   formatInr,
+  formatOrderStatus,
   isOrderCompleted,
   NotificationCategory,
   NotificationChannel,
@@ -68,6 +69,16 @@ type ScreenType =
   | 'COLLECT_SAMPLE'
   | 'DROP_SAMPLE'
   | 'COMPLETED';
+
+function formatLabel(value?: string | null): string {
+  if (!value) return '—';
+  return value
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (ch) => ch.toUpperCase())
+    .replace(/\bEdta\b/g, 'EDTA')
+    .replace(/\bStat\b/g, 'STAT');
+}
 
 interface CompletedReceipt {
   orderNumber: string;
@@ -421,8 +432,8 @@ export default function App() {
     if (!effectivePhleboId) {
       showDynamicAlert({
         variant: 'warning',
-        title: 'Phlebotomist ID Required',
-        message: `Ask Platform Admin (${ADMIN_LOGIN_EMAIL}) to assign a phlebotomistId to ${phleboEmail} in Admin -> Users & Roles.`,
+        title: 'Courier Profile Needed',
+        message: `Ask Platform Admin (${ADMIN_LOGIN_EMAIL}) to assign a Courier ID to ${phleboEmail} under Team & Partner Accounts.`,
       });
       return;
     }
@@ -475,7 +486,7 @@ export default function App() {
       showDynamicAlert({
         variant: 'error',
         title: 'Claim Failed',
-        message: (err as Error).message || 'Could not claim this booking from Firestore.',
+        message: (err as Error).message || 'Could not claim this booking right now. Please try again.',
       });
     } finally {
       setSubmittingAction(false);
@@ -619,14 +630,14 @@ export default function App() {
       showDynamicAlert({
         variant: numericTemp < 2 || numericTemp > 8 ? 'warning' : 'success',
         title: 'Barcode Verified & Collected',
-        message: `Specimen ${cleanBarcode} marked PICKED_UP at ${numericTemp}°C.`,
+        message: `Specimen ${cleanBarcode} marked Picked Up at ${numericTemp}°C.`,
         detail: `Proceed to ${order.targetLabName} for 5-digit Handover OTP.`,
       });
     } catch (err) {
       showDynamicAlert({
         variant: 'error',
         title: 'Collection Update Failed',
-        message: (err as Error).message || 'Could not update pickup in Firestore.',
+        message: (err as Error).message || 'Could not save pickup update. Please try again.',
       });
     } finally {
       setSubmittingAction(false);
@@ -719,7 +730,7 @@ export default function App() {
       showDynamicAlert({
         variant: 'error',
         title: 'Drop Verification Failed',
-        message: (err as Error).message || 'Could not update delivery in Firestore.',
+        message: (err as Error).message || 'Could not save delivery update. Please try again.',
       });
     } finally {
       setSubmittingAction(false);
@@ -730,8 +741,8 @@ export default function App() {
     if (!effectivePhleboId) {
       showDynamicAlert({
         variant: 'warning',
-        title: 'Missing Phlebotomist Fleet ID',
-        message: `Ask Platform Admin (${ADMIN_LOGIN_EMAIL}) to assign your phlebotomistId in Admin -> Phlebotomists before toggling duty state.`,
+        title: 'Courier Profile Needed',
+        message: `Ask Platform Admin (${ADMIN_LOGIN_EMAIL}) to assign your Courier ID before changing your duty status.`,
       });
       return;
     }
@@ -743,16 +754,18 @@ export default function App() {
       });
       showDynamicAlert({
         variant: 'success',
-        title: 'Shift Status Updated',
-        message: `Live duty status set to ${nextStatus} in Cloud Firestore.`,
+        title: 'Duty Status Updated',
+        message: `Live duty status updated to ${
+          nextStatus === 'ONLINE' ? 'On Duty' : nextStatus === 'BREAK' ? 'On Break' : 'Off Duty'
+        }.`,
       });
     } catch (err) {
       showDynamicAlert({
         variant: 'warning',
-        title: 'Fleet Record Update Blocked',
+        title: 'Status Update Blocked',
         message:
           (err as Error).message ||
-          'Ensure Admin has initialized your Phlebotomist profile document in Firestore.',
+          'Please ask Platform Admin to finish setting up your courier profile.',
       });
     }
   }
@@ -762,7 +775,7 @@ export default function App() {
       variant: 'confirm',
       title: 'Trigger Cold-Chain Emergency SOS?',
       message:
-        'This writes a CRITICAL alert + email directly to Platform Admin Operations Desk for backup courier dispatch.',
+        'This sends an urgent alert and email directly to the Platform Operations Desk for backup courier dispatch.',
       confirmLabel: 'Dispatch SOS',
       cancelLabel: 'Cancel',
       onConfirm: () => {
@@ -798,7 +811,7 @@ export default function App() {
             showDynamicAlert({
               variant: 'error',
               title: 'Emergency SOS Sent to Admin',
-              message: `Critical alert & email queued in Cloud Firestore for ${ADMIN_LOGIN_EMAIL}.`,
+              message: `Urgent alert and email sent to ${ADMIN_LOGIN_EMAIL}.`,
               detail: `Courier ID: ${effectivePhleboId || phleboEmail}`,
             });
           } catch (err) {
@@ -835,7 +848,7 @@ export default function App() {
               <View>
                 <Text style={styles.greetingTitle}>Hello, {phleboFirstName}</Text>
                 <Text style={styles.greetingSubtitle}>
-                  Field Phlebotomist • {effectivePhleboId || 'ID Unassigned'}
+                  Field Phlebotomist • {effectivePhleboId || 'ID Pending'}
                 </Text>
               </View>
             </View>
@@ -853,12 +866,18 @@ export default function App() {
               ]}
               onPress={() => void handleShiftUpdate(isOnline ? 'OFFLINE' : 'ONLINE')}
             >
-              <Text style={styles.onlinePillText}>{dutyStatus}</Text>
+              <Text style={styles.onlinePillText}>
+                {dutyStatus === 'ONLINE'
+                  ? 'On Duty'
+                  : dutyStatus === 'BREAK'
+                  ? 'On Break'
+                  : 'Off Duty'}
+              </Text>
             </TouchableOpacity>
           </View>
 
           <View style={styles.summaryCard}>
-            <Text style={styles.summaryTitle}>Today&apos;s Live Summary (Firestore)</Text>
+            <Text style={styles.summaryTitle}>Today&apos;s Live Summary</Text>
             <View style={styles.summaryMetricsRow}>
               <View style={styles.summaryMetricCol}>
                 <Text style={styles.metricNumber}>{metrics.todayOrdersCount}</Text>
@@ -884,9 +903,9 @@ export default function App() {
           {!effectivePhleboId ? (
             <View style={styles.warningBox}>
               <Text style={styles.warningBoxText}>
-                Your account does not have a phlebotomistId yet. Ask Platform Admin (
-                {ADMIN_LOGIN_EMAIL}) to assign one in Users &amp; Roles so you can claim
-                bookings.
+                Your account does not have a Courier ID yet. Ask Platform Admin (
+                {ADMIN_LOGIN_EMAIL}) to assign one under Team &amp; Partner Accounts so you
+                can claim bookings.
               </Text>
             </View>
           ) : null}
@@ -956,7 +975,7 @@ export default function App() {
                   <View style={styles.bookingCardTop}>
                     <View>
                       <Text style={styles.bookingTitle}>
-                        {isOpenPool ? 'Open Pickup Request' : order.status}
+                        {isOpenPool ? 'Open Pickup Request' : formatOrderStatus(order.status)}
                       </Text>
                       <Text style={styles.bookingId}>
                         ID: {order.orderNumber} • {order.patient.pseudonym}
@@ -964,7 +983,9 @@ export default function App() {
                     </View>
                     <View style={{ alignItems: 'flex-end' }}>
                       <View style={styles.pickupTimeBadge}>
-                        <Text style={styles.pickupTimeText}>{order.priority}</Text>
+                        <Text style={styles.pickupTimeText}>
+                          {formatLabel(order.priority)}
+                        </Text>
                       </View>
                       <Text style={styles.bookingPrice}>
                         {formatInr(order.courierFeeInr || 0)}
@@ -1033,7 +1054,9 @@ export default function App() {
                       <Text style={styles.historyCardTemp}>
                         Delivered {order.arrivalTemperatureCelsius ?? '—'}°C
                       </Text>
-                      <Text style={styles.historyCardTests}>{order.status}</Text>
+                      <Text style={styles.historyCardTests}>
+                        {formatOrderStatus(order.status)}
+                      </Text>
                     </View>
                   )}
                 </View>
@@ -1084,7 +1107,7 @@ export default function App() {
                 <Text style={styles.timelineLabel}>Patient Case</Text>
                 <Text style={styles.timelineTitle}>{selectedOrder.patient.pseudonym}</Text>
                 <Text style={styles.timelineSub}>
-                  {selectedOrder.patient.age} yrs • {selectedOrder.patient.gender}
+                  {selectedOrder.patient.age} yrs • {formatLabel(selectedOrder.patient.gender)}
                 </Text>
               </View>
               {selectedOrder.pickupLocation.contactPhone ? (
@@ -1120,13 +1143,13 @@ export default function App() {
             <Text style={styles.infoCardLabel}>Required Diagnostic Specimens</Text>
             <Text style={styles.infoCardValue}>
               {selectedOrder.specimens
-                .map((s) => `${s.testCode} (${s.tubeType}) [${s.barcode}]`)
+                .map((s) => `${s.testCode} (${formatLabel(s.tubeType)}) [${s.barcode}]`)
                 .join('\n')}
             </Text>
             <View style={{ height: 1, backgroundColor: COLORS.borderLight, marginVertical: 12 }} />
             <Text style={styles.infoCardLabel}>Courier Fee • Priority</Text>
             <Text style={[styles.infoCardValue, { color: COLORS.primaryTeal }]}>
-              {formatInr(selectedOrder.courierFeeInr || 0)} • {selectedOrder.priority}
+              {formatInr(selectedOrder.courierFeeInr || 0)} • {formatLabel(selectedOrder.priority)}
             </Text>
           </View>
 
@@ -1203,7 +1226,7 @@ export default function App() {
             onPress={() => void handleConfirmCollection(selectedOrder)}
           >
             <Text style={styles.ctaButtonText}>
-              {submittingAction ? 'Saving to Firestore...' : 'Confirm Pickup & Log Custody ✓'}
+              {submittingAction ? 'Saving Update...' : 'Confirm Pickup & Log Custody ✓'}
             </Text>
           </TouchableOpacity>
 
@@ -1404,7 +1427,7 @@ export default function App() {
         <View style={styles.appHeaderBar}>
           <Text style={styles.appHeaderTitle}>My Bookings</Text>
           <Text style={styles.appHeaderSubtitle}>
-            Live Firestore collection &amp; handover history
+            Live collection &amp; handover history
           </Text>
         </View>
 
@@ -1498,7 +1521,7 @@ export default function App() {
                             },
                           ]}
                         >
-                          ● {item.status}
+                          ● {formatOrderStatus(item.status)}
                         </Text>
                       </View>
                     </View>
@@ -1558,7 +1581,7 @@ export default function App() {
         <View style={styles.heroHeader}>
           <Text style={styles.greetingTitle}>Earnings &amp; Settlements</Text>
           <Text style={styles.greetingSubtitle}>
-            Calculated live from Firestore `orders` &amp; `settlements`
+            Live trip payouts &amp; settled statements
           </Text>
 
           <View style={[styles.summaryCard, { marginTop: 16 }]}>
@@ -1653,7 +1676,11 @@ export default function App() {
                     {order.smallLabName} → {order.targetLabName}
                   </Text>
                   <Text style={styles.tripLedgerBase}>
-                    {settled ? 'SETTLED BY ADMIN' : delivered ? 'DELIVERED • PENDING SETTLEMENT' : order.status}
+                    {settled
+                      ? 'Settled by Admin'
+                      : delivered
+                      ? 'Delivered • Pending Payout'
+                      : formatOrderStatus(order.status)}
                   </Text>
                 </View>
                 <Text style={styles.tripLedgerFee}>{formatInr(amountInr)}</Text>
@@ -1680,20 +1707,20 @@ export default function App() {
               {phleboName}
             </Text>
             <Text style={styles.greetingSubtitle}>
-              ID: {effectivePhleboId || 'Unassigned'} • {phleboEmail}
+              Courier ID: {effectivePhleboId || 'Not Assigned'} • {phleboEmail}
             </Text>
             <View style={[styles.onlinePill, { backgroundColor: '#064E3B', marginTop: 10 }]}>
               <Text style={styles.onlinePillText}>
                 {myPhleboProfile
                   ? `★ ${myPhleboProfile.rating.toFixed(1)} (${completedAssignedOrders.length} Delivered)`
-                  : 'Awaiting Admin Fleet Record'}
+                  : 'Waiting for Courier Profile Setup'}
               </Text>
             </View>
           </View>
         </View>
 
         <View style={styles.bodyContainer}>
-          <Text style={styles.sectionHeaderTitle}>Shift Status (Live Firestore Sync)</Text>
+          <Text style={styles.sectionHeaderTitle}>Duty Status</Text>
           <View style={styles.shiftSelectorRow}>
             {(
               [
@@ -1741,7 +1768,7 @@ export default function App() {
                 <Text style={styles.equipmentSub}>
                   {myPhleboProfile
                     ? `Temp: ${myPhleboProfile.chillerTempCelsius}°C • Battery: ${myPhleboProfile.batteryPct}%`
-                    : 'Ask Platform Admin to assign hardware in Admin -> Phlebotomists'}
+                    : 'Ask Platform Admin to assign equipment under Field Phlebotomists'}
                 </Text>
               </View>
             </View>
@@ -1756,7 +1783,7 @@ export default function App() {
               <View style={{ flex: 1, marginLeft: 10 }}>
                 <Text style={styles.equipmentTitle}>Assigned Vehicle</Text>
                 <Text style={styles.equipmentSub}>
-                  {myPhleboProfile?.vehicleInfo || 'Awaiting Admin Vehicle Assignment'}
+                  {myPhleboProfile?.vehicleInfo || 'Waiting for Vehicle Assignment'}
                 </Text>
               </View>
             </View>
@@ -1772,7 +1799,7 @@ export default function App() {
                 <Text style={styles.equipmentTitle}>Coverage Zone &amp; Verification</Text>
                 <Text style={styles.equipmentSub}>
                   {myPhleboProfile?.currentLocation || 'Unassigned Zone'} •{' '}
-                  {myPhleboProfile?.verified ? 'VERIFIED' : 'PENDING'}
+                  {myPhleboProfile?.verified ? 'Verified' : 'Pending Review'}
                 </Text>
               </View>
             </View>
@@ -1789,7 +1816,7 @@ export default function App() {
           </View>
 
           <Text style={styles.versionFootnote}>
-            LabSetu Phlebotomist Companion • Firebase Project: labsetu-diagnostics
+            LabSetu Phlebotomist App • Live Field Operations
           </Text>
         </View>
       </ScrollView>
