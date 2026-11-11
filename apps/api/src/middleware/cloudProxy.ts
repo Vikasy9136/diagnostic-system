@@ -15,13 +15,29 @@ export async function forwardToCloudApiIfLocalMock(
     return next();
   }
 
-  // Only proxy /api/v1/* API paths except local health status
+  // Only proxy /api/* and /api/v1/* API paths except local health status
   if (req.originalUrl.startsWith('/api/v1/health')) {
     return next();
   }
 
+  // Avoid proxying pure stateless Razorpay unit checks if no booking/auth token attached so local Express test works standalone even offline
+  if (
+    (req.originalUrl === '/api/create-order' || req.originalUrl === '/api/verify-payment') &&
+    !req.headers.authorization &&
+    !req.body?.bookingId &&
+    !req.body?.settlementId
+  ) {
+    return next();
+  }
+
   const baseUrl = config.cloudFunctionsApiUrl.replace(/\/+$/, '');
-  const targetUrl = `${baseUrl}${req.originalUrl}`;
+  const mappedPath =
+    req.originalUrl === '/api/create-order'
+      ? '/api/v1/payments/create-order'
+      : req.originalUrl === '/api/verify-payment'
+      ? '/api/v1/payments/verify-payment'
+      : req.originalUrl;
+  const targetUrl = `${baseUrl}${mappedPath}`;
 
   try {
     const forwardHeaders: Record<string, string> = {

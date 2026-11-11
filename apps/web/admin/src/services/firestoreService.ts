@@ -27,6 +27,8 @@ import {
   OrderPriority,
   OrderStatus,
   type PatientRecord,
+  type PayoutProfile,
+  type PayoutRecord,
   type PhlebotomistProfile,
   type PhlebotomistShiftStatus,
   type PickupOrder,
@@ -358,6 +360,43 @@ export function subscribeSettlements(
   );
 }
 
+export function subscribePayouts(
+  profile: UserProfile,
+  onData: (list: PayoutRecord[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  const colRef = collection(db, 'payouts');
+  let q = query(colRef);
+
+  if (profile.role === UserRole.LARGE_LAB && profile.labId) {
+    q = query(
+      colRef,
+      where('recipientRole', '==', 'LARGE_LAB'),
+      where('recipientId', '==', profile.labId)
+    );
+  } else if (profile.role === UserRole.PHLEBOTOMIST && profile.phlebotomistId) {
+    q = query(
+      colRef,
+      where('recipientRole', '==', 'PHLEBOTOMIST'),
+      where('recipientId', '==', profile.phlebotomistId)
+    );
+  } else if (profile.role === UserRole.SMALL_LAB) {
+    onData([]);
+    return () => {};
+  }
+
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list = snap.docs
+        .map((d) => ({ id: d.id, ...(d.data() as Omit<PayoutRecord, 'id'>) }))
+        .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      onData(list);
+    },
+    (err) => onError?.(err)
+  );
+}
+
 export function subscribeCustodyEvents(
   onData: (list: CustodyEvent[]) => void,
   onError?: (err: Error) => void
@@ -656,6 +695,7 @@ export async function updateLabOperationsProfile(
     nablNumber?: string;
     cutoffWindow?: string;
     courierEtaMins?: number;
+    payoutProfile?: PayoutProfile;
   }
 ): Promise<void> {
   await updateDoc(doc(db, 'labs', labId), {
@@ -857,6 +897,7 @@ export async function createLiveBooking(params: {
     scheduledPickupAt: params.scheduledPickupAt,
     totalAmountInr,
     courierFeeInr,
+    paymentStatus: 'UNPAID',
     handoverOtp,
     department: params.selectedTests[0]?.department || 'Pathology',
     createdAt: now,
@@ -881,6 +922,9 @@ export async function createLiveBooking(params: {
     labPayoutInr,
     phleboPayoutInr: courierFeeInr,
     billingPeriod: currentBillingPeriod(),
+    paymentStatus: 'UNPAID',
+    labPayoutStatus: 'PENDING',
+    phleboPayoutStatus: 'PENDING',
     status: 'PENDING',
     createdAt: now,
     updatedAt: now,

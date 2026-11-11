@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Linking,
+  Modal,
+  Platform,
   StyleSheet,
   Text,
   View,
@@ -20,6 +23,8 @@ import {
   NotificationChannel,
   NotificationPriority,
   OrderStatus,
+  type PayoutProfile,
+  type PayoutRecord,
   type PhlebotomistProfile,
   type PhlebotomistShiftStatus,
   type PickupOrder,
@@ -48,6 +53,11 @@ import {
   PhleboAuthGate,
   type VerifiedPhleboSession,
 } from './components/PhleboAuthGate';
+import {
+  checkPhleboPaymentLinkStatus,
+  createPhleboMobilePaymentLink,
+  startPhleboWebCheckout,
+} from './services/razorpayMobile';
 
 const COLORS = {
   primaryTeal: '#0D9488',
@@ -98,7 +108,27 @@ export default function App() {
   // Live Cloud Firestore Data States (ZERO hardcoded or dummy data)
   const [orders, setOrders] = useState<PickupOrder[]>([]);
   const [settlements, setSettlements] = useState<SettlementRecord[]>([]);
+  const [payouts, setPayouts] = useState<PayoutRecord[]>([]);
   const [myPhleboProfile, setMyPhleboProfile] = useState<PhlebotomistProfile | null>(null);
+
+  // Payment collection & partner payout profile states
+  const [collectingOrderId, setCollectingOrderId] = useState<string | null>(null);
+  const [activePaymentLink, setActivePaymentLink] = useState<{
+    orderId: string;
+    orderNumber: string;
+    settlementId: string;
+    paymentLinkId: string;
+    shortUrl: string;
+    amountInr: number;
+  } | null>(null);
+  const [verifyingLinkPayment, setVerifyingLinkPayment] = useState(false);
+
+  const [payoutMethod, setPayoutMethod] = useState<'UPI' | 'BANK_TRANSFER'>('UPI');
+  const [payoutAccountName, setPayoutAccountName] = useState('');
+  const [payoutUpiId, setPayoutUpiId] = useState('');
+  const [payoutBankAccount, setPayoutBankAccount] = useState('');
+  const [payoutIfsc, setPayoutIfsc] = useState('');
+  const [savingPayoutProfile, setSavingPayoutProfile] = useState(false);
 
   // Selected trip & workflow form state
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
@@ -152,7 +182,9 @@ export default function App() {
           setSession(null);
           setOrders([]);
           setSettlements([]);
+          setPayouts([]);
           setMyPhleboProfile(null);
+          setActivePaymentLink(null);
           setSelectedOrderId(null);
           setBottomTab('home');
           setCurrentScreen('BOOKING_REQUESTS');
@@ -172,6 +204,7 @@ export default function App() {
     if (!session?.firebaseUser) {
       setOrders([]);
       setSettlements([]);
+      setPayouts([]);
       setMyPhleboProfile(null);
       return;
     }
@@ -240,19 +273,6 @@ export default function App() {
           }
         })
       );
-
-      // 4. Live settlements for this phlebotomist
-      unsubs.push(
-        onSnapshot(
-          query(collection(db, 'settlements'), where('phlebotomistId', '==', myPhleboId)),
-          (snap) => {
-            const list = snap.docs
-              .map((d) => ({ id: d.id, ...(d.data() as Omit<SettlementRecord, 'id'>) }))
-              .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-            setSettlements(list);
-          }
-        )
-      );
     } else if (phleboEmail) {
       unsubs.push(
         onSnapshot(
@@ -277,6 +297,65 @@ export default function App() {
   }, [session?.firebaseUser, myPhleboId, phleboEmail]);
 
   const effectivePhleboId = myPhleboId || myPhleboProfile?.id || '';
+
+  // Subscribe live to courier settlements & released payouts
+  useEffect(() => {
+    if (!session?.firebaseUser || !effectivePhleboId) {
+      setSettlements([]);
+      setPayouts([]);
+      return;
+    }
+
+    const unsubSettlements = onSnapshot(
+      query(collection(db, 'settlements'), where('phlebotomistId', '==', effectivePhleboId)),
+      (snap) => {
+        const list = snap.docs
+          .map((d) => ({ id: d.id, ...(d.data() as Omit<SettlementRecord, 'id'>) }))
+          .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        setSettlements(list);
+      },
+      () => {
+        setSettlements([]);
+      }
+    );
+
+    const unsubPayouts = onSnapshot(
+      query(
+        collection(db, 'payouts'),
+        where('recipientRole', '==', 'PHLEBOTOMIST'),
+        where('recipientId', '==', effectivePhleboId)
+      ),
+      (snap) => {
+        const list = snap.docs
+          .map((d) => ({ id: d.id, ...(d.data() as Omit<PayoutRecord, 'id'>) }))
+          .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        setPayouts(list);
+      },
+      () => {
+        setPayouts([]);
+      }
+    );
+
+    return () => {
+      unsubSettlements();
+      unsubPayouts();
+    };
+  }, [session?.firebaseUser, effectivePhleboId]);
+
+  // Populate payout account settings whenever fleet profile updates
+  useEffect(() => {
+    const pp = myPhleboProfile?.payoutProfile;
+    if (!pp) {
+      setPayoutAccountName((prev) => prev || phleboName);
+      return;
+    }
+    setPayoutMethod(pp.preferredMethod || (pp.bankAccountLast4 && !pp.upiId ? 'BANK_TRANSFER' : 'UPI'));
+    setPayoutAccountName(pp.accountHolderName || phleboName);
+    setPayoutUpiId(pp.upiId || '');
+    setPayoutBankAccount(pp.bankAccountLast4 ? `••••${pp.bankAccountLast4}` : '');
+    setPayoutIfsc(pp.ifscCode || '');
+  }, [myPhleboProfile?.payoutProfile, phleboName]);
+
   const dutyStatus: PhlebotomistShiftStatus = myPhleboProfile?.status || 'ONLINE';
   const isOnline = dutyStatus === 'ONLINE';
 
@@ -325,22 +404,29 @@ export default function App() {
     [orders, selectedOrderId]
   );
 
-  // Merge live settlements with handled orders for accurate earnings computation
+  // Merge live settlements & payouts with handled orders for accurate earnings computation
   const earningRows = useMemo(() => {
     const stlMap = new Map(settlements.map((s) => [s.orderId, s]));
+    const payoutMap = new Map(payouts.map((p) => [p.orderId, p]));
     return myAssignedOrders
       .filter((o) => o.status !== OrderStatus.CANCELLED && o.status !== OrderStatus.REJECTED)
       .map((order) => {
         const stl = stlMap.get(order.id);
-        const amountInr = stl?.phleboPayoutInr ?? order.courierFeeInr ?? 0;
-        const settled = stl?.status === 'SETTLED';
+        const payout = payoutMap.get(order.id);
+        const amountInr = stl?.phleboPayoutInr ?? payout?.amountInr ?? order.courierFeeInr ?? 0;
+        const settled =
+          stl?.phleboPayoutStatus === 'PAID' ||
+          stl?.status === 'SETTLED' ||
+          Boolean(payout);
+        const payoutRef = stl?.phleboPayoutRef || payout?.referenceId;
+        const customerPaid = order.paymentStatus === 'PAID' || stl?.paymentStatus === 'PAID';
         const delivered =
           order.status === OrderStatus.DELIVERED_TO_LAB ||
           order.status === OrderStatus.UNDER_ANALYSIS ||
           isOrderCompleted(order.status);
-        return { order, stl, amountInr, settled, delivered };
+        return { order, stl, payout, payoutRef, customerPaid, amountInr, settled, delivered };
       });
-  }, [myAssignedOrders, settlements]);
+  }, [myAssignedOrders, settlements, payouts]);
 
   const metrics = useMemo(() => {
     const now = new Date();
@@ -384,7 +470,9 @@ export default function App() {
       .filter((r) => r.settled)
       .reduce((sum, r) => sum + r.amountInr, 0);
 
-    const pendingPayoutInr = Math.max(0, totalEarnedDelivered - settledInr);
+    const pendingPayoutInr = earningRows
+      .filter((r) => r.delivered && !r.settled)
+      .reduce((sum, r) => sum + r.amountInr, 0);
 
     const weeklyBars = computeDailyVolumeBars(myAssignedOrders);
 
@@ -826,6 +914,201 @@ export default function App() {
     });
   }
 
+  async function handleCollectBookingPayment(order: PickupOrder) {
+    if (!session?.firebaseUser) return;
+    if (order.paymentStatus === 'PAID') {
+      showDynamicAlert({
+        variant: 'info',
+        title: 'Already Paid',
+        message: `Booking ${order.orderNumber} is already paid online (${order.razorpayPaymentId || 'Verified'}).`,
+      });
+      return;
+    }
+
+    const payableInr = order.totalAmountInr || order.courierFeeInr || 0;
+    if (payableInr < 1) {
+      showDynamicAlert({
+        variant: 'warning',
+        title: 'Invalid Amount',
+        message: 'Minimum payment collection amount is ₹1.00.',
+      });
+      return;
+    }
+
+    const settlementId = `STL-${order.id.replace(/^BK-/, '')}`;
+    setCollectingOrderId(order.id);
+    try {
+      if (Platform.OS === 'web') {
+        const res = await startPhleboWebCheckout({
+          amountInr: payableInr,
+          bookingId: order.id,
+          settlementId,
+          description: `Diagnostic Booking ${order.orderNumber} (${order.smallLabName})`,
+          customerName: order.smallLabName,
+          customerEmail: phleboEmail,
+          customerPhone: order.pickupLocation.contactPhone,
+        });
+
+        if (res.status === 'PAID') {
+          showDynamicAlert({
+            variant: 'success',
+            title: 'Payment Collected',
+            message: `${formatInr(payableInr)} verified via Razorpay for ${order.orderNumber}.`,
+            detail: `Payment ID: ${res.paymentId}`,
+          });
+        } else {
+          showDynamicAlert({
+            variant: 'info',
+            title: 'Checkout Cancelled',
+            message: res.message,
+          });
+        }
+      } else {
+        const link = await createPhleboMobilePaymentLink({
+          amountInr: payableInr,
+          bookingId: order.id,
+          settlementId,
+          description: `LabSetu Booking ${order.orderNumber}`,
+          customerName: order.smallLabName,
+          customerEmail: phleboEmail,
+          customerPhone: order.pickupLocation.contactPhone,
+        });
+
+        setActivePaymentLink({
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          settlementId,
+          paymentLinkId: link.payment_link_id,
+          shortUrl: link.short_url,
+          amountInr: payableInr,
+        });
+
+        await Linking.openURL(link.short_url);
+      }
+    } catch (err) {
+      showDynamicAlert({
+        variant: 'error',
+        title: 'Payment Collection Failed',
+        message: (err as Error).message || 'Could not initiate payment checkout.',
+      });
+    } finally {
+      setCollectingOrderId(null);
+    }
+  }
+
+  async function handleVerifyActivePaymentLink() {
+    if (!activePaymentLink) return;
+    setVerifyingLinkPayment(true);
+    try {
+      const status = await checkPhleboPaymentLinkStatus({
+        paymentLinkId: activePaymentLink.paymentLinkId,
+        bookingId: activePaymentLink.orderId,
+        settlementId: activePaymentLink.settlementId,
+      });
+
+      if (status.paid) {
+        const paidOrderNo = activePaymentLink.orderNumber;
+        const paidAmt = activePaymentLink.amountInr;
+        setActivePaymentLink(null);
+        showDynamicAlert({
+          variant: 'success',
+          title: 'Mobile Payment Confirmed',
+          message: `${formatInr(paidAmt)} received via Razorpay for ${paidOrderNo}.`,
+          detail: status.payment_id ? `Payment ID: ${status.payment_id}` : undefined,
+        });
+      } else {
+        showDynamicAlert({
+          variant: 'warning',
+          title: 'Payment Pending',
+          message: `Current link status is "${status.status}". Complete checkout in browser or UPI app, then tap Check & Confirm again.`,
+        });
+      }
+    } catch (err) {
+      showDynamicAlert({
+        variant: 'error',
+        title: 'Verification Error',
+        message: (err as Error).message || 'Could not check payment status right now.',
+      });
+    } finally {
+      setVerifyingLinkPayment(false);
+    }
+  }
+
+  async function handleSavePayoutProfile() {
+    if (!effectivePhleboId) {
+      showDynamicAlert({
+        variant: 'warning',
+        title: 'Courier Profile Needed',
+        message: `Ask Platform Admin (${ADMIN_LOGIN_EMAIL}) to assign your Courier ID first.`,
+      });
+      return;
+    }
+
+    const holder = payoutAccountName.trim() || phleboName;
+    const upi = payoutUpiId.trim();
+    const rawAcc = payoutBankAccount.replace(/[^0-9]/g, '');
+    const last4 = rawAcc ? rawAcc.slice(-4) : myPhleboProfile?.payoutProfile?.bankAccountLast4 || '';
+    const ifsc = payoutIfsc.trim().toUpperCase();
+
+    if (payoutMethod === 'UPI' && (!upi || !upi.includes('@'))) {
+      showDynamicAlert({
+        variant: 'warning',
+        title: 'Valid UPI ID Required',
+        message: 'Enter a valid UPI ID (for example: name@okaxis) to receive payouts.',
+      });
+      return;
+    }
+
+    if (payoutMethod === 'BANK_TRANSFER' && (!last4 || ifsc.length < 8)) {
+      showDynamicAlert({
+        variant: 'warning',
+        title: 'Bank & IFSC Required',
+        message: 'Enter your bank account number and IFSC code for IMPS/NEFT payouts.',
+      });
+      return;
+    }
+
+    setSavingPayoutProfile(true);
+    try {
+      const now = new Date().toISOString();
+      const nextProfile: PayoutProfile = {
+        preferredMethod: payoutMethod,
+        accountHolderName: holder,
+        ...(upi ? { upiId: upi } : {}),
+        ...(rawAcc.length >= 6
+          ? { bankAccountNumber: rawAcc }
+          : myPhleboProfile?.payoutProfile?.bankAccountNumber
+          ? { bankAccountNumber: myPhleboProfile.payoutProfile.bankAccountNumber }
+          : {}),
+        ...(last4 ? { bankAccountLast4: last4 } : {}),
+        ...(ifsc ? { ifscCode: ifsc } : {}),
+        updatedAt: now,
+      };
+
+      await updateDoc(doc(db, 'phlebotomists', effectivePhleboId), {
+        payoutProfile: nextProfile,
+        updatedAt: now,
+      });
+
+      showDynamicAlert({
+        variant: 'success',
+        title: 'Payout Account Saved',
+        message:
+          payoutMethod === 'UPI'
+            ? `Payouts will be sent to UPI ${upi}.`
+            : `Payouts will be sent to Bank ••••${last4} (${ifsc}).`,
+      });
+    } catch (err) {
+      showDynamicAlert({
+        variant: 'error',
+        title: 'Could Not Save Payout Details',
+        message: (err as Error).message || 'Unable to save payout details right now.',
+      });
+    } finally {
+      setSavingPayoutProfile(false);
+    }
+  }
+
   /* =========================================================================
    * 1. SCREEN 1: BOOKING REQUESTS (LIVE POOL / ACTIVE / COMPLETED)
    * ========================================================================= */
@@ -970,6 +1253,8 @@ export default function App() {
               const isInTransit =
                 order.status === OrderStatus.PICKED_UP ||
                 order.status === OrderStatus.IN_TRANSIT;
+              const isPaidOrder = order.paymentStatus === 'PAID';
+              const collectableInr = order.totalAmountInr || order.courierFeeInr || 0;
               return (
                 <View key={order.id} style={styles.bookingCard}>
                   <View style={styles.bookingCardTop}>
@@ -982,13 +1267,33 @@ export default function App() {
                       </Text>
                     </View>
                     <View style={{ alignItems: 'flex-end' }}>
-                      <View style={styles.pickupTimeBadge}>
-                        <Text style={styles.pickupTimeText}>
-                          {formatLabel(order.priority)}
-                        </Text>
+                      <View style={{ flexDirection: 'row', gap: 6, marginBottom: 4 }}>
+                        <View
+                          style={[
+                            styles.pickupTimeBadge,
+                            {
+                              marginBottom: 0,
+                              backgroundColor: isPaidOrder ? '#DCFCE7' : '#FFEDD5',
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.pickupTimeText,
+                              { color: isPaidOrder ? '#15803D' : '#C2410C' },
+                            ]}
+                          >
+                            {isPaidOrder ? '✓ Paid' : `Collect ${formatInr(collectableInr)}`}
+                          </Text>
+                        </View>
+                        <View style={[styles.pickupTimeBadge, { marginBottom: 0 }]}>
+                          <Text style={styles.pickupTimeText}>
+                            {formatLabel(order.priority)}
+                          </Text>
+                        </View>
                       </View>
                       <Text style={styles.bookingPrice}>
-                        {formatInr(order.courierFeeInr || 0)}
+                        Courier {formatInr(order.courierFeeInr || 0)}
                       </Text>
                     </View>
                   </View>
@@ -1037,6 +1342,22 @@ export default function App() {
                           onPress={() => handleDeclineAssignedOrder(order)}
                         >
                           <Text style={styles.btnSecondaryText}>Release</Text>
+                        </TouchableOpacity>
+                      ) : null}
+
+                      {!isPaidOrder && collectableInr >= 1 ? (
+                        <TouchableOpacity
+                          style={[
+                            styles.btnSecondary,
+                            { backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE' },
+                            collectingOrderId === order.id && { opacity: 0.65 },
+                          ]}
+                          disabled={collectingOrderId === order.id}
+                          onPress={() => void handleCollectBookingPayment(order)}
+                        >
+                          <Text style={[styles.btnSecondaryText, { color: '#1D4ED8' }]}>
+                            {collectingOrderId === order.id ? 'Opening...' : '💳 Collect'}
+                          </Text>
                         </TouchableOpacity>
                       ) : null}
 
@@ -1151,7 +1472,55 @@ export default function App() {
             <Text style={[styles.infoCardValue, { color: COLORS.primaryTeal }]}>
               {formatInr(selectedOrder.courierFeeInr || 0)} • {formatLabel(selectedOrder.priority)}
             </Text>
+            <View style={{ height: 1, backgroundColor: COLORS.borderLight, marginVertical: 12 }} />
+            <Text style={styles.infoCardLabel}>Booking Payment Collection</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={styles.infoCardValue}>
+                {formatInr(selectedOrder.totalAmountInr || selectedOrder.courierFeeInr || 0)}
+              </Text>
+              <View
+                style={[
+                  styles.pickupTimeBadge,
+                  {
+                    marginBottom: 0,
+                    backgroundColor: selectedOrder.paymentStatus === 'PAID' ? '#DCFCE7' : '#FFEDD5',
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.pickupTimeText,
+                    { color: selectedOrder.paymentStatus === 'PAID' ? '#15803D' : '#C2410C' },
+                  ]}
+                >
+                  {selectedOrder.paymentStatus === 'PAID'
+                    ? `✓ Paid (${selectedOrder.paymentMethod || 'Online'})`
+                    : 'Payment Due'}
+                </Text>
+              </View>
+            </View>
           </View>
+
+          {selectedOrder.paymentStatus !== 'PAID' &&
+          (selectedOrder.totalAmountInr || selectedOrder.courierFeeInr || 0) >= 1 ? (
+            <TouchableOpacity
+              style={[
+                styles.ctaButton,
+                { backgroundColor: COLORS.accentBlue, marginBottom: 12 },
+                collectingOrderId === selectedOrder.id && { opacity: 0.65 },
+              ]}
+              disabled={collectingOrderId === selectedOrder.id}
+              onPress={() => void handleCollectBookingPayment(selectedOrder)}
+            >
+              <Text style={styles.ctaButtonText}>
+                {collectingOrderId === selectedOrder.id
+                  ? 'Opening Razorpay Checkout...'
+                  : `💳 Collect ${formatInr(
+                      selectedOrder.totalAmountInr || selectedOrder.courierFeeInr || 0
+                    )} via Razorpay`}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
 
           <TouchableOpacity
             style={styles.ctaButton}
@@ -1268,6 +1637,55 @@ export default function App() {
             <Text style={{ fontSize: 36, marginBottom: 8 }}>🏢</Text>
             <Text style={styles.dropLabTitle}>{selectedOrder.targetLabName}</Text>
             <Text style={styles.dropLabSub}>{selectedOrder.deliveryLocation.address}</Text>
+            <View
+              style={[
+                styles.pickupTimeBadge,
+                {
+                  marginTop: 10,
+                  marginBottom: 0,
+                  backgroundColor: selectedOrder.paymentStatus === 'PAID' ? '#DCFCE7' : '#FFEDD5',
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.pickupTimeText,
+                  { color: selectedOrder.paymentStatus === 'PAID' ? '#15803D' : '#C2410C' },
+                ]}
+              >
+                {selectedOrder.paymentStatus === 'PAID'
+                  ? `✓ Booking Payment Collected (${formatInr(
+                      selectedOrder.totalAmountInr || selectedOrder.courierFeeInr || 0
+                    )})`
+                  : `Payment Pending (${formatInr(
+                      selectedOrder.totalAmountInr || selectedOrder.courierFeeInr || 0
+                    )})`}
+              </Text>
+            </View>
+            {selectedOrder.paymentStatus !== 'PAID' &&
+            (selectedOrder.totalAmountInr || selectedOrder.courierFeeInr || 0) >= 1 ? (
+              <TouchableOpacity
+                style={[
+                  styles.btnSecondary,
+                  {
+                    marginTop: 10,
+                    paddingHorizontal: 14,
+                    backgroundColor: '#EFF6FF',
+                    borderWidth: 1,
+                    borderColor: '#BFDBFE',
+                    flex: 0,
+                  },
+                ]}
+                disabled={collectingOrderId === selectedOrder.id}
+                onPress={() => void handleCollectBookingPayment(selectedOrder)}
+              >
+                <Text style={[styles.btnSecondaryText, { color: '#1D4ED8' }]}>
+                  {collectingOrderId === selectedOrder.id
+                    ? 'Opening Checkout...'
+                    : '💳 Collect Payment via Razorpay'}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
 
           <View style={styles.handoverBanner}>
@@ -1599,7 +2017,7 @@ export default function App() {
                 </Text>
               </View>
               <View style={{ alignItems: 'flex-end' }}>
-                <Text style={styles.metricLabel}>Settled Total</Text>
+                <Text style={styles.metricLabel}>Paid Out Total</Text>
                 <Text style={[styles.metricNumber, { fontSize: 16, color: COLORS.successGreen }]}>
                   {formatInr(metrics.settledInr)}
                 </Text>
@@ -1668,7 +2086,7 @@ export default function App() {
               </Text>
             </View>
           ) : (
-            earningRows.map(({ order, amountInr, settled, delivered }) => (
+            earningRows.map(({ order, payoutRef, customerPaid, amountInr, settled, delivered }) => (
               <View key={order.id} style={styles.tripLedgerRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.tripLedgerId}>{order.orderNumber}</Text>
@@ -1677,13 +2095,43 @@ export default function App() {
                   </Text>
                   <Text style={styles.tripLedgerBase}>
                     {settled
-                      ? 'Settled by Admin'
+                      ? `Paid Out${payoutRef ? ` • Ref: ${payoutRef}` : ''}`
+                      : delivered && customerPaid
+                      ? 'Delivered & Paid Online • Ready for Payout'
                       : delivered
-                      ? 'Delivered • Pending Payout'
+                      ? 'Delivered • Awaiting Customer Payment'
                       : formatOrderStatus(order.status)}
                   </Text>
                 </View>
                 <Text style={styles.tripLedgerFee}>{formatInr(amountInr)}</Text>
+              </View>
+            ))
+          )}
+
+          <Text style={[styles.sectionHeaderTitle, { marginTop: 20, marginBottom: 10 }]}>
+            Released Payout Receipts ({payouts.length})
+          </Text>
+
+          {payouts.length === 0 ? (
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyTitle}>No Payout Transfers Yet</Text>
+              <Text style={styles.emptySub}>
+                Once Admin releases payouts to your UPI or bank account, UTR transfer receipts appear here.
+              </Text>
+            </View>
+          ) : (
+            payouts.map((p) => (
+              <View key={p.id} style={styles.tripLedgerRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.tripLedgerId}>
+                    {p.orderNumber} • {p.mode}
+                  </Text>
+                  <Text style={styles.tripLedgerLab}>{p.destinationSummary}</Text>
+                  <Text style={styles.tripLedgerBase}>
+                    Ref: {p.referenceId} • {new Date(p.createdAt).toLocaleDateString('en-IN')}
+                  </Text>
+                </View>
+                <Text style={styles.tripLedgerFee}>{formatInr(p.amountInr)}</Text>
               </View>
             ))
           )}
@@ -1751,6 +2199,113 @@ export default function App() {
                 </Text>
               </TouchableOpacity>
             ))}
+          </View>
+
+          <Text style={[styles.sectionHeaderTitle, { marginTop: 20 }]}>
+            💳 Payout Account Details (UPI / Bank)
+          </Text>
+          <View style={styles.equipmentCard}>
+            <View style={[styles.shiftSelectorRow, { marginBottom: 12 }]}>
+              <TouchableOpacity
+                style={[
+                  styles.shiftButton,
+                  payoutMethod === 'UPI' && {
+                    backgroundColor: '#CCFBF1',
+                    borderColor: COLORS.primaryTeal,
+                    borderWidth: 1.5,
+                  },
+                ]}
+                onPress={() => setPayoutMethod('UPI')}
+              >
+                <Text
+                  style={[
+                    styles.shiftButtonText,
+                    payoutMethod === 'UPI' && { color: COLORS.primaryDark, fontWeight: '700' },
+                  ]}
+                >
+                  UPI ID
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.shiftButton,
+                  payoutMethod === 'BANK_TRANSFER' && {
+                    backgroundColor: '#CCFBF1',
+                    borderColor: COLORS.primaryTeal,
+                    borderWidth: 1.5,
+                  },
+                ]}
+                onPress={() => setPayoutMethod('BANK_TRANSFER')}
+              >
+                <Text
+                  style={[
+                    styles.shiftButtonText,
+                    payoutMethod === 'BANK_TRANSFER' && {
+                      color: COLORS.primaryDark,
+                      fontWeight: '700',
+                    },
+                  ]}
+                >
+                  Bank Account + IFSC
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ marginBottom: 10 }}>
+              <Text style={styles.inputLabelSm}>Account Holder Name</Text>
+              <TextInput
+                style={styles.fieldInput}
+                value={payoutAccountName}
+                onChangeText={setPayoutAccountName}
+                placeholder="Full name on UPI / bank"
+              />
+            </View>
+
+            {payoutMethod === 'UPI' ? (
+              <View style={{ marginBottom: 12 }}>
+                <Text style={styles.inputLabelSm}>UPI ID</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={payoutUpiId}
+                  onChangeText={setPayoutUpiId}
+                  autoCapitalize="none"
+                  placeholder="courier@okaxis"
+                />
+              </View>
+            ) : (
+              <>
+                <View style={{ marginBottom: 10 }}>
+                  <Text style={styles.inputLabelSm}>Bank Account Number</Text>
+                  <TextInput
+                    style={styles.fieldInput}
+                    value={payoutBankAccount}
+                    onChangeText={setPayoutBankAccount}
+                    keyboardType="numeric"
+                    placeholder="Enter account number"
+                  />
+                </View>
+                <View style={{ marginBottom: 12 }}>
+                  <Text style={styles.inputLabelSm}>IFSC Code</Text>
+                  <TextInput
+                    style={styles.fieldInput}
+                    value={payoutIfsc}
+                    onChangeText={(txt) => setPayoutIfsc(txt.toUpperCase())}
+                    autoCapitalize="characters"
+                    placeholder="HDFC0001234"
+                  />
+                </View>
+              </>
+            )}
+
+            <TouchableOpacity
+              style={[styles.btnPrimary, savingPayoutProfile && { opacity: 0.65 }]}
+              disabled={savingPayoutProfile}
+              onPress={() => void handleSavePayoutProfile()}
+            >
+              <Text style={styles.btnPrimaryText}>
+                {savingPayoutProfile ? 'Saving Account...' : 'Save Payout Account'}
+              </Text>
+            </TouchableOpacity>
           </View>
 
           <Text style={[styles.sectionHeaderTitle, { marginTop: 20 }]}>
@@ -1831,6 +2386,73 @@ export default function App() {
         alertState={alertState}
         onClose={() => setAlertState(INITIAL_DYNAMIC_ALERT)}
       />
+
+      <Modal
+        visible={Boolean(activePaymentLink)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setActivePaymentLink(null)}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(15, 23, 42, 0.58)',
+            justifyContent: 'center',
+            padding: 20,
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: 16,
+              padding: 20,
+              borderWidth: 1,
+              borderColor: COLORS.borderLight,
+            }}
+          >
+            <Text style={{ fontSize: 17, fontWeight: '700', color: COLORS.textPrimary }}>
+              💳 Confirm Mobile Payment
+            </Text>
+            <Text style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 6 }}>
+              Booking {activePaymentLink?.orderNumber} • Amount:{' '}
+              {formatInr(activePaymentLink?.amountInr || 0)}
+            </Text>
+            <Text style={{ fontSize: 12, color: COLORS.textSecondary, marginTop: 8 }}>
+              Complete the Razorpay checkout in the browser/UPI sheet, then tap Verify &amp; Confirm below to mark this order paid.
+            </Text>
+
+            <View style={{ marginTop: 16, gap: 10 }}>
+              <TouchableOpacity
+                style={[styles.ctaButton, verifyingLinkPayment && { opacity: 0.65 }]}
+                disabled={verifyingLinkPayment}
+                onPress={() => void handleVerifyActivePaymentLink()}
+              >
+                <Text style={styles.ctaButtonText}>
+                  {verifyingLinkPayment ? 'Checking Razorpay Status...' : 'Check & Confirm Payment ✓'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.btnSecondary, { flex: 0, paddingVertical: 12 }]}
+                onPress={() => {
+                  if (activePaymentLink?.shortUrl) {
+                    void Linking.openURL(activePaymentLink.shortUrl);
+                  }
+                }}
+              >
+                <Text style={styles.btnSecondaryText}>Re-open Razorpay Checkout Link</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.btnSecondary, { flex: 0, paddingVertical: 10, backgroundColor: '#F8FAFC' }]}
+                onPress={() => setActivePaymentLink(null)}
+              >
+                <Text style={[styles.btnSecondaryText, { color: COLORS.textSecondary }]}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {!session ? (
         <PhleboAuthGate

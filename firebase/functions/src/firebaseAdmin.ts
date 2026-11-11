@@ -15,6 +15,12 @@ export const SMTP_CONFIG = {
   from: process.env.NOTIFICATION_FROM_EMAIL || `LabSetu Diagnostics <${ADMIN_EMAIL}>`,
 };
 
+export const RAZORPAY_CONFIG = {
+  keyId: (process.env.RAZORPAY_KEY_ID || '').trim(),
+  keySecret: (process.env.RAZORPAY_KEY_SECRET || '').trim(),
+  xAccountNumber: (process.env.RAZORPAYX_ACCOUNT_NUMBER || '').trim(),
+};
+
 if (!admin.apps.length) {
   admin.initializeApp({
     projectId: PROJECT_ID,

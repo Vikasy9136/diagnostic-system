@@ -15,6 +15,7 @@ import {
   NotificationCategory,
   NotificationPriority,
   OrderStatus,
+  PayoutRecord,
   PhlebotomistProfile,
   PickupOrder,
   PlatformNotification,
@@ -63,6 +64,7 @@ import {
   subscribeLabs,
   subscribeNotifications,
   subscribeOrders,
+  subscribePayouts,
   subscribePhlebotomists,
   subscribeReports,
   subscribeSettings,
@@ -72,6 +74,7 @@ import {
   toggleManagedUserStatus,
   updateLabVerification,
 } from '../services/firestoreService';
+import { releasePartnerPayoutApi } from '../services/razorpayCheckout';
 
 export type AlertTriggerFn = (opts: {
   variant: DynamicAlertVariant;
@@ -125,8 +128,18 @@ export function AdminDashboard({
   const [custodyEvents, setCustodyEvents] = useState<CustodyEvent[]>([]);
   const [reports, setReports] = useState<DiagnosticReportRecord[]>([]);
   const [settlements, setSettlements] = useState<SettlementRecord[]>([]);
+  const [payouts, setPayouts] = useState<PayoutRecord[]>([]);
   const [testCatalog, setTestCatalog] = useState<DiagnosticTestItem[]>([]);
   const [notifications, setNotifications] = useState<PlatformNotification[]>([]);
+
+  // Partner Payout Modal State
+  const [payoutModalSettlement, setPayoutModalSettlement] = useState<SettlementRecord | null>(null);
+  const [payoutRecipientType, setPayoutRecipientType] = useState<'LARGE_LAB' | 'PHLEBOTOMIST' | 'BOTH'>('BOTH');
+  const [payoutMode, setPayoutMode] = useState<'UPI' | 'IMPS' | 'NEFT' | 'RAZORPAYX'>('UPI');
+  const [payoutReferenceId, setPayoutReferenceId] = useState('');
+  const [payoutNotes, setPayoutNotes] = useState('');
+  const [forceUnpaidPayout, setForceUnpaidPayout] = useState(false);
+  const [submittingPayout, setSubmittingPayout] = useState(false);
 
   const [slaConfig, setSlaConfig] = useState<PlatformSlaConfig>(DEFAULT_PLATFORM_SLA);
   const [commConfig, setCommConfig] = useState<CommissionConfig>(DEFAULT_COMMISSION_CONFIG);
@@ -205,6 +218,7 @@ export function AdminDashboard({
       subscribeCustodyEvents(setCustodyEvents),
       subscribeReports(session.profile, setReports),
       subscribeSettlements(session.profile, setSettlements),
+      subscribePayouts(session.profile, setPayouts),
       subscribeTestCatalog(setTestCatalog),
       subscribeNotifications(session.profile, setNotifications),
       subscribeSettings(setSlaConfig, setCommConfig, setEmailSettings),
@@ -234,9 +248,23 @@ export function AdminDashboard({
     const todayRevenue = todayOrders.reduce((s, o) => s + (o.totalAmountInr || 0), 0);
 
     const grossGmv = settlements.reduce((s, x) => s + (x.grossAmountInr || 0), 0);
+    const collectedOnline = settlements
+      .filter((x) => x.paymentStatus === 'PAID')
+      .reduce((s, x) => s + (x.grossAmountInr || 0), 0);
+    const awaitingCollection = settlements
+      .filter((x) => x.paymentStatus !== 'PAID' && x.status !== 'SETTLED')
+      .reduce((s, x) => s + (x.grossAmountInr || 0), 0);
     const platformFees = settlements.reduce((s, x) => s + (x.platformFeeInr || 0), 0);
     const labPayouts = settlements.reduce((s, x) => s + (x.labPayoutInr || 0), 0);
+    const labPayoutsPaid = settlements
+      .filter((x) => x.labPayoutStatus === 'PAID' || x.status === 'SETTLED')
+      .reduce((s, x) => s + (x.labPayoutInr || 0), 0);
+    const labPayoutsDue = Math.max(0, labPayouts - labPayoutsPaid);
     const phleboPayouts = settlements.reduce((s, x) => s + (x.phleboPayoutInr || 0), 0);
+    const phleboPayoutsPaid = settlements
+      .filter((x) => x.phleboPayoutStatus === 'PAID' || x.status === 'SETTLED')
+      .reduce((s, x) => s + (x.phleboPayoutInr || 0), 0);
+    const phleboPayoutsDue = Math.max(0, phleboPayouts - phleboPayoutsPaid);
     const totalRevenue =
       grossGmv || orders.reduce((s, o) => s + (o.totalAmountInr || 0), 0);
 
@@ -266,9 +294,15 @@ export function AdminDashboard({
       todayRevenue,
       totalRevenue,
       grossGmv,
+      collectedOnline,
+      awaitingCollection,
       platformFees,
       labPayouts,
+      labPayoutsPaid,
+      labPayoutsDue,
       phleboPayouts,
+      phleboPayoutsPaid,
+      phleboPayoutsDue,
       statusBreakdown,
       trendBuckets,
       weeklyBars,
@@ -1559,52 +1593,210 @@ export function AdminDashboard({
 
           {/* TAB 8: PAYMENTS & SETTLEMENTS */}
           {activeTab === 'payments' && (
-            <div className="chart-card-modern">
-              <div className="card-top-header">
-                <h2 className="card-top-title">Payments &amp; B2B Settlements ({settlements.length})</h2>
-              </div>
-              <div className="kpi-row" style={{ marginBottom: '20px' }}>
-                <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Total Billing</span><span className="kpi-main-number">{formatInr(metrics.grossGmv)}</span></div></div>
-                <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Platform Fees</span><span className="kpi-main-number">{formatInr(metrics.platformFees)}</span></div></div>
-                <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Lab Payouts</span><span className="kpi-main-number">{formatInr(metrics.labPayouts)}</span></div></div>
-                <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Courier Payouts</span><span className="kpi-main-number">{formatInr(metrics.phleboPayouts)}</span></div></div>
-              </div>
-              {settlements.length === 0 ? (
-                <div className="empty-state-box"><h4>No Settlement Entries Yet</h4><p>Settlements are created automatically for every booking.</p></div>
-              ) : (
-                <div className="data-table-container">
-                  <table className="modern-data-table">
-                    <thead>
-                      <tr>
-                        <th>ID</th>
-                        <th>Order</th>
-                        <th>Source Lab</th>
-                        <th>Total</th>
-                        <th>Status</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {settlements.map((s) => (
-                        <tr key={s.id}>
-                          <td><strong>{s.id}</strong></td>
-                          <td>{s.orderNumber}</td>
-                          <td>{s.smallLabName}</td>
-                          <td>{formatInr(s.grossAmountInr)}</td>
-                          <td><span className={s.status === 'SETTLED' ? 'status-pill-green' : 'status-pill-amber'}>{formatLabel(s.status)}</span></td>
-                          <td>
-                            {s.status !== 'SETTLED' && (
-                              <button type="button" className="btn-primary" onClick={() => void markSettlementSettled(s.id)}>
-                                Mark Settled
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div className="chart-card-modern">
+                <div className="card-top-header">
+                  <div>
+                    <h2 className="card-top-title">Payments &amp; Partner Payouts ({settlements.length})</h2>
+                    <p style={{ fontSize: '0.8rem', color: '#64748B' }}>
+                      Reconcile online customer collections and release payouts to Reference Labs &amp; Field Phlebotomists
+                    </p>
+                  </div>
                 </div>
-              )}
+                <div className="kpi-row" style={{ marginBottom: '20px' }}>
+                  <div className="kpi-card-modern">
+                    <div className="kpi-body">
+                      <span className="kpi-title">Collected Online</span>
+                      <span className="kpi-main-number">{formatInr(metrics.collectedOnline)}</span>
+                      <span className="kpi-sub-split">{formatInr(metrics.awaitingCollection)} awaiting payment</span>
+                    </div>
+                  </div>
+                  <div className="kpi-card-modern">
+                    <div className="kpi-body">
+                      <span className="kpi-title">Platform Commission</span>
+                      <span className="kpi-main-number">{formatInr(metrics.platformFees)}</span>
+                      <span className="kpi-sub-split">Out of {formatInr(metrics.grossGmv)} billed</span>
+                    </div>
+                  </div>
+                  <div className="kpi-card-modern">
+                    <div className="kpi-body">
+                      <span className="kpi-title">Reference Lab Payouts</span>
+                      <span className="kpi-main-number">{formatInr(metrics.labPayoutsDue)} due</span>
+                      <span className="kpi-sub-split">{formatInr(metrics.labPayoutsPaid)} released</span>
+                    </div>
+                  </div>
+                  <div className="kpi-card-modern">
+                    <div className="kpi-body">
+                      <span className="kpi-title">Courier Payouts</span>
+                      <span className="kpi-main-number">{formatInr(metrics.phleboPayoutsDue)} due</span>
+                      <span className="kpi-sub-split">{formatInr(metrics.phleboPayoutsPaid)} released</span>
+                    </div>
+                  </div>
+                </div>
+                {settlements.length === 0 ? (
+                  <div className="empty-state-box"><h4>No Settlement Entries Yet</h4><p>Settlements are created automatically for every booking.</p></div>
+                ) : (
+                  <div className="data-table-container">
+                    <table className="modern-data-table">
+                      <thead>
+                        <tr>
+                          <th>Invoice &amp; Order</th>
+                          <th>Collection &rarr; Hub</th>
+                          <th>Collection Status</th>
+                          <th>Platform Fee</th>
+                          <th>Reference Lab Split</th>
+                          <th>Phlebotomist Split</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {settlements.map((s) => {
+                          const isPaidOnline = s.paymentStatus === 'PAID';
+                          const isLabPaid = s.labPayoutStatus === 'PAID' || s.status === 'SETTLED';
+                          const isPhleboPaid = s.phleboPayoutStatus === 'PAID' || s.status === 'SETTLED';
+                          const linkedOrder = orders.find((o) => o.id === s.orderId);
+                          const assignedPhleboId = s.phlebotomistId || linkedOrder?.phlebotomistId;
+                          const assignedPhleboName = s.phlebotomistName || linkedOrder?.phlebotomistName;
+                          const canReleaseBoth = !isLabPaid || (!isPhleboPaid && Boolean(assignedPhleboId));
+
+                          const openPayout = (recipientType: 'LARGE_LAB' | 'PHLEBOTOMIST' | 'BOTH') => {
+                            setPayoutModalSettlement({
+                              ...s,
+                              phlebotomistId: assignedPhleboId,
+                              phlebotomistName: assignedPhleboName,
+                            });
+                            setPayoutRecipientType(recipientType);
+                            setPayoutMode('UPI');
+                            setPayoutReferenceId('');
+                            setPayoutNotes('');
+                            setForceUnpaidPayout(!isPaidOnline);
+                          };
+
+                          return (
+                            <tr key={s.id}>
+                              <td>
+                                <strong>{s.id}</strong>
+                                <div style={{ fontSize: '0.73rem', color: '#64748B' }}>{s.orderNumber}</div>
+                              </td>
+                              <td>
+                                <div>{s.smallLabName}</div>
+                                <div style={{ fontSize: '0.73rem', color: '#64748B' }}>&rarr; {s.targetLabName}</div>
+                              </td>
+                              <td>
+                                <strong>{formatInr(s.grossAmountInr)}</strong>
+                                <div style={{ marginTop: '4px' }}>
+                                  <span className={isPaidOnline ? 'status-pill-green' : 'status-pill-amber'}>
+                                    {isPaidOnline ? 'Paid Online' : 'Unpaid'}
+                                  </span>
+                                </div>
+                                {s.razorpayPaymentId && (
+                                  <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: '2px' }}>
+                                    {s.razorpayPaymentId}
+                                  </div>
+                                )}
+                              </td>
+                              <td>{formatInr(s.platformFeeInr)}</td>
+                              <td>
+                                <strong>{formatInr(s.labPayoutInr)}</strong>
+                                <div style={{ marginTop: '4px' }}>
+                                  <span className={isLabPaid ? 'status-pill-green' : 'status-pill-amber'}>
+                                    {isLabPaid ? 'Paid' : 'Due'}
+                                  </span>
+                                </div>
+                                {s.labPayoutRef && (
+                                  <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: '2px' }}>{s.labPayoutRef}</div>
+                                )}
+                              </td>
+                              <td>
+                                <strong>{formatInr(s.phleboPayoutInr)}</strong>
+                                <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
+                                  {assignedPhleboName || 'Unassigned'}
+                                </div>
+                                <div style={{ marginTop: '4px' }}>
+                                  <span className={isPhleboPaid ? 'status-pill-green' : 'status-pill-amber'}>
+                                    {isPhleboPaid ? 'Paid' : 'Due'}
+                                  </span>
+                                </div>
+                                {s.phleboPayoutRef && (
+                                  <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: '2px' }}>{s.phleboPayoutRef}</div>
+                                )}
+                              </td>
+                              <td>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                  {!isLabPaid && (
+                                    <button type="button" className="btn-secondary" onClick={() => openPayout('LARGE_LAB')}>
+                                      Pay Lab
+                                    </button>
+                                  )}
+                                  {!isPhleboPaid && assignedPhleboId && (
+                                    <button type="button" className="btn-secondary" onClick={() => openPayout('PHLEBOTOMIST')}>
+                                      Pay Courier
+                                    </button>
+                                  )}
+                                  {s.status !== 'SETTLED' && canReleaseBoth ? (
+                                    <button type="button" className="btn-primary" onClick={() => openPayout('BOTH')}>
+                                      Release Payout
+                                    </button>
+                                  ) : s.status === 'SETTLED' ? (
+                                    <span className="status-pill-green">Settled</span>
+                                  ) : (
+                                    <button type="button" className="btn-secondary" onClick={() => void markSettlementSettled(s.id)}>
+                                      Mark Settled
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div className="chart-card-modern">
+                <div className="card-top-header">
+                  <h3 className="card-top-title">Released Payout Ledger ({payouts.length})</h3>
+                </div>
+                {payouts.length === 0 ? (
+                  <div className="empty-state-box">
+                    <h4>No Payouts Released Yet</h4>
+                    <p>Disbursements released to Reference Labs and Field Phlebotomists appear here with UTR references.</p>
+                  </div>
+                ) : (
+                  <div className="data-table-container">
+                    <table className="modern-data-table">
+                      <thead>
+                        <tr>
+                          <th>Payout ID</th>
+                          <th>Order</th>
+                          <th>Recipient</th>
+                          <th>Role</th>
+                          <th>Mode &amp; Destination</th>
+                          <th>Reference</th>
+                          <th>Amount</th>
+                          <th>Date</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {payouts.map((p) => (
+                          <tr key={p.id}>
+                            <td><strong>{p.id}</strong></td>
+                            <td>{p.orderNumber}</td>
+                            <td>{p.recipientName}</td>
+                            <td>{p.recipientRole === 'LARGE_LAB' ? 'Reference Lab' : 'Phlebotomist'}</td>
+                            <td>{p.mode} • {p.destinationSummary}</td>
+                            <td><code>{p.referenceId}</code></td>
+                            <td><strong>{formatInr(p.amountInr)}</strong></td>
+                            <td>{new Date(p.createdAt).toLocaleString('en-IN')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -1969,6 +2161,155 @@ export function AdminDashboard({
               <p><strong>Battery:</strong> {selectedCourier.batteryPct}%</p>
               <p><strong>Status:</strong> {formatLabel(selectedCourier.status)}</p>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: RELEASE PARTNER PAYOUT */}
+      {payoutModalSettlement && (
+        <div className="modal-overlay" onClick={() => !submittingPayout && setPayoutModalSettlement(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Release Payout • {payoutModalSettlement.orderNumber}</h3>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={submittingPayout}
+                onClick={() => setPayoutModalSettlement(null)}
+              >
+                ✕
+              </button>
+            </div>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!payoutModalSettlement) return;
+                setSubmittingPayout(true);
+                try {
+                  const res = await releasePartnerPayoutApi({
+                    settlementId: payoutModalSettlement.id,
+                    recipientType: payoutRecipientType,
+                    mode: payoutMode,
+                    referenceId: payoutReferenceId.trim() || undefined,
+                    notes: payoutNotes.trim() || undefined,
+                    forceWithoutCollection: forceUnpaidPayout,
+                  });
+                  const count = res?.data?.payouts?.length ?? 1;
+                  setPayoutModalSettlement(null);
+                  onShowAlert({
+                    variant: 'success',
+                    title: 'Partner Payout Released',
+                    message:
+                      res.message ||
+                      `Released ${count} payout transfer(s) for ${payoutModalSettlement.orderNumber}.`,
+                  });
+                } catch (err) {
+                  onShowAlert({
+                    variant: 'error',
+                    title: 'Payout Failed',
+                    message:
+                      err instanceof Error
+                        ? err.message
+                        : 'Could not release payout. Please verify details and try again.',
+                  });
+                } finally {
+                  setSubmittingPayout(false);
+                }
+              }}
+            >
+              <div className="modal-body">
+                <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '12px', marginBottom: '14px', fontSize: '0.84rem' }}>
+                  <div><strong>Invoice:</strong> {payoutModalSettlement.id} • Gross: {formatInr(payoutModalSettlement.grossAmountInr)}</div>
+                  <div><strong>Reference Lab Share:</strong> {payoutModalSettlement.targetLabName} — {formatInr(payoutModalSettlement.labPayoutInr)}</div>
+                  <div>
+                    <strong>Courier Share:</strong> {payoutModalSettlement.phlebotomistName || 'Unassigned'} — {formatInr(payoutModalSettlement.phleboPayoutInr)}
+                  </div>
+                  <div style={{ marginTop: '4px' }}>
+                    <strong>Customer Collection:</strong>{' '}
+                    {payoutModalSettlement.paymentStatus === 'PAID'
+                      ? `Paid Online (${payoutModalSettlement.razorpayPaymentId || 'Verified'})`
+                      : 'Pending Customer Payment'}
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Payout Recipient</label>
+                  <select
+                    className="form-select"
+                    value={payoutRecipientType}
+                    onChange={(e) =>
+                      setPayoutRecipientType(e.target.value as 'LARGE_LAB' | 'PHLEBOTOMIST' | 'BOTH')
+                    }
+                  >
+                    <option value="BOTH">Both Reference Lab &amp; Field Phlebotomist</option>
+                    <option value="LARGE_LAB">Reference Lab Only ({formatInr(payoutModalSettlement.labPayoutInr)})</option>
+                    <option value="PHLEBOTOMIST">Field Phlebotomist Only ({formatInr(payoutModalSettlement.phleboPayoutInr)})</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Transfer Method</label>
+                  <select
+                    className="form-select"
+                    value={payoutMode}
+                    onChange={(e) =>
+                      setPayoutMode(e.target.value as 'UPI' | 'IMPS' | 'NEFT' | 'RAZORPAYX')
+                    }
+                  >
+                    <option value="UPI">UPI Instant Transfer</option>
+                    <option value="IMPS">IMPS Bank Transfer</option>
+                    <option value="NEFT">NEFT Settlement</option>
+                    <option value="RAZORPAYX">Automated Payout (RazorpayX)</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">UTR / Transfer Reference (Optional — auto-generated if blank)</label>
+                  <input
+                    className="form-input"
+                    placeholder="e.g. UTR3241984712"
+                    value={payoutReferenceId}
+                    onChange={(e) => setPayoutReferenceId(e.target.value)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Settlement Notes (Optional)</label>
+                  <input
+                    className="form-input"
+                    placeholder="e.g. Daily partner batch settlement"
+                    value={payoutNotes}
+                    onChange={(e) => setPayoutNotes(e.target.value)}
+                  />
+                </div>
+
+                {payoutModalSettlement.paymentStatus !== 'PAID' && (
+                  <label className="checkbox-row" style={{ marginTop: '8px', background: '#FEF3C7', padding: '10px', borderRadius: '8px' }}>
+                    <input
+                      type="checkbox"
+                      checked={forceUnpaidPayout}
+                      onChange={(e) => setForceUnpaidPayout(e.target.checked)}
+                    />
+                    <span style={{ fontSize: '0.8rem', color: '#92400E' }}>
+                      Customer payment is still marked Unpaid. Approve releasing payout anyway.
+                    </span>
+                  </label>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={submittingPayout}
+                  onClick={() => setPayoutModalSettlement(null)}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary" disabled={submittingPayout}>
+                  {submittingPayout ? 'Releasing Payout...' : 'Confirm & Release Payout'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

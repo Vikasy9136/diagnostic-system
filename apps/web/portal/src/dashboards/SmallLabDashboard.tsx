@@ -38,6 +38,7 @@ import {
   subscribeSettlements,
   subscribeTestCatalog,
 } from '../services/firestoreService';
+import { startRazorpayBookingCheckout } from '../services/razorpayCheckout';
 
 export type AlertTriggerFn = (opts: {
   variant: DynamicAlertVariant;
@@ -110,6 +111,8 @@ export function SmallLabDashboard({
   const [selectedTestIds, setSelectedTestIds] = useState<string[]>([]);
   const [bookingPriority, setBookingPriority] = useState<OrderPriority>(OrderPriority.ROUTINE);
   const [pickupSlot, setPickupSlot] = useState<string>('Within 45 Mins (Express)');
+  const [payImmediatelyOnBook, setPayImmediatelyOnBook] = useState(true);
+  const [payingSettlementId, setPayingSettlementId] = useState<string | null>(null);
   const [submittingBooking, setSubmittingBooking] = useState(false);
 
   const formatLabel = (raw: string) =>
@@ -192,8 +195,11 @@ export function SmallLabDashboard({
     const totalBilled =
       settlements.reduce((s, x) => s + (x.grossAmountInr || 0), 0) ||
       orders.reduce((s, o) => s + (o.totalAmountInr || 0), 0);
+    const paidOnline = settlements
+      .filter((s) => s.paymentStatus === 'PAID')
+      .reduce((sum, x) => sum + (x.grossAmountInr || 0), 0);
     const pendingPay = settlements
-      .filter((s) => s.status !== 'SETTLED')
+      .filter((s) => s.paymentStatus !== 'PAID' && s.status !== 'SETTLED')
       .reduce((sum, x) => sum + (x.grossAmountInr || 0), 0);
 
     const statusBreakdown = computeStatusBreakdown(orders);
@@ -206,6 +212,7 @@ export function SmallLabDashboard({
       inTransitCount: inTransit.length,
       completedCount: completed.length,
       totalBilled,
+      paidOnline,
       pendingPay,
       statusBreakdown,
       trendBuckets,
@@ -359,15 +366,63 @@ export function SmallLabDashboard({
 
       setSelectedTestIds([]);
       setAdhocPatientName('');
-      setActiveTab('bookings');
-      onShowAlert({
-        variant: 'success',
-        title: `Booking ${created.orderNumber} Dispatched`,
-        message: `Live order created for ${patientPayload.pseudonym} -> ${targetLab.name}.`,
-        detail: `Handover Receiving OTP: ${created.handoverOtp} • Barcodes: ${created.specimens
-          .map((s) => s.barcode)
-          .join(', ')}`,
-      });
+
+      const settlementId = `STL-${created.orderNumber.replace('BK-', '')}`;
+      if (payImmediatelyOnBook && (created.totalAmountInr || 0) >= 1) {
+        try {
+          const checkoutRes = await startRazorpayBookingCheckout({
+            amountInr: created.totalAmountInr || bookingEstimate.total,
+            bookingId: created.id,
+            settlementId,
+            description: `LabSetu Pickup ${created.orderNumber} (${targetLab.name})`,
+            customerName: myLabFacility.name,
+            customerEmail: session.profile.email,
+            customerPhone: myLabFacility.phone,
+            collectedByRole: 'SMALL_LAB',
+          });
+
+          if (checkoutRes.status === 'PAID') {
+            setActiveTab('bookings');
+            onShowAlert({
+              variant: 'success',
+              title: `Paid & Booking ${created.orderNumber} Dispatched`,
+              message: `Online payment (${checkoutRes.result.paymentId}) confirmed for ${patientPayload.pseudonym} -> ${targetLab.name}.`,
+              detail: `Handover Receiving OTP: ${created.handoverOtp} • Barcodes: ${created.specimens
+                .map((s) => s.barcode)
+                .join(', ')}`,
+            });
+          } else {
+            setActiveTab('payments');
+            onShowAlert({
+              variant: 'warning',
+              title: `Booking ${created.orderNumber} Created (Payment Pending)`,
+              message: checkoutRes.message,
+              detail: `Handover Receiving OTP: ${created.handoverOtp} • Click Pay Now below to complete payment.`,
+            });
+          }
+        } catch (payErr) {
+          setActiveTab('payments');
+          onShowAlert({
+            variant: 'error',
+            title: `Booking Saved, Payment Incomplete (${created.orderNumber})`,
+            message:
+              payErr instanceof Error
+                ? payErr.message
+                : 'Your booking is saved, but payment did not complete. Retry in Payments.',
+            detail: `Invoice ${settlementId} is ready for retry in the Payments tab.`,
+          });
+        }
+      } else {
+        setActiveTab('bookings');
+        onShowAlert({
+          variant: 'success',
+          title: `Booking ${created.orderNumber} Dispatched`,
+          message: `Live order created for ${patientPayload.pseudonym} -> ${targetLab.name}. Invoice added to Payments.`,
+          detail: `Handover Receiving OTP: ${created.handoverOtp} • Barcodes: ${created.specimens
+            .map((s) => s.barcode)
+            .join(', ')}`,
+        });
+      }
     } catch (err) {
       onShowAlert({
         variant: 'error',
@@ -376,6 +431,49 @@ export function SmallLabDashboard({
       });
     } finally {
       setSubmittingBooking(false);
+    }
+  }
+
+  async function handlePaySettlement(settlement: SettlementRecord) {
+    if (settlement.paymentStatus === 'PAID') return;
+    setPayingSettlementId(settlement.id);
+    try {
+      const outcome = await startRazorpayBookingCheckout({
+        amountInr: settlement.grossAmountInr,
+        bookingId: settlement.orderId,
+        settlementId: settlement.id,
+        description: `Invoice ${settlement.id} • Booking ${settlement.orderNumber}`,
+        customerName: myLabFacility.name,
+        customerEmail: session.profile.email,
+        customerPhone: myLabFacility.phone,
+        collectedByRole: 'SMALL_LAB',
+      });
+
+      if (outcome.status === 'PAID') {
+        onShowAlert({
+          variant: 'success',
+          title: `Payment Successful • ${settlement.orderNumber}`,
+          message: `Received ${formatInr(settlement.grossAmountInr)} via ${outcome.result.paymentMethod}.`,
+          detail: `Payment Reference: ${outcome.result.paymentId}`,
+        });
+      } else {
+        onShowAlert({
+          variant: 'info',
+          title: 'Payment Cancelled',
+          message: outcome.message,
+        });
+      }
+    } catch (err) {
+      onShowAlert({
+        variant: 'error',
+        title: 'Payment Failed',
+        message:
+          err instanceof Error
+            ? err.message
+            : 'Unable to complete online payment right now. Please try again.',
+      });
+    } finally {
+      setPayingSettlementId(null);
     }
   }
 
@@ -971,12 +1069,42 @@ export function SmallLabDashboard({
                   )}
                 </div>
 
+                <div className="form-group" style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '10px', padding: '12px' }}>
+                  <label className="form-label" style={{ marginBottom: '8px' }}>Payment Method</label>
+                  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                    <label className="checkbox-row" style={{ margin: 0, cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name="bookingPaymentMode"
+                        checked={payImmediatelyOnBook}
+                        onChange={() => setPayImmediatelyOnBook(true)}
+                      />
+                      <span>Pay Online Now (UPI / Card / NetBanking)</span>
+                    </label>
+                    <label className="checkbox-row" style={{ margin: 0, cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name="bookingPaymentMode"
+                        checked={!payImmediatelyOnBook}
+                        onChange={() => setPayImmediatelyOnBook(false)}
+                      />
+                      <span>Create Invoice &amp; Pay Later</span>
+                    </label>
+                  </div>
+                </div>
+
                 <button
                   type="submit"
                   className="btn-primary btn-full"
                   disabled={submittingBooking || verifiedLargeLabs.length === 0 || testCatalog.length === 0}
                 >
-                  {submittingBooking ? 'Creating Booking...' : 'Create Pickup Booking →'}
+                  {submittingBooking
+                    ? payImmediatelyOnBook
+                      ? 'Opening Checkout...'
+                      : 'Creating Booking...'
+                    : payImmediatelyOnBook && bookingEstimate.total >= 1
+                    ? `Pay ${formatInr(bookingEstimate.total)} & Create Booking →`
+                    : 'Create Pickup Booking →'}
                 </button>
               </form>
 
@@ -1328,13 +1456,18 @@ export function SmallLabDashboard({
           {activeTab === 'payments' && (
             <div className="chart-card-modern">
               <div className="card-top-header">
-                <h2 className="card-top-title">Billing &amp; Ledger Summary ({settlements.length})</h2>
+                <div>
+                  <h2 className="card-top-title">Billing &amp; Online Payments ({settlements.length})</h2>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B' }}>
+                    Pay booking invoices securely via UPI, Card, or NetBanking and track settlements
+                  </p>
+                </div>
               </div>
               <div className="kpi-row" style={{ marginBottom: '20px' }}>
                 <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Total Billed</span><span className="kpi-main-number">{formatInr(metrics.totalBilled)}</span></div></div>
-                <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Pending Settlement</span><span className="kpi-main-number">{formatInr(metrics.pendingPay)}</span></div></div>
-                <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Orders Logged</span><span className="kpi-main-number">{orders.length}</span></div></div>
-                <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Settled Entries</span><span className="kpi-main-number">{settlements.filter((s) => s.status === 'SETTLED').length}</span></div></div>
+                <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Paid Online</span><span className="kpi-main-number">{formatInr(metrics.paidOnline)}</span></div></div>
+                <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Payment Due</span><span className="kpi-main-number">{formatInr(metrics.pendingPay)}</span></div></div>
+                <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Settled Invoices</span><span className="kpi-main-number">{settlements.filter((s) => s.status === 'SETTLED').length}</span></div></div>
               </div>
               {settlements.length === 0 ? (
                 <div className="empty-state-box"><h4>No Ledger Entries Yet</h4><p>Invoices generate dynamically whenever you submit a pickup booking.</p></div>
@@ -1348,20 +1481,57 @@ export function SmallLabDashboard({
                         <th>Reference Lab</th>
                         <th>Period</th>
                         <th>Total</th>
-                        <th>Status</th>
+                        <th>Payment Status</th>
+                        <th>Settlement</th>
+                        <th>Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {settlements.map((s) => (
-                        <tr key={s.id}>
-                          <td><strong>{s.id}</strong></td>
-                          <td>{s.orderNumber}</td>
-                          <td>{s.targetLabName}</td>
-                          <td>{s.billingPeriod}</td>
-                          <td><strong>{formatInr(s.grossAmountInr)}</strong></td>
-                          <td><span className={s.status === 'SETTLED' ? 'status-pill-green' : 'status-pill-amber'}>{formatLabel(s.status)}</span></td>
-                        </tr>
-                      ))}
+                      {settlements.map((s) => {
+                        const isPaid = s.paymentStatus === 'PAID';
+                        const isSettled = s.status === 'SETTLED';
+                        const isPaying = payingSettlementId === s.id;
+                        return (
+                          <tr key={s.id}>
+                            <td><strong>{s.id}</strong></td>
+                            <td>{s.orderNumber}</td>
+                            <td>{s.targetLabName}</td>
+                            <td>{s.billingPeriod}</td>
+                            <td><strong>{formatInr(s.grossAmountInr)}</strong></td>
+                            <td>
+                              <span className={isPaid ? 'status-pill-green' : 'status-pill-amber'}>
+                                {isPaid ? 'Paid' : 'Pending'}
+                              </span>
+                              {s.razorpayPaymentId && (
+                                <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: '2px' }}>
+                                  {s.razorpayPaymentId}
+                                </div>
+                              )}
+                            </td>
+                            <td>
+                              <span className={isSettled ? 'status-pill-green' : 'status-pill-blue'}>
+                                {isSettled ? 'Settled' : 'In Progress'}
+                              </span>
+                            </td>
+                            <td>
+                              {isPaid ? (
+                                <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#059669' }}>
+                                  ✓ Paid{s.paymentMethod ? ` (${s.paymentMethod})` : ''}
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="btn-primary"
+                                  disabled={isPaying || s.grossAmountInr < 1}
+                                  onClick={() => void handlePaySettlement(s)}
+                                >
+                                  {isPaying ? 'Opening Checkout...' : `Pay ${formatInr(s.grossAmountInr)}`}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

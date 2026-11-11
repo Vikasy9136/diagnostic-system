@@ -43,6 +43,11 @@ export const config = {
     pass: (process.env.SMTP_PASS || '').replace(/\s+/g, ''),
     from: process.env.NOTIFICATION_FROM_EMAIL || 'LabSetu Diagnostics <lab.setu.admin@gmail.com>',
   },
+  razorpay: {
+    keyId: (process.env.RAZORPAY_KEY_ID || '').trim(),
+    keySecret: (process.env.RAZORPAY_KEY_SECRET || '').trim(),
+    xAccountNumber: (process.env.RAZORPAYX_ACCOUNT_NUMBER || '').trim(),
+  },
   cloudFunctionsApiUrl:
     process.env.CLOUD_FUNCTIONS_API_URL ||
     'https://us-central1-labsetu-diagnostics.cloudfunctions.net/api',

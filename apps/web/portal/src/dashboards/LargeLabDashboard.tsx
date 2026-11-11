@@ -11,6 +11,7 @@ import {
   LABSETU_THEME,
   LabFacility,
   OrderStatus,
+  PayoutRecord,
   PickupOrder,
   PlatformNotification,
   ROLE_LABELS,
@@ -21,6 +22,7 @@ import {
   TubeType,
   UserRole,
   type DiagnosticDepartment,
+  type PayoutProfile,
 } from '@diagnostic/shared';
 import { type VerifiedPortalSession } from '../components/LoginPage';
 import { type DynamicAlertVariant } from '../components/DynamicAlertModal';
@@ -31,6 +33,7 @@ import {
   subscribeLabs,
   subscribeNotifications,
   subscribeOrders,
+  subscribePayouts,
   subscribeReports,
   subscribeSettlements,
   subscribeTestCatalog,
@@ -79,8 +82,16 @@ export function LargeLabDashboard({
   const [orders, setOrders] = useState<PickupOrder[]>([]);
   const [reports, setReports] = useState<DiagnosticReportRecord[]>([]);
   const [settlements, setSettlements] = useState<SettlementRecord[]>([]);
+  const [payouts, setPayouts] = useState<PayoutRecord[]>([]);
   const [testCatalog, setTestCatalog] = useState<DiagnosticTestItem[]>([]);
   const [notifications, setNotifications] = useState<PlatformNotification[]>([]);
+
+  // Hub Payout Receiving Details
+  const [payoutMethod, setPayoutMethod] = useState<'UPI' | 'BANK_TRANSFER'>('UPI');
+  const [payoutHolderName, setPayoutHolderName] = useState('');
+  const [payoutUpiId, setPayoutUpiId] = useState('');
+  const [payoutBankLast4, setPayoutBankLast4] = useState('');
+  const [payoutIfsc, setPayoutIfsc] = useState('');
 
   // QC Accessioning Modal
   const [qcOrder, setQcOrder] = useState<PickupOrder | null>(null);
@@ -129,6 +140,7 @@ export function LargeLabDashboard({
       subscribeOrders(session.profile, setOrders),
       subscribeReports(session.profile, setReports),
       subscribeSettlements(session.profile, setSettlements),
+      subscribePayouts(session.profile, setPayouts),
       subscribeTestCatalog(setTestCatalog),
       subscribeNotifications(session.profile, setNotifications),
     ];
@@ -147,6 +159,11 @@ export function LargeLabDashboard({
       setSettingsAddress(myLab.address || '');
       setSettingsNabl(myLab.nablNumber || '');
       setSettingsCutoff(myLab.cutoffWindow || '08:30 PM Daily Cutoff');
+      setPayoutMethod(myLab.payoutProfile?.preferredMethod || 'UPI');
+      setPayoutHolderName(myLab.payoutProfile?.accountHolderName || myLab.name || '');
+      setPayoutUpiId(myLab.payoutProfile?.upiId || '');
+      setPayoutBankLast4(myLab.payoutProfile?.bankAccountLast4 || '');
+      setPayoutIfsc(myLab.payoutProfile?.ifscCode || '');
     }
   }, [myLab, session.profile.displayName]);
 
@@ -161,8 +178,11 @@ export function LargeLabDashboard({
     const inTesting = orders.filter((o) => o.status === OrderStatus.UNDER_ANALYSIS);
     const completed = orders.filter((o) => isOrderCompleted(o.status));
     const totalReceivable = settlements.reduce((s, x) => s + (x.labPayoutInr || 0), 0);
+    const paidReceivable = settlements
+      .filter((s) => s.labPayoutStatus === 'PAID' || s.status === 'SETTLED')
+      .reduce((s, x) => s + (x.labPayoutInr || 0), 0);
     const pendingReceivable = settlements
-      .filter((s) => s.status !== 'SETTLED')
+      .filter((s) => s.labPayoutStatus !== 'PAID' && s.status !== 'SETTLED')
       .reduce((s, x) => s + (x.labPayoutInr || 0), 0);
 
     const statusBreakdown = computeStatusBreakdown(orders);
@@ -180,6 +200,7 @@ export function LargeLabDashboard({
       inTestingCount: inTesting.length,
       completedCount: completed.length,
       totalReceivable,
+      paidReceivable,
       pendingReceivable,
       statusBreakdown,
       weeklyBars,
@@ -840,28 +861,111 @@ export function LargeLabDashboard({
 
           {/* TAB 6: SETTLEMENTS */}
           {activeTab === 'settlements' && (
-            <div className="chart-card-modern">
-              <div className="card-top-header"><h2 className="card-top-title">Receivables &amp; Lab Payouts ({settlements.length})</h2></div>
-              {settlements.length === 0 ? (
-                <div className="empty-state-box"><h4>No Settlement Records Yet</h4><p>Receivables generate live for every booking routed to your hub.</p></div>
-              ) : (
-                <div className="data-table-container">
-                  <table className="modern-data-table">
-                    <thead><tr><th>ID</th><th>Booking</th><th>Source Lab</th><th>Lab Payout</th><th>Status</th></tr></thead>
-                    <tbody>
-                      {settlements.map((s) => (
-                        <tr key={s.id}>
-                          <td><strong>{s.id}</strong></td>
-                          <td>{s.orderNumber}</td>
-                          <td>{s.smallLabName}</td>
-                          <td><strong>{formatInr(s.labPayoutInr)}</strong></td>
-                          <td><span className={s.status === 'SETTLED' ? 'status-pill-green' : 'status-pill-amber'}>{formatLabel(s.status)}</span></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div className="chart-card-modern">
+                <div className="card-top-header">
+                  <div>
+                    <h2 className="card-top-title">Receivables &amp; Lab Payouts ({settlements.length})</h2>
+                    <p style={{ fontSize: '0.8rem', color: '#64748B' }}>
+                      Track customer payment confirmations and payouts sent to your Reference Hub
+                    </p>
+                  </div>
                 </div>
-              )}
+                <div className="kpi-row" style={{ marginBottom: '20px' }}>
+                  <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Total Lab Earnings</span><span className="kpi-main-number">{formatInr(metrics.totalReceivable)}</span></div></div>
+                  <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Paid Out to Hub</span><span className="kpi-main-number">{formatInr(metrics.paidReceivable)}</span></div></div>
+                  <div className="kpi-card-modern"><div className="kpi-body"><span className="kpi-title">Pending Payout</span><span className="kpi-main-number">{formatInr(metrics.pendingReceivable)}</span></div></div>
+                </div>
+                {settlements.length === 0 ? (
+                  <div className="empty-state-box"><h4>No Settlement Records Yet</h4><p>Receivables generate live for every booking routed to your hub.</p></div>
+                ) : (
+                  <div className="data-table-container">
+                    <table className="modern-data-table">
+                      <thead>
+                        <tr>
+                          <th>Invoice ID</th>
+                          <th>Booking</th>
+                          <th>Source Lab</th>
+                          <th>Customer Payment</th>
+                          <th>Lab Share</th>
+                          <th>Payout Status</th>
+                          <th>Reference</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {settlements.map((s) => {
+                          const isLabPaid = s.labPayoutStatus === 'PAID' || s.status === 'SETTLED';
+                          const isCustomerPaid = s.paymentStatus === 'PAID';
+                          return (
+                            <tr key={s.id}>
+                              <td><strong>{s.id}</strong></td>
+                              <td>{s.orderNumber}</td>
+                              <td>{s.smallLabName}</td>
+                              <td>
+                                <span className={isCustomerPaid ? 'status-pill-green' : 'status-pill-amber'}>
+                                  {isCustomerPaid ? 'Paid Online' : 'Payment Due'}
+                                </span>
+                              </td>
+                              <td><strong>{formatInr(s.labPayoutInr)}</strong></td>
+                              <td>
+                                <span className={isLabPaid ? 'status-pill-green' : 'status-pill-amber'}>
+                                  {isLabPaid ? 'Paid Out' : 'Pending Payout'}
+                                </span>
+                              </td>
+                              <td>
+                                <code style={{ fontSize: '0.75rem' }}>
+                                  {s.labPayoutRef || s.razorpayPaymentId || '—'}
+                                </code>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div className="chart-card-modern">
+                <div className="card-top-header">
+                  <h3 className="card-top-title">Payout Receipts ({payouts.length})</h3>
+                </div>
+                {payouts.length === 0 ? (
+                  <div className="empty-state-box">
+                    <h4>No Payout Transfers Recorded Yet</h4>
+                    <p>Completed payouts transferred by Platform Admin appear here with their reference number.</p>
+                  </div>
+                ) : (
+                  <div className="data-table-container">
+                    <table className="modern-data-table">
+                      <thead>
+                        <tr>
+                          <th>Payout ID</th>
+                          <th>Order</th>
+                          <th>Mode</th>
+                          <th>Destination</th>
+                          <th>Reference</th>
+                          <th>Amount</th>
+                          <th>Date</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {payouts.map((p) => (
+                          <tr key={p.id}>
+                            <td><strong>{p.id}</strong></td>
+                            <td>{p.orderNumber}</td>
+                            <td>{p.mode}</td>
+                            <td>{p.destinationSummary}</td>
+                            <td><code>{p.referenceId}</code></td>
+                            <td><strong>{formatInr(p.amountInr)}</strong></td>
+                            <td>{new Date(p.createdAt).toLocaleString('en-IN')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -886,8 +990,8 @@ export function LargeLabDashboard({
 
           {/* TAB 8: SETTINGS */}
           {activeTab === 'settings' && (
-            <div className="chart-card-modern" style={{ maxWidth: '640px' }}>
-              <h2 className="card-top-title">Reference Hub Facility Profile</h2>
+            <div className="chart-card-modern" style={{ maxWidth: '680px' }}>
+              <h2 className="card-top-title">Reference Hub Facility &amp; Payout Settings</h2>
               <form
                 style={{ marginTop: '16px' }}
                 onSubmit={async (e) => {
@@ -896,14 +1000,23 @@ export function LargeLabDashboard({
                     onShowAlert({ variant: 'warning', title: 'Missing Lab Profile', message: 'Ask Admin to link a Reference Lab facility ID to your account.' });
                     return;
                   }
+                  const payoutProfile: PayoutProfile = {
+                    preferredMethod: payoutMethod,
+                    accountHolderName: payoutHolderName.trim() || settingsName.trim(),
+                    ...(payoutUpiId.trim() ? { upiId: payoutUpiId.trim() } : {}),
+                    ...(payoutBankLast4.trim() ? { bankAccountLast4: payoutBankLast4.trim().slice(-4) } : {}),
+                    ...(payoutIfsc.trim() ? { ifscCode: payoutIfsc.trim().toUpperCase() } : {}),
+                    updatedAt: new Date().toISOString(),
+                  };
                   await updateLabOperationsProfile(session.profile.labId, {
                     name: settingsName,
                     city: settingsCity,
                     address: settingsAddress,
                     nablNumber: settingsNabl,
                     cutoffWindow: settingsCutoff,
+                    payoutProfile,
                   });
-                  onShowAlert({ variant: 'success', title: 'Hub Settings Saved', message: 'Facility profile updated successfully.' });
+                  onShowAlert({ variant: 'success', title: 'Hub Settings Saved', message: 'Facility and payout receiving details updated successfully.' });
                 }}
               >
                 <div className="form-group"><label className="form-label">Hub Display Name</label><input className="form-input" value={settingsName} onChange={(e) => setSettingsName(e.target.value)} required /></div>
@@ -911,7 +1024,37 @@ export function LargeLabDashboard({
                 <div className="form-group"><label className="form-label">Address</label><input className="form-input" value={settingsAddress} onChange={(e) => setSettingsAddress(e.target.value)} /></div>
                 <div className="form-group"><label className="form-label">NABL Accreditation</label><input className="form-input" value={settingsNabl} onChange={(e) => setSettingsNabl(e.target.value)} /></div>
                 <div className="form-group"><label className="form-label">Daily Sample Cutoff</label><input className="form-input" value={settingsCutoff} onChange={(e) => setSettingsCutoff(e.target.value)} /></div>
-                <button type="submit" className="btn-primary">Save Facility Profile</button>
+
+                <div style={{ borderTop: '1px solid #E2E8F0', margin: '18px 0 14px', paddingTop: '14px' }}>
+                  <h3 style={{ fontSize: '0.96rem', fontWeight: 700, marginBottom: '12px' }}>Payout Account Details</h3>
+                  <div className="form-group">
+                    <label className="form-label">Preferred Settlement Method</label>
+                    <select className="form-select" value={payoutMethod} onChange={(e) => setPayoutMethod(e.target.value as 'UPI' | 'BANK_TRANSFER')}>
+                      <option value="UPI">UPI Transfer</option>
+                      <option value="BANK_TRANSFER">Bank Transfer (NEFT / IMPS)</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Beneficiary / Business Account Name</label>
+                    <input className="form-input" placeholder="e.g. Metro Diagnostics Pvt Ltd" value={payoutHolderName} onChange={(e) => setPayoutHolderName(e.target.value)} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">UPI ID (Optional)</label>
+                    <input className="form-input" placeholder="e.g. labhub@icici" value={payoutUpiId} onChange={(e) => setPayoutUpiId(e.target.value)} />
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div className="form-group">
+                      <label className="form-label">Bank Account Last 4 Digits</label>
+                      <input className="form-input" maxLength={4} placeholder="e.g. 4821" value={payoutBankLast4} onChange={(e) => setPayoutBankLast4(e.target.value.replace(/\D/g, ''))} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">IFSC Code</label>
+                      <input className="form-input" placeholder="e.g. HDFC0000123" value={payoutIfsc} onChange={(e) => setPayoutIfsc(e.target.value.toUpperCase())} />
+                    </div>
+                  </div>
+                </div>
+
+                <button type="submit" className="btn-primary">Save Facility &amp; Payout Profile</button>
               </form>
             </div>
           )}

@@ -190,6 +190,17 @@ export async function requireAuth(
   return next(new AppError('Please sign in to continue.', 401, 'UNAUTHORIZED'));
 }
 
+export function optionalAuth(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> | void {
+  if (req.headers.authorization?.startsWith('Bearer ')) {
+    return requireAuth(req, res, next);
+  }
+  return next();
+}
+
 /**
  * Role-Based Access Control Middleware
  */

@@ -16,7 +16,7 @@ import {
   isTemperatureCompliant,
   isValidSpecimenBarcode,
 } from './types';
-import { ADMIN_EMAIL, AppError, auth, db, PROJECT_ID, SMTP_CONFIG } from './firebaseAdmin';
+import { ADMIN_EMAIL, AppError, auth, db, PROJECT_ID, RAZORPAY_CONFIG, SMTP_CONFIG } from './firebaseAdmin';
 import {
   createOrUpdateManagedUser,
   findProvisionedUserByEmail,
@@ -34,6 +34,13 @@ import {
   sendPlatformNotification,
   updateNotificationSettings,
 } from './mailer';
+import {
+  createRazorpayOrder,
+  createRazorpayPaymentLink,
+  releaseSettlementPayout,
+  syncPaymentLinkStatus,
+  verifyRazorpayPayment,
+} from './razorpay';
 
 interface AuthenticatedRequest extends Request {
   user?: UserCustomClaims & { uid: string; email?: string };
@@ -113,6 +120,17 @@ function requireRoles(...allowedRoles: UserRole[]) {
   };
 }
 
+function optionalAuth(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> | void {
+  if (req.headers.authorization?.startsWith('Bearer ')) {
+    return requireAuth(req, res, next);
+  }
+  return next();
+}
+
 function resolveClientPlatform(req: Request): 'WEB' | 'MOBILE' | undefined {
   const bodyType = req.body?.clientType;
   if (bodyType === 'WEB' || bodyType === 'MOBILE') return bodyType;
@@ -129,9 +147,17 @@ export function createCloudApiApp(): Application {
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
-  // Normalize direct Cloud Function calls (/health) as well as Hosting rewrites (/api/v1/health)
+  // Normalize direct Cloud Function calls (/health, /create-order) as well as Hosting rewrites (/api/v1/*, /api/*)
   app.use((req: Request, _res: Response, next: NextFunction) => {
-    if (!req.url.startsWith('/api/v1')) {
+    if (req.url === '/api/create-order' || req.url.startsWith('/api/create-order?')) {
+      req.url = req.url.replace('/api/create-order', '/api/v1/payments/create-order');
+    } else if (req.url === '/create-order' || req.url.startsWith('/create-order?')) {
+      req.url = req.url.replace('/create-order', '/api/v1/payments/create-order');
+    } else if (req.url === '/api/verify-payment' || req.url.startsWith('/api/verify-payment?')) {
+      req.url = req.url.replace('/api/verify-payment', '/api/v1/payments/verify-payment');
+    } else if (req.url === '/verify-payment' || req.url.startsWith('/verify-payment?')) {
+      req.url = req.url.replace('/verify-payment', '/api/v1/payments/verify-payment');
+    } else if (!req.url.startsWith('/api/v1')) {
       req.url = `/api/v1${req.url.startsWith('/') ? req.url : `/${req.url}`}`;
     }
     next();
@@ -150,6 +176,7 @@ export function createCloudApiApp(): Application {
         firebaseConnected: true,
         adminEmail: ADMIN_EMAIL,
         smtpConfigured: Boolean(SMTP_CONFIG.pass),
+        razorpayConfigured: Boolean(RAZORPAY_CONFIG.keyId && RAZORPAY_CONFIG.keySecret),
       },
       message: 'LabSetu Firebase Cloud Functions Backend is operational',
       timestamp: new Date().toISOString(),
@@ -659,6 +686,191 @@ export function createCloudApiApp(): Application {
         return res.json({
           success: true,
           data: { registered: true },
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        return next(err);
+      }
+    }
+  );
+
+  // PAYMENTS & PARTNER PAYOUTS (Razorpay Standard Checkout + Payment Links + Split Payouts)
+  app.get('/api/v1/payments/config', (_req: Request, res: Response) => {
+    res.json({
+      success: true,
+      data: {
+        razorpayConfigured: Boolean(RAZORPAY_CONFIG.keyId && RAZORPAY_CONFIG.keySecret),
+        razorpayXEnabled: Boolean(RAZORPAY_CONFIG.xAccountNumber),
+        keyId: RAZORPAY_CONFIG.keyId || null,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  app.post(
+    '/api/v1/payments/create-order',
+    optionalAuth,
+    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      try {
+        const { amount, amountInr, currency, receipt, bookingId, settlementId, notes } =
+          req.body || {};
+
+        if ((bookingId || settlementId) && !req.user) {
+          return next(
+            new AppError('Authentication required to pay for a booking invoice.', 401, 'UNAUTHORIZED')
+          );
+        }
+
+        const result = await createRazorpayOrder({
+          amount,
+          amountInr,
+          currency,
+          receipt,
+          bookingId,
+          settlementId,
+          notes,
+          requesterUid: req.user?.uid,
+          requesterRole: req.user?.role,
+          requesterLabId: req.user?.labId,
+        });
+
+        return res.status(200).json({
+          success: true,
+          order_id: result.order_id,
+          amount: result.amount,
+          currency: result.currency,
+          receipt: result.receipt,
+          key_id: result.key_id,
+          data: result,
+          message: 'Payment order initialized successfully',
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        return next(err);
+      }
+    }
+  );
+
+  app.post(
+    '/api/v1/payments/verify-payment',
+    optionalAuth,
+    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      try {
+        const {
+          razorpay_order_id,
+          razorpay_payment_id,
+          razorpay_signature,
+          bookingId,
+          settlementId,
+          collectedByRole,
+          paymentMethod,
+        } = req.body || {};
+
+        const result = await verifyRazorpayPayment({
+          razorpay_order_id,
+          razorpay_payment_id,
+          razorpay_signature,
+          bookingId,
+          settlementId,
+          collectedByRole:
+            collectedByRole ||
+            (req.user?.role === UserRole.PHLEBOTOMIST
+              ? 'PHLEBOTOMIST'
+              : req.user?.role === UserRole.ADMIN
+              ? 'ADMIN'
+              : req.user?.role === UserRole.SMALL_LAB
+              ? 'SMALL_LAB'
+              : undefined),
+          paymentMethod,
+        });
+
+        return res.status(200).json({
+          success: true,
+          verified: true,
+          order_id: result.order_id,
+          payment_id: result.payment_id,
+          data: result,
+          message: 'Payment signature verified successfully',
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        return next(err);
+      }
+    }
+  );
+
+  app.post(
+    '/api/v1/payments/create-payment-link',
+    requireAuth,
+    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      try {
+        const result = await createRazorpayPaymentLink({
+          ...(req.body || {}),
+          customerEmail: req.body?.customerEmail || req.user?.email,
+        });
+        return res.status(200).json({
+          success: true,
+          data: result,
+          message: 'Hosted payment link created successfully',
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        return next(err);
+      }
+    }
+  );
+
+  app.get(
+    '/api/v1/payments/payment-link/:id',
+    requireAuth,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const result = await syncPaymentLinkStatus(
+          req.params.id,
+          req.query.bookingId as string | undefined,
+          req.query.settlementId as string | undefined
+        );
+        return res.status(200).json({
+          success: true,
+          data: result,
+          message: result.paid ? 'Payment link settled and recorded' : 'Payment still awaiting completion',
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        return next(err);
+      }
+    }
+  );
+
+  app.post(
+    '/api/v1/payments/payout',
+    requireAuth,
+    requireRoles(UserRole.ADMIN),
+    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      try {
+        const { settlementId, recipientType, mode, referenceId, notes, forceWithoutCollection } =
+          req.body || {};
+
+        if (!settlementId || !recipientType) {
+          return next(
+            new AppError('Missing required fields: settlementId and recipientType', 400, 'BAD_REQUEST')
+          );
+        }
+
+        const result = await releaseSettlementPayout({
+          settlementId,
+          recipientType,
+          mode,
+          referenceId,
+          notes,
+          forceWithoutCollection: Boolean(forceWithoutCollection),
+          adminEmail: req.user?.email || ADMIN_EMAIL,
+        });
+
+        return res.status(200).json({
+          success: true,
+          data: result,
+          message: `Released ${result.payouts.length} payout(s) for settlement ${settlementId}`,
           timestamp: new Date().toISOString(),
         });
       } catch (err) {

@@ -3,6 +3,16 @@ import { SpecimenQualityStatus, SpecimenType, StorageTemperature, TubeType } fro
 export type LabFacilityTier = 'SMALL_LAB' | 'LARGE_LAB';
 export type LabVerificationStatus = 'VERIFIED' | 'PENDING' | 'REJECTED';
 
+export interface PayoutProfile {
+  accountHolderName?: string;
+  upiId?: string;
+  bankAccountLast4?: string;
+  bankAccountNumber?: string;
+  ifscCode?: string;
+  preferredMethod?: 'UPI' | 'BANK_TRANSFER';
+  updatedAt?: string;
+}
+
 export interface LabFacility {
   id: string;
   name: string;
@@ -17,6 +27,7 @@ export interface LabFacility {
   cutoffWindow?: string;
   rating?: number;
   courierEtaMins?: number;
+  payoutProfile?: PayoutProfile;
   createdAt: string;
   updatedAt: string;
 }
@@ -39,6 +50,7 @@ export interface PhlebotomistProfile {
   rating: number;
   totalPickups: number;
   verified: boolean;
+  payoutProfile?: PayoutProfile;
   createdAt: string;
   updatedAt: string;
 }
@@ -119,10 +131,44 @@ export interface SettlementRecord {
   labPayoutInr: number;
   phleboPayoutInr: number;
   billingPeriod: string;
+  paymentStatus?: 'UNPAID' | 'PAID' | 'FAILED' | 'REFUNDED';
+  razorpayOrderId?: string;
+  razorpayPaymentId?: string;
+  razorpayPaymentLinkId?: string;
+  paidAt?: string;
+  paymentMethod?: string;
+  collectedByRole?: 'SMALL_LAB' | 'PHLEBOTOMIST' | 'ADMIN';
+  labPayoutStatus?: 'PENDING' | 'PAID';
+  phleboPayoutStatus?: 'PENDING' | 'PAID';
+  labPayoutRef?: string;
+  phleboPayoutRef?: string;
+  labPaidAt?: string;
+  phleboPaidAt?: string;
+  payoutMode?: 'UPI' | 'IMPS' | 'NEFT' | 'RAZORPAYX';
+  payoutNotes?: string;
   status: 'PENDING' | 'SETTLED';
   settledAt?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PayoutRecord {
+  id: string;
+  settlementId: string;
+  orderId: string;
+  orderNumber: string;
+  recipientRole: 'LARGE_LAB' | 'PHLEBOTOMIST';
+  recipientId: string;
+  recipientName: string;
+  amountInr: number;
+  mode: 'UPI' | 'IMPS' | 'NEFT' | 'RAZORPAYX';
+  referenceId: string;
+  destinationSummary: string;
+  gatewayPayoutId?: string;
+  status: 'PROCESSED' | 'INITIATED' | 'FAILED';
+  processedByEmail: string;
+  notes?: string;
+  createdAt: string;
 }
 
 export interface PlatformSlaConfig {

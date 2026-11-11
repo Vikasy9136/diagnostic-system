@@ -72,6 +72,13 @@ export interface PickupOrder {
   reportId?: string;
   totalAmountInr?: number;
   courierFeeInr?: number;
+  paymentStatus?: 'UNPAID' | 'PAID' | 'FAILED' | 'REFUNDED';
+  razorpayOrderId?: string;
+  razorpayPaymentId?: string;
+  razorpayPaymentLinkId?: string;
+  paidAt?: string;
+  paymentMethod?: string;
+  collectedByRole?: 'SMALL_LAB' | 'PHLEBOTOMIST' | 'ADMIN';
   handoverOtp?: string;
   arrivalTemperatureCelsius?: number;
   qualityStatus?: SpecimenQualityStatus;

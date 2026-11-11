@@ -197,8 +197,21 @@ service cloud.firestore {
         || (isSmallLab() && (resource.data.smallLabId == getLabId() || getLabId() == null))
         || (isLargeLab() && (resource.data.targetLabId == getLabId() || getLabId() == null))
         || (isPhlebotomist() && resource.data.phlebotomistId == getPhlebotomistId());
-      allow create: if isAdmin() || isSmallLab() || isLargeLab();
+      allow create: if isAdmin()
+        || ((isSmallLab() || isLargeLab())
+          && request.resource.data.status == 'PENDING'
+          && (!('paymentStatus' in request.resource.data) || request.resource.data.paymentStatus == 'UNPAID'));
       allow update, delete: if isAdmin();
+    }
+
+    // =========================================================================
+    // 8B. PARTNER PAYOUTS LEDGER (`payouts/{payoutId}`) - SERVER WRITTEN ONLY
+    // =========================================================================
+    match /payouts/{payoutId} {
+      allow read: if isAdmin()
+        || (isLargeLab() && resource.data.recipientRole == 'LARGE_LAB' && (resource.data.recipientId == getLabId() || getLabId() == null))
+        || (isPhlebotomist() && resource.data.recipientRole == 'PHLEBOTOMIST' && resource.data.recipientId == getPhlebotomistId());
+      allow write: if false;
     }
 
     // =========================================================================

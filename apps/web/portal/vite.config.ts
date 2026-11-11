@@ -11,7 +11,7 @@ export default defineConfig({
     port: portalPort,
     host: true,
     proxy: {
-      '/api/v1': {
+      '/api': {
         target: apiProxyTarget,
         changeOrigin: true,
       },

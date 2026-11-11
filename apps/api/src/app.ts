@@ -7,6 +7,12 @@ import { ordersRouter } from './routes/orders.routes';
 import { notificationsRouter } from './routes/notifications.routes';
 import { authRouter } from './routes/auth.routes';
 import { usersRouter } from './routes/users.routes';
+import {
+  handleCreateOrderRoute,
+  handleVerifyPaymentRoute,
+  paymentsRouter,
+} from './routes/payments.routes';
+import { optionalAuth } from './middleware/auth';
 import { errorHandler, AppError } from './middleware/errorHandler';
 import { forwardToCloudApiIfLocalMock } from './middleware/cloudProxy';
 
@@ -33,11 +39,14 @@ export function createApp(): Application {
 
   // API Routes
   app.use('/api/v1/health', healthRouter);
-  app.use('/api/v1', forwardToCloudApiIfLocalMock);
+  app.use('/api', forwardToCloudApiIfLocalMock);
+  app.post('/api/create-order', optionalAuth, handleCreateOrderRoute);
+  app.post('/api/verify-payment', optionalAuth, handleVerifyPaymentRoute);
   app.use('/api/v1/auth', authRouter);
   app.use('/api/v1/users', usersRouter);
   app.use('/api/v1/orders', ordersRouter);
   app.use('/api/v1/notifications', notificationsRouter);
+  app.use('/api/v1/payments', paymentsRouter);
 
   // 404 Not Found Handler
   app.use((req: Request, _res: Response, next: NextFunction) => {
