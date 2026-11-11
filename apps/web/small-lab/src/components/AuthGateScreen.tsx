@@ -475,9 +475,9 @@ export function AuthGateScreen({
       });
     } catch {
       const msg =
-        'Authentication API server is unreachable (http://localhost:5000). Start `npm run dev:api` to send & verify Email OTPs, or use Google / Password sign-in.';
+        'Email OTP backend (/api/v1) is unreachable. Run `npm run dev` locally or deploy Firebase Cloud Functions, or sign in via Google / Email & Password.';
       setInlineError(msg);
-      onShowAlert({ variant: 'error', title: 'API Server Offline', message: msg });
+      onShowAlert({ variant: 'error', title: 'OTP Backend Offline', message: msg });
     } finally {
       setAuthSubmitting(false);
     }

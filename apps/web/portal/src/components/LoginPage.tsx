@@ -466,9 +466,9 @@ export function LoginPage({
       onShowAlert({ variant: 'success', title: 'OTP Dispatched', message: deliveryNote });
     } catch {
       const msg =
-        'Email OTP backend server (http://localhost:5000) is offline. Start `npm run dev:api` for Email OTP, or sign in directly via Google or Email & Password.';
+        'Email OTP backend (/api/v1) is offline. Run `npm run dev` locally or deploy Firebase Cloud Functions, or sign in directly via Google or Email & Password.';
       setInlineError(msg);
-      onShowAlert({ variant: 'warning', title: 'OTP API Server Offline', message: msg });
+      onShowAlert({ variant: 'warning', title: 'OTP Backend Offline', message: msg });
     } finally {
       setSubmitting(false);
     }

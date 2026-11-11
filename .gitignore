@@ -28,6 +28,7 @@ ui-debug.log*
 pubsub-debug.log*
 database-debug.log*
 .firebase/
+.runtimeconfig.json
 
 # Expo & React Native
 .expo/

@@ -812,8 +812,8 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
                   {authSubmitting
                     ? 'Please wait...'
                     : otpSent
-                    ? 'Verify OTP & Open App'
-                    : 'Send 6-Digit Email OTP'}
+                      ? 'Verify OTP & Open App'
+                      : 'Send 6-Digit Email OTP'}
                 </Text>
               </TouchableOpacity>
 

@@ -10,6 +10,8 @@
     "apps/phlebo-app"
   ],
   "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:all": "node scripts/dev.mjs --all",
     "dev:api": "npm --workspace=@diagnostic/api run dev",
     "dev:portal": "npm --workspace=@diagnostic/portal run dev",
     "dev:small-lab": "npm --workspace=@diagnostic/small-lab run dev",
@@ -18,9 +20,11 @@
     "dev:phlebo": "npm --workspace=@diagnostic/phlebo-app run start",
     "build:shared": "npm --workspace=@diagnostic/shared run build",
     "build:api": "npm --workspace=@diagnostic/api run build",
+    "build:functions": "npm --prefix firebase/functions run build",
     "build:web": "npm run build --workspaces --if-present",
-    "build:all": "npm run build:shared && npm run build:api && npm run build:web",
+    "build:all": "npm run build:shared && npm run build:api && npm run build:web && npm run build:functions",
     "seed:firebase": "npm --workspace=@diagnostic/api run seed:firebase",
+    "firebase:deploy": "npm run build:shared && npm --workspace=@diagnostic/portal run build && npm run build:functions && firebase deploy --project labsetu-diagnostics --config firebase/firebase.json",
     "firebase:deploy:rules": "firebase deploy --only firestore,storage --project labsetu-diagnostics --config firebase/firebase.json",
     "lint": "npm run lint --workspaces --if-present"
   },

@@ -13,8 +13,15 @@ import {
 export const ADMIN_LOGIN_EMAIL =
   import.meta.env.VITE_ADMIN_EMAIL || 'lab.setu.admin@gmail.com';
 
+const configuredApiUrl = import.meta.env.VITE_API_URL?.trim();
+const isLocalHost =
+  typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
 export const API_BASE_URL =
-  import.meta.env.VITE_API_URL || 'http://localhost:5000/api/v1';
+  configuredApiUrl && (!configuredApiUrl.includes('localhost') || isLocalHost)
+    ? configuredApiUrl
+    : '/api/v1';
 
 export const PORTAL_URLS = {
   PORTAL: import.meta.env.VITE_PORTAL_URL || 'http://localhost:3003',
@@ -61,3 +68,4 @@ if (import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'true') {
     console.warn('⚠️ Emulator connection already initialized or failed:', err);
   }
 }
+

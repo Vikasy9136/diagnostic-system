@@ -141,3 +141,4 @@ export interface CommissionConfig {
   updatedBy?: string;
   updatedAt: string;
 }
+

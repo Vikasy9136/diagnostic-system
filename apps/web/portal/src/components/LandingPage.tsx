@@ -383,3 +383,4 @@ export function LandingPage({ onGoToLogin }: LandingPageProps) {
     </div>
   );
 }
+

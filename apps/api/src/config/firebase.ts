@@ -66,6 +66,16 @@ export function initializeFirebase(): {
         projectId: config.firebase.projectId,
         storageBucket: config.firebase.storageBucket,
       });
+    } else if (
+      process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+      process.env.FUNCTION_TARGET ||
+      process.env.K_SERVICE
+    ) {
+      console.log('ℹ️  Firebase Admin: Initializing with Application Default Credentials.');
+      firebaseApp = admin.initializeApp({
+        projectId: config.firebase.projectId,
+        storageBucket: config.firebase.storageBucket,
+      });
     } else {
       console.log(
         'ℹ️  Firebase Admin: No serviceAccountKey.json found yet. Running in Development Mock Mode.'

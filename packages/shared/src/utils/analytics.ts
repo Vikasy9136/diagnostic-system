@@ -144,3 +144,4 @@ export function computeDailyVolumeBars(orders: PickupOrder[]): DailyVolumeBar[] 
 
   return orderedLabels.map((d) => map.get(d)!);
 }
+
