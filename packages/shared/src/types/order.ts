@@ -37,6 +37,17 @@ export interface PatientMetadata {
   gender: 'MALE' | 'FEMALE' | 'OTHER';
 }
 
+export type DropDestinationType = 'LARGE_LAB' | 'SELF_DROP' | 'CUSTOM_ADDRESS';
+
+export interface LiveGeoCoordinate {
+  latitude: number;
+  longitude: number;
+  heading?: number;
+  accuracyMeters?: number;
+  speedKmph?: number;
+  updatedAt: string;
+}
+
 /**
  * Main Diagnostic Sample Pickup Order
  */
@@ -47,6 +58,8 @@ export interface PickupOrder {
   smallLabName: string;
   targetLabId: string;
   targetLabName: string;
+  targetParentLabId?: string;
+  dropType?: DropDestinationType;
   phlebotomistId?: string;
   phlebotomistName?: string;
   status: OrderStatus;
@@ -64,6 +77,8 @@ export interface PickupOrder {
     address: string;
     latitude: number;
     longitude: number;
+    contactName?: string;
+    contactPhone?: string;
   };
   scheduledPickupAt: string;
   actualPickupAt?: string;
@@ -72,6 +87,14 @@ export interface PickupOrder {
   reportId?: string;
   totalAmountInr?: number;
   courierFeeInr?: number;
+  largeLabB2bAmountInr?: number;
+  platformFeeInr?: number;
+  matchedPackageNames?: string[];
+  packageSavingsInr?: number;
+  distanceKm?: number;
+  broadcastRadiusKm?: number;
+  sampleCollectionPhotoUrl?: string;
+  phleboLiveLocation?: LiveGeoCoordinate;
   paymentStatus?: 'UNPAID' | 'PAID' | 'FAILED' | 'REFUNDED';
   razorpayOrderId?: string;
   razorpayPaymentId?: string;

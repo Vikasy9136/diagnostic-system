@@ -44,7 +44,25 @@ ordersRouter.get('/', requireAuth, async (req: AuthenticatedRequest, res: Respon
       }
 
       const snap = await ref.limit(200).get();
-      let orders = snap.docs.map((doc) => ({ id: doc.id, ...(doc.data() as Omit<PickupOrder, 'id'>) }));
+      const orderMap = new Map<string, PickupOrder>();
+      snap.docs.forEach((doc) => {
+        orderMap.set(doc.id, { id: doc.id, ...(doc.data() as Omit<PickupOrder, 'id'>) });
+      });
+
+      if (role === UserRole.LARGE_LAB && labId && !req.user?.parentLabId) {
+        const parentSnap = await db
+          .collection('orders')
+          .where('targetParentLabId', '==', labId)
+          .limit(200)
+          .get();
+        parentSnap.docs.forEach((doc) => {
+          if (!orderMap.has(doc.id)) {
+            orderMap.set(doc.id, { id: doc.id, ...(doc.data() as Omit<PickupOrder, 'id'>) });
+          }
+        });
+      }
+
+      let orders = Array.from(orderMap.values());
 
       if (role === UserRole.PHLEBOTOMIST && phleboId) {
         orders = orders.filter(
@@ -104,6 +122,8 @@ ordersRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res: Respo
       smallLabName,
       targetLabId: req.body.targetLabId || 'LAB-LG-UNASSIGNED',
       targetLabName: targetLabName || 'Partner Reference Lab',
+      ...(req.body.targetParentLabId ? { targetParentLabId: req.body.targetParentLabId } : {}),
+      ...(req.body.dropType ? { dropType: req.body.dropType } : {}),
       ...(req.body.phlebotomistId ? { phlebotomistId: req.body.phlebotomistId } : {}),
       ...(req.body.phlebotomistName ? { phlebotomistName: req.body.phlebotomistName } : {}),
       status: OrderStatus.READY_FOR_PICKUP,
@@ -124,6 +144,20 @@ ordersRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res: Respo
       scheduledPickupAt: req.body.scheduledPickupAt || now,
       ...(typeof req.body.totalAmountInr === 'number' ? { totalAmountInr: req.body.totalAmountInr } : {}),
       ...(typeof req.body.courierFeeInr === 'number' ? { courierFeeInr: req.body.courierFeeInr } : {}),
+      ...(typeof req.body.largeLabB2bAmountInr === 'number'
+        ? { largeLabB2bAmountInr: req.body.largeLabB2bAmountInr }
+        : {}),
+      ...(typeof req.body.platformFeeInr === 'number' ? { platformFeeInr: req.body.platformFeeInr } : {}),
+      ...(typeof req.body.packageSavingsInr === 'number'
+        ? { packageSavingsInr: req.body.packageSavingsInr }
+        : {}),
+      ...(Array.isArray(req.body.matchedPackageNames)
+        ? { matchedPackageNames: req.body.matchedPackageNames }
+        : {}),
+      ...(typeof req.body.distanceKm === 'number' ? { distanceKm: req.body.distanceKm } : {}),
+      ...(typeof req.body.broadcastRadiusKm === 'number'
+        ? { broadcastRadiusKm: req.body.broadcastRadiusKm }
+        : {}),
       createdAt: now,
       updatedAt: now,
     };
@@ -214,6 +248,11 @@ ordersRouter.patch('/:id', requireAuth, async (req: AuthenticatedRequest, res: R
       ...(updates.reportId ? { reportId: updates.reportId } : {}),
       ...(updates.rejectionReason ? { rejectionReason: updates.rejectionReason } : {}),
       ...(updates.cancellationReason ? { cancellationReason: updates.cancellationReason } : {}),
+      ...(updates.phleboLiveLocation ? { phleboLiveLocation: updates.phleboLiveLocation } : {}),
+      ...(updates.sampleCollectionPhotoUrl
+        ? { sampleCollectionPhotoUrl: updates.sampleCollectionPhotoUrl }
+        : {}),
+      ...(Array.isArray(updates.specimens) ? { specimens: updates.specimens } : {}),
       updatedAt: now,
     };
 

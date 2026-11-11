@@ -92,7 +92,13 @@ async function requireAuth(
       uid: decoded.uid,
       email: decoded.email,
       role: tokenRole,
+      ...(provisioned?.adminSubRole || decoded.adminSubRole
+        ? { adminSubRole: (provisioned?.adminSubRole || decoded.adminSubRole) as UserCustomClaims['adminSubRole'] }
+        : {}),
       labId: (provisioned?.labId || decoded.labId) as string | undefined,
+      ...(provisioned?.parentLabId || decoded.parentLabId
+        ? { parentLabId: (provisioned?.parentLabId || decoded.parentLabId) as string }
+        : {}),
       phlebotomistId: (provisioned?.phlebotomistId || decoded.phlebotomistId) as string | undefined,
     };
     return next();
@@ -392,10 +398,32 @@ export function createCloudApiApp(): Application {
         }
 
         const snap = await ref.limit(200).get();
-        let orders: Array<Record<string, unknown>> = snap.docs.map((doc) => ({
-          ...(doc.data() as Record<string, unknown>),
-          id: doc.id,
-        }));
+        const orderMap = new Map<string, Record<string, unknown>>();
+        snap.docs.forEach((doc) => {
+          orderMap.set(doc.id, {
+            ...(doc.data() as Record<string, unknown>),
+            id: doc.id,
+          });
+        });
+
+        // Main HQ Large Lab also aggregates orders dispatched to its Collection Centers
+        if (role === UserRole.LARGE_LAB && labId && !req.user?.parentLabId) {
+          const parentSnap = await db
+            .collection('orders')
+            .where('targetParentLabId', '==', labId)
+            .limit(200)
+            .get();
+          parentSnap.docs.forEach((doc) => {
+            if (!orderMap.has(doc.id)) {
+              orderMap.set(doc.id, {
+                ...(doc.data() as Record<string, unknown>),
+                id: doc.id,
+              });
+            }
+          });
+        }
+
+        let orders: Array<Record<string, unknown>> = Array.from(orderMap.values());
 
         if (role === UserRole.PHLEBOTOMIST && phleboId) {
           orders = orders.filter(
@@ -442,6 +470,8 @@ export function createCloudApiApp(): Application {
           smallLabName,
           targetLabId: req.body.targetLabId || 'LAB-LG-UNASSIGNED',
           targetLabName: targetLabName || 'Partner Reference Lab',
+          ...(req.body.targetParentLabId ? { targetParentLabId: req.body.targetParentLabId } : {}),
+          ...(req.body.dropType ? { dropType: req.body.dropType } : {}),
           ...(req.body.phlebotomistId ? { phlebotomistId: req.body.phlebotomistId } : {}),
           ...(req.body.phlebotomistName ? { phlebotomistName: req.body.phlebotomistName } : {}),
           status: OrderStatus.READY_FOR_PICKUP,
@@ -465,6 +495,25 @@ export function createCloudApiApp(): Application {
             : {}),
           ...(typeof req.body.courierFeeInr === 'number'
             ? { courierFeeInr: req.body.courierFeeInr }
+            : {}),
+          ...(typeof req.body.largeLabB2bAmountInr === 'number'
+            ? { largeLabB2bAmountInr: req.body.largeLabB2bAmountInr }
+            : {}),
+          ...(typeof req.body.platformFeeInr === 'number'
+            ? { platformFeeInr: req.body.platformFeeInr }
+            : {}),
+          ...(typeof req.body.phleboPayoutInr === 'number'
+            ? { phleboPayoutInr: req.body.phleboPayoutInr }
+            : {}),
+          ...(typeof req.body.packageSavingsInr === 'number'
+            ? { packageSavingsInr: req.body.packageSavingsInr }
+            : {}),
+          ...(Array.isArray(req.body.matchedPackageNames)
+            ? { matchedPackageNames: req.body.matchedPackageNames }
+            : {}),
+          ...(typeof req.body.distanceKm === 'number' ? { distanceKm: req.body.distanceKm } : {}),
+          ...(typeof req.body.broadcastRadiusKm === 'number'
+            ? { broadcastRadiusKm: req.body.broadcastRadiusKm }
             : {}),
           createdAt: now,
           updatedAt: now,
@@ -561,6 +610,11 @@ export function createCloudApiApp(): Application {
           ...(updates.reportId ? { reportId: updates.reportId } : {}),
           ...(updates.rejectionReason ? { rejectionReason: updates.rejectionReason } : {}),
           ...(updates.cancellationReason ? { cancellationReason: updates.cancellationReason } : {}),
+          ...(updates.phleboLiveLocation ? { phleboLiveLocation: updates.phleboLiveLocation } : {}),
+          ...(updates.sampleCollectionPhotoUrl
+            ? { sampleCollectionPhotoUrl: updates.sampleCollectionPhotoUrl }
+            : {}),
+          ...(Array.isArray(updates.specimens) ? { specimens: updates.specimens } : {}),
           updatedAt: now,
         };
 

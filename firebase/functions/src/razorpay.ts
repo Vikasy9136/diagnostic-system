@@ -671,10 +671,18 @@ export async function releaseSettlementPayout(input: ReleasePayoutInput) {
     labPayoutInr > 0
   ) {
     const targetLabId = String(stl.targetLabId || '');
+    const targetParentLabId = stl.targetParentLabId ? String(stl.targetParentLabId) : '';
     const targetLabName = String(stl.targetLabName || 'Partner Reference Lab');
     const labSnap = targetLabId ? await db.collection('labs').doc(targetLabId).get() : null;
     const labData = (labSnap?.data() as Record<string, unknown> | undefined) || {};
-    const payoutProfile = (labData.payoutProfile || {}) as Record<string, string>;
+    const parentSnap =
+      !labData.payoutProfile && targetParentLabId
+        ? await db.collection('labs').doc(targetParentLabId).get()
+        : null;
+    const parentData = (parentSnap?.data() as Record<string, unknown> | undefined) || {};
+    const payoutProfile = ((labData.payoutProfile as Record<string, string>) ||
+      (parentData.payoutProfile as Record<string, string>) ||
+      {}) as Record<string, string>;
 
     const destSummary = payoutProfile.upiId
       ? `UPI: ${payoutProfile.upiId}`

@@ -1,24 +1,31 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
+  type CatalogItemType,
+  type CommissionConfig,
   computeDailyVolumeBars,
   computeStatusBreakdown,
+  CustodyEvent,
   CustodyEventType,
   DiagnosticReportRecord,
   DiagnosticTestItem,
+  EmailDeliverySettings,
   formatInr,
   formatOrderStatus,
   isOrderCompleted,
   LABSETU_THEME,
   LabFacility,
+  LOCALITY_GPS_PRESETS,
   OrderStatus,
   PayoutRecord,
   PickupOrder,
   PlatformNotification,
+  PlatformSlaConfig,
   ROLE_LABELS,
   SettlementRecord,
   SpecimenQualityStatus,
   SpecimenType,
   StorageTemperature,
+  TUBE_METADATA,
   TubeType,
   UserRole,
   type DiagnosticDepartment,
@@ -27,14 +34,21 @@ import {
 import { type VerifiedPortalSession } from '../components/AuthGateScreen';
 import { type DynamicAlertVariant } from '../components/DynamicAlertModal';
 import {
+  DEFAULT_COMMISSION_CONFIG,
+  DEFAULT_EMAIL_SETTINGS,
+  DEFAULT_PLATFORM_SLA,
+  deleteDiagnosticTest,
   markNotificationRead,
   publishDiagnosticReport,
   saveDiagnosticTest,
+  saveLabFacility,
+  subscribeCustodyEvents,
   subscribeLabs,
   subscribeNotifications,
   subscribeOrders,
   subscribePayouts,
   subscribeReports,
+  subscribeSettings,
   subscribeSettlements,
   subscribeTestCatalog,
   updateLabOperationsProfile,
@@ -76,15 +90,20 @@ export function LargeLabDashboard({
   const [searchQuery, setSearchQuery] = useState('');
   const [notifOpen, setNotifOpen] = useState(false);
   const [deptFilter, setDeptFilter] = useState<string>('ALL');
+  const [centerFilter, setCenterFilter] = useState<string>('ALL_ORG');
 
-  // Live Firestore States (ZERO dummy data)
+  // Live Data States (ZERO dummy data)
   const [labs, setLabs] = useState<LabFacility[]>([]);
   const [orders, setOrders] = useState<PickupOrder[]>([]);
+  const [custodyEvents, setCustodyEvents] = useState<CustodyEvent[]>([]);
   const [reports, setReports] = useState<DiagnosticReportRecord[]>([]);
   const [settlements, setSettlements] = useState<SettlementRecord[]>([]);
   const [payouts, setPayouts] = useState<PayoutRecord[]>([]);
   const [testCatalog, setTestCatalog] = useState<DiagnosticTestItem[]>([]);
   const [notifications, setNotifications] = useState<PlatformNotification[]>([]);
+  const [, setSlaConfig] = useState<PlatformSlaConfig>(DEFAULT_PLATFORM_SLA);
+  const [commConfig, setCommConfig] = useState<CommissionConfig>(DEFAULT_COMMISSION_CONFIG);
+  const [, setEmailSettings] = useState<EmailDeliverySettings>(DEFAULT_EMAIL_SETTINGS);
 
   // Hub Payout Receiving Details
   const [payoutMethod, setPayoutMethod] = useState<'UPI' | 'BANK_TRANSFER'>('UPI');
@@ -93,8 +112,9 @@ export function LargeLabDashboard({
   const [payoutBankLast4, setPayoutBankLast4] = useState('');
   const [payoutIfsc, setPayoutIfsc] = useState('');
 
-  // QC Accessioning Modal
+  // QC Accessioning Modal & Live Tracking Modal
   const [qcOrder, setQcOrder] = useState<PickupOrder | null>(null);
+  const [trackingOrder, setTrackingOrder] = useState<PickupOrder | null>(null);
   const [qcTemp, setQcTemp] = useState<string>('4.2');
   const [qcQuality, setQcQuality] = useState<SpecimenQualityStatus>(SpecimenQualityStatus.INTACT);
   const [qcRejectReason, setQcRejectReason] = useState('');
@@ -108,8 +128,12 @@ export function LargeLabDashboard({
   const [reportFile, setReportFile] = useState<File | null>(null);
   const [uploadingReport, setUploadingReport] = useState(false);
 
-  // Rate Panel Modal
+  // Rate Panel / Package Modal
   const [showAddTestModal, setShowAddTestModal] = useState(false);
+  const [editingTestId, setEditingTestId] = useState<string | null>(null);
+  const [testItemType, setTestItemType] = useState<CatalogItemType>('TEST');
+  const [testIncludedCodes, setTestIncludedCodes] = useState<string[]>([]);
+  const [testCustomCodesInput, setTestCustomCodesInput] = useState('');
   const [testCode, setTestCode] = useState('');
   const [testName, setTestName] = useState('');
   const [testDept, setTestDept] = useState<DiagnosticDepartment>('Hematology');
@@ -117,13 +141,28 @@ export function LargeLabDashboard({
   const [testTube, setTestTube] = useState<TubeType>(TubeType.EDTA_LAVENDER);
   const [testTemp, setTestTemp] = useState<StorageTemperature>(StorageTemperature.REFRIGERATED);
   const [testTat, setTestTat] = useState(4);
+  const [testLargeLabRate, setTestLargeLabRate] = useState(200);
   const [testB2bPrice, setTestB2bPrice] = useState(250);
   const [testMrp, setTestMrp] = useState(500);
+
+  // Add Branch / Collection Center Modal (Main Hub HQ only)
+  const [showAddBranchModal, setShowAddBranchModal] = useState(false);
+  const [branchName, setBranchName] = useState('');
+  const [branchCity, setBranchCity] = useState('Mumbai');
+  const [branchAddress, setBranchAddress] = useState('');
+  const [branchPincode, setBranchPincode] = useState('');
+  const [branchLat, setBranchLat] = useState<number>(LOCALITY_GPS_PRESETS[0].latitude);
+  const [branchLng, setBranchLng] = useState<number>(LOCALITY_GPS_PRESETS[0].longitude);
+  const [branchEmail, setBranchEmail] = useState('');
+  const [branchPhone, setBranchPhone] = useState('');
 
   // Operational Profile Settings Form
   const [settingsName, setSettingsName] = useState(session.profile.displayName || '');
   const [settingsCity, setSettingsCity] = useState('');
   const [settingsAddress, setSettingsAddress] = useState('');
+  const [settingsPincode, setSettingsPincode] = useState('');
+  const [settingsLat, setSettingsLat] = useState<number>(LOCALITY_GPS_PRESETS[0].latitude);
+  const [settingsLng, setSettingsLng] = useState<number>(LOCALITY_GPS_PRESETS[0].longitude);
   const [settingsNabl, setSettingsNabl] = useState('');
   const [settingsCutoff, setSettingsCutoff] = useState('08:30 PM Daily Cutoff');
 
@@ -138,11 +177,13 @@ export function LargeLabDashboard({
     const unsubs = [
       subscribeLabs(setLabs),
       subscribeOrders(session.profile, setOrders),
+      subscribeCustodyEvents(setCustodyEvents),
       subscribeReports(session.profile, setReports),
       subscribeSettlements(session.profile, setSettlements),
       subscribePayouts(session.profile, setPayouts),
       subscribeTestCatalog(setTestCatalog),
       subscribeNotifications(session.profile, setNotifications),
+      subscribeSettings(setSlaConfig, setCommConfig, setEmailSettings),
     ];
     return () => unsubs.forEach((u) => u());
   }, [session.firebaseUser, session.profile]);
@@ -152,11 +193,42 @@ export function LargeLabDashboard({
     return match || null;
   }, [labs, session.profile.labId]);
 
+  const orgId = useMemo(
+    () => session.profile.parentLabId || myLab?.parentLabId || session.profile.labId || '',
+    [session.profile.parentLabId, session.profile.labId, myLab?.parentLabId]
+  );
+
+  const isBranchCenter = useMemo(
+    () => Boolean(session.profile.parentLabId || myLab?.centerType === 'COLLECTION_CENTER'),
+    [session.profile.parentLabId, myLab?.centerType]
+  );
+
+  const orgCenters = useMemo(
+    () =>
+      labs.filter(
+        (l) => l.type === 'LARGE_LAB' && orgId && (l.id === orgId || l.parentLabId === orgId)
+      ),
+    [labs, orgId]
+  );
+
+  const orgRootLab = useMemo(
+    () => orgCenters.find((l) => l.id === orgId) || myLab,
+    [orgCenters, orgId, myLab]
+  );
+
+  const activeAgreement = useMemo(
+    () => (orgId ? commConfig.largeLabAgreements?.[orgId] : undefined),
+    [commConfig.largeLabAgreements, orgId]
+  );
+
   useEffect(() => {
     if (myLab) {
       setSettingsName(myLab.name || session.profile.displayName);
       setSettingsCity(myLab.city || '');
       setSettingsAddress(myLab.address || '');
+      setSettingsPincode(myLab.pincode || '');
+      setSettingsLat(myLab.latitude ?? LOCALITY_GPS_PRESETS[0].latitude);
+      setSettingsLng(myLab.longitude ?? LOCALITY_GPS_PRESETS[0].longitude);
       setSettingsNabl(myLab.nablNumber || '');
       setSettingsCutoff(myLab.cutoffWindow || '08:30 PM Daily Cutoff');
       setPayoutMethod(myLab.payoutProfile?.preferredMethod || 'UPI');
@@ -211,12 +283,26 @@ export function LargeLabDashboard({
   const q = searchQuery.trim().toLowerCase();
   const filteredOrders = orders.filter(
     (o) =>
+      (centerFilter === 'ALL_ORG' || o.targetLabId === centerFilter) &&
       (!q ||
         o.orderNumber.toLowerCase().includes(q) ||
         o.smallLabName.toLowerCase().includes(q) ||
+        o.targetLabName.toLowerCase().includes(q) ||
         o.patient.pseudonym.toLowerCase().includes(q) ||
         o.specimens.some((s) => s.barcode.toLowerCase().includes(q) || s.testCode.toLowerCase().includes(q)))
   );
+
+  const orgCatalogItems = useMemo(() => {
+    const owned = testCatalog.filter(
+      (t) =>
+        (orgId && (t.ownerOrgId === orgId || t.labId === orgId)) ||
+        orgCenters.some((c) => c.id === t.labId)
+    );
+    const globalFallback = testCatalog.filter(
+      (t) => !t.ownerOrgId && !t.labId && !owned.some((o) => o.code === t.code)
+    );
+    return { owned, globalFallback, singleTests: testCatalog.filter((t) => (t.itemType || 'TEST') === 'TEST') };
+  }, [testCatalog, orgId, orgCenters]);
 
   const testingQueue = filteredOrders.filter(
     (o) =>
@@ -225,6 +311,49 @@ export function LargeLabDashboard({
   );
 
   const unreadCount = notifications.filter((n) => !n.read).length;
+
+  function openAddCatalogModal(itemType: CatalogItemType = 'TEST') {
+    setEditingTestId(null);
+    setTestItemType(itemType);
+    setTestIncludedCodes([]);
+    setTestCustomCodesInput('');
+    setTestCode('');
+    setTestName('');
+    setTestDept(itemType === 'PACKAGE' ? 'Preventive Health' : 'Hematology');
+    setTestSpecimen(SpecimenType.BLOOD);
+    setTestTube(TubeType.EDTA_LAVENDER);
+    setTestTemp(StorageTemperature.REFRIGERATED);
+    setTestTat(itemType === 'PACKAGE' ? 12 : 4);
+    const defaultB2b = itemType === 'PACKAGE' ? 680 : 190;
+    const markup = activeAgreement?.b2bMarkupPct ?? Math.round((commConfig.commissionPct || 15) * 1.2);
+    setTestLargeLabRate(defaultB2b);
+    setTestB2bPrice(Math.round(defaultB2b * (1 + markup / 100)));
+    setTestMrp(itemType === 'PACKAGE' ? 1500 : 500);
+    setShowAddTestModal(true);
+  }
+
+  function openEditCatalogModal(item: DiagnosticTestItem) {
+    const isOwned = Boolean(orgId && (item.ownerOrgId === orgId || item.labId === orgId));
+    setEditingTestId(isOwned ? item.id : null);
+    setTestItemType(item.itemType || 'TEST');
+    setTestIncludedCodes(item.includedTestCodes || []);
+    setTestCustomCodesInput('');
+    setTestCode(item.code);
+    setTestName(item.name);
+    setTestDept(item.department);
+    setTestSpecimen(item.specimenType);
+    setTestTube(item.tubeType);
+    setTestTemp(item.temperatureRequirement);
+    setTestTat(item.tatHours);
+    const baseRate =
+      typeof item.largeLabB2bRateInr === 'number'
+        ? item.largeLabB2bRateInr
+        : Math.round((item.b2bPriceInr || 250) * (1 - (activeAgreement?.agreedCommissionPct ?? commConfig.commissionPct ?? 15) / 100));
+    setTestLargeLabRate(baseRate);
+    setTestB2bPrice(item.b2bPriceInr);
+    setTestMrp(item.mrpInr);
+    setShowAddTestModal(true);
+  }
 
   async function handleQcSubmit(e: FormEvent, decision: 'ACCEPT' | 'REJECT') {
     e.preventDefault();
@@ -301,6 +430,7 @@ export function LargeLabDashboard({
         file: reportFile,
         operatorUid: session.firebaseUser.uid,
         operatorName: session.profile.displayName,
+        operatorRole: UserRole.LARGE_LAB,
       });
       setReportOrder(null);
       setReportFile(null);
@@ -322,29 +452,95 @@ export function LargeLabDashboard({
 
   async function handleSaveRatePanel(e: FormEvent) {
     e.preventDefault();
-    const cleanCode = testCode.trim().toUpperCase();
+    const cleanCode = testCode.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
     if (!cleanCode || !testName.trim()) return;
+
+    const customCodes = testCustomCodesInput
+      .split(',')
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+    const mergedIncludedCodes =
+      testItemType === 'PACKAGE'
+        ? Array.from(new Set([...testIncludedCodes, ...customCodes]))
+        : undefined;
+
+    if (testItemType === 'PACKAGE' && (!mergedIncludedCodes || mergedIncludedCodes.length < 2)) {
+      onShowAlert({
+        variant: 'warning',
+        title: 'Include At Least 2 Tests',
+        message: 'A combo package must map to at least 2 test codes so Small Lab quotes match automatically.',
+      });
+      return;
+    }
+
+    const ownerKey = orgId || session.profile.labId || 'LARGE_HUB';
+    const docId = editingTestId || `${ownerKey}__${cleanCode}`;
+
     await saveDiagnosticTest({
-      id: cleanCode,
+      id: docId,
       code: cleanCode,
       name: testName.trim(),
+      itemType: testItemType,
+      includedTestCodes: mergedIncludedCodes,
       department: testDept,
       specimenType: testSpecimen,
       tubeType: testTube,
       temperatureRequirement: testTemp,
       tatHours: Number(testTat) || 4,
+      largeLabB2bRateInr: Number(testLargeLabRate) || 0,
       b2bPriceInr: Number(testB2bPrice) || 250,
       mrpInr: Number(testMrp) || 500,
       isActive: true,
-      labId: session.profile.labId,
+      ownerOrgId: ownerKey,
+      labId: ownerKey,
+      labName: orgRootLab?.name || myLab?.name || session.profile.displayName,
     });
     setShowAddTestModal(false);
+    setEditingTestId(null);
     setTestCode('');
     setTestName('');
     onShowAlert({
       variant: 'success',
-      title: 'Test Tariff Saved',
-      message: `${cleanCode} (${testName.trim()}) has been saved to your test catalogue.`,
+      title: testItemType === 'PACKAGE' ? 'Health Package Published' : 'Test Tariff Saved',
+      message: `${cleanCode} (${testName.trim()}) is now live for Small Collection Labs to compare & book.`,
+    });
+  }
+
+  async function handleSaveBranchCenter(e: FormEvent) {
+    e.preventDefault();
+    if (!orgId || !branchName.trim()) return;
+    const branchId = `LAB-CC-${Date.now().toString().slice(-4)}`;
+    await saveLabFacility({
+      id: branchId,
+      name: branchName.trim(),
+      type: 'LARGE_LAB',
+      centerType: 'COLLECTION_CENTER',
+      parentLabId: orgId,
+      parentLabName: orgRootLab?.name || myLab?.name || session.profile.displayName,
+      city: branchCity.trim() || 'Mumbai',
+      address: branchAddress.trim() || `${branchName.trim()}, ${branchCity.trim()}`,
+      pincode: branchPincode.trim() || undefined,
+      latitude: Number(branchLat) || LOCALITY_GPS_PRESETS[0].latitude,
+      longitude: Number(branchLng) || LOCALITY_GPS_PRESETS[0].longitude,
+      serviceRadiusKm: 15,
+      email: branchEmail.trim().toLowerCase() || session.profile.email,
+      phone: branchPhone.trim(),
+      nablNumber: myLab?.nablNumber,
+      verified: true,
+      verificationStatus: 'VERIFIED',
+      rating: 5.0,
+      courierEtaMins: 15,
+    });
+    setShowAddBranchModal(false);
+    setBranchName('');
+    setBranchAddress('');
+    setBranchPincode('');
+    setBranchEmail('');
+    setBranchPhone('');
+    onShowAlert({
+      variant: 'success',
+      title: `Branch Registered (${branchId})`,
+      message: `${branchName.trim()} is now selectable by nearby Small Labs. Ask Platform Admin in Users & Roles to assign a separate login email to ${branchId} if branch staff need an independent login.`,
     });
   }
 
@@ -372,7 +568,7 @@ export function LargeLabDashboard({
           </div>
           <div className="brand-title-wrap">
             <span className="brand-title">{LABSETU_THEME.brand.name}</span>
-            <span className="brand-subtitle">Partner Reference Lab</span>
+            <span className="brand-subtitle">{isBranchCenter ? 'Collection Center Branch' : 'Reference Lab HQ'}</span>
           </div>
         </div>
 
@@ -398,7 +594,7 @@ export function LargeLabDashboard({
           </li>
           <li className={`sidebar-nav-item ${activeTab === 'rates' ? 'active' : ''}`} onClick={() => setActiveTab('rates')}>
             <span>🏷️</span>
-            <span>Rate Management</span>
+            <span>Catalog &amp; Branches</span>
           </li>
           <li className={`sidebar-nav-item ${activeTab === 'settlements' ? 'active' : ''}`} onClick={() => setActiveTab('settlements')}>
             <span>💳</span>
@@ -418,7 +614,9 @@ export function LargeLabDashboard({
           <div className="sidebar-footer-icon">🔬</div>
           <div>
             <div className="sidebar-footer-title">{myLab?.name || session.profile.displayName}</div>
-            <div className="sidebar-footer-subtitle">ID: {session.profile.labId || 'HUB'}</div>
+            <div className="sidebar-footer-subtitle">
+              {isBranchCenter ? `Branch • HQ ${orgId}` : `HQ ID: ${session.profile.labId || 'HUB'}`}
+            </div>
           </div>
         </div>
       </aside>
@@ -480,7 +678,9 @@ export function LargeLabDashboard({
               <div className="user-photo-avatar">{initials}</div>
               <div className="user-profile-info">
                 <span className="user-profile-name">{session.profile.displayName}</span>
-                <span className="user-profile-role">{session.profile.email}</span>
+                <span className="user-profile-role">
+                  {isBranchCenter ? `Branch (${myLab?.id || session.profile.labId})` : 'Main Hub HQ'} • {session.profile.email}
+                </span>
               </div>
               <button type="button" className="signout-btn" onClick={onSignOut}>
                 Sign Out
@@ -495,12 +695,32 @@ export function LargeLabDashboard({
             <>
               <div className="page-header-row">
                 <div className="page-title-group">
-                  <h1>Reference Lab Hub Dashboard</h1>
-                  <p>{myLab?.name || session.profile.displayName} — Live Cold-Chain Accessioning &amp; Reporting</p>
+                  <h1>{isBranchCenter ? 'Collection Center Branch Dashboard' : 'Reference Lab Hub Dashboard'}</h1>
+                  <p>
+                    {myLab?.name || session.profile.displayName}
+                    {isBranchCenter && orgRootLab ? ` (Branch under ${orgRootLab.name})` : ` — ${orgCenters.length} Connected Center(s)`}
+                  </p>
                 </div>
-                <button type="button" className="btn-primary" onClick={() => setActiveTab('incoming')}>
-                  🧊 Open QC Queue ({metrics.incomingCount})
-                </button>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  {!isBranchCenter && orgCenters.length > 1 && (
+                    <select
+                      className="form-select"
+                      style={{ width: '210px' }}
+                      value={centerFilter}
+                      onChange={(e) => setCenterFilter(e.target.value)}
+                    >
+                      <option value="ALL_ORG">All Org Centers ({orders.length})</option>
+                      {orgCenters.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name} ({c.centerType === 'COLLECTION_CENTER' ? 'Branch' : 'Main HQ'})
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <button type="button" className="btn-primary" onClick={() => setActiveTab('incoming')}>
+                    🧊 Open QC Queue ({metrics.incomingCount})
+                  </button>
+                </div>
               </div>
 
               <section className="kpi-5-row">
@@ -531,9 +751,9 @@ export function LargeLabDashboard({
                 <div className="kpi-card-modern">
                   <div className="kpi-icon-box-indigo">🏷️</div>
                   <div className="kpi-body">
-                    <span className="kpi-title">Published Test Panels</span>
-                    <span className="kpi-main-number">{testCatalog.length}</span>
-                    <span className="kpi-sub-split">Live partner test pricing</span>
+                    <span className="kpi-title">Org Tests &amp; Packages</span>
+                    <span className="kpi-main-number">{orgCatalogItems.owned.length}</span>
+                    <span className="kpi-sub-split">+{orgCatalogItems.globalFallback.length} global baseline</span>
                   </div>
                 </div>
                 <div className="kpi-card-modern">
@@ -549,15 +769,15 @@ export function LargeLabDashboard({
               <section className="bottom-3-row">
                 <div className="chart-card-modern">
                   <div className="card-top-header">
-                    <span className="card-top-title">Incoming &amp; Bench Specimens</span>
+                    <span className="card-top-title">Incoming &amp; Live Pickups</span>
                     <button type="button" className="btn-link-muted" onClick={() => setActiveTab('incoming')}>
                       Open QC Queue →
                     </button>
                   </div>
                   {filteredOrders.length === 0 ? (
                     <div className="empty-state-box">
-                      <h4>No Specimens Routed to Your Hub Yet</h4>
-                      <p>Live bookings sent to your Reference Lab appear here automatically.</p>
+                      <h4>No Specimens Routed Yet</h4>
+                      <p>Live bookings sent to {isBranchCenter ? 'this Collection Center' : 'your Reference Lab organization'} appear here right away.</p>
                     </div>
                   ) : (
                     <div className="data-table-container">
@@ -566,18 +786,41 @@ export function LargeLabDashboard({
                           <tr>
                             <th>Order ID</th>
                             <th>Source Lab</th>
+                            <th>Courier &amp; Live GPS</th>
                             <th>Tests</th>
-                            <th>Arrival Temp</th>
                             <th>Status</th>
                           </tr>
                         </thead>
                         <tbody>
                           {filteredOrders.slice(0, 6).map((o) => (
                             <tr key={o.id}>
-                              <td><strong>{o.orderNumber}</strong></td>
+                              <td>
+                                <strong>{o.orderNumber}</strong>
+                                {o.targetLabName && <div style={{ fontSize: '0.7rem', color: '#64748B' }}>{o.targetLabName}</div>}
+                              </td>
                               <td>{o.smallLabName}</td>
+                              <td>
+                                {o.phlebotomistName ? (
+                                  <div>
+                                    <strong>{o.phlebotomistName}</strong>
+                                    {o.phleboLiveLocation && (
+                                      <div>
+                                        <button
+                                          type="button"
+                                          className="btn-link-muted"
+                                          style={{ fontSize: '0.74rem' }}
+                                          onClick={() => setTrackingOrder(o)}
+                                        >
+                                          📍 Track Route
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span style={{ color: '#64748B' }}>Broadcasting (1–5 km)</span>
+                                )}
+                              </td>
                               <td>{o.specimens.map((s) => s.testCode).join(', ')}</td>
-                              <td>{o.arrivalTemperatureCelsius !== undefined ? `${o.arrivalTemperatureCelsius}°C` : 'In Transit'}</td>
                               <td><span className="status-pill-blue">{formatOrderStatus(o.status)}</span></td>
                             </tr>
                           ))}
@@ -616,10 +859,11 @@ export function LargeLabDashboard({
                 </div>
 
                 <div className="chart-card-modern">
-                  <div className="card-top-header"><span className="card-top-title">Hub Accreditation</span></div>
-                  <div className="network-list-item"><span>Hub ID</span><strong>{session.profile.labId || 'N/A'}</strong></div>
+                  <div className="card-top-header"><span className="card-top-title">Hub &amp; Contract Info</span></div>
+                  <div className="network-list-item"><span>Center ID</span><strong>{session.profile.labId || 'N/A'}</strong></div>
+                  <div className="network-list-item"><span>Hierarchy</span><strong>{isBranchCenter ? `Branch of ${orgId}` : `Main Hub (${orgCenters.length} centers)`}</strong></div>
                   <div className="network-list-item"><span>NABL Cert</span><strong>{myLab?.nablNumber || 'NABL ISO 15189'}</strong></div>
-                  <div className="network-list-item"><span>Daily Cutoff</span><strong>{myLab?.cutoffWindow || '08:30 PM'}</strong></div>
+                  <div className="network-list-item"><span>B2B Commission</span><strong>{activeAgreement ? `${activeAgreement.agreedCommissionPct}% Agreed` : `${commConfig.commissionPct}% Standard`}</strong></div>
                   <div className="network-list-item"><span>Verification</span><span className="status-pill-green">{formatLabel(myLab?.verificationStatus || 'VERIFIED')}</span></div>
                 </div>
               </section>
@@ -629,11 +873,26 @@ export function LargeLabDashboard({
           {/* TAB 2: INCOMING SAMPLES & QC */}
           {activeTab === 'incoming' && (
             <div className="chart-card-modern">
-              <div className="card-top-header">
+              <div className="card-top-header" style={{ flexWrap: 'wrap', gap: '10px' }}>
                 <div>
                   <h2 className="card-top-title">Incoming Cold-Chain Receiving &amp; QC Accessioning ({filteredOrders.length})</h2>
-                  <p style={{ fontSize: '0.8rem', color: '#64748B' }}>Log cooler temperature (2°C – 8°C) and specimen quality before testing</p>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B' }}>
+                    Monitor live phlebotomist GPS, inspect uploaded sample photos &amp; tube barcode scans, and log cooler temperature (2°C – 8°C)
+                  </p>
                 </div>
+                {!isBranchCenter && orgCenters.length > 1 && (
+                  <select
+                    className="form-select"
+                    style={{ width: '210px' }}
+                    value={centerFilter}
+                    onChange={(e) => setCenterFilter(e.target.value)}
+                  >
+                    <option value="ALL_ORG">All Org Centers</option>
+                    {orgCenters.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                )}
               </div>
               {filteredOrders.length === 0 ? (
                 <div className="empty-state-box"><h4>No Incoming Orders</h4><p>Dispatched bookings destined for your Reference Lab appear here in real time.</p></div>
@@ -642,39 +901,80 @@ export function LargeLabDashboard({
                   <table className="modern-data-table">
                     <thead>
                       <tr>
-                        <th>Booking ID</th>
-                        <th>Source Lab</th>
-                        <th>Patient</th>
-                        <th>Barcodes &amp; Tests</th>
+                        <th>Booking ID &amp; Center</th>
+                        <th>Source Lab &amp; Patient</th>
+                        <th>Tubes &amp; Barcode Checks</th>
+                        <th>Phlebotomist / Proof</th>
                         <th>Temp (°C)</th>
                         <th>Status</th>
                         <th>Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredOrders.map((o) => (
-                        <tr key={o.id}>
-                          <td><strong>{o.orderNumber}</strong></td>
-                          <td>{o.smallLabName}</td>
-                          <td>{o.patient.pseudonym}</td>
-                          <td>{o.specimens.map((s) => `${s.testCode} (${s.barcode})`).join(', ')}</td>
-                          <td>{o.arrivalTemperatureCelsius !== undefined ? `${o.arrivalTemperatureCelsius}°C` : 'Pending Check'}</td>
-                          <td><span className="status-pill-blue">{formatOrderStatus(o.status)}</span></td>
-                          <td>
-                            <button
-                              type="button"
-                              className="btn-primary"
-                              onClick={() => {
-                                setQcOrder(o);
-                                setQcTemp(String(o.arrivalTemperatureCelsius ?? '4.2'));
-                                setQcQuality(o.qualityStatus || SpecimenQualityStatus.INTACT);
-                              }}
-                            >
-                              Perform QC
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {filteredOrders.map((o) => {
+                        const verifiedCount = o.specimens.filter((s) => s.validationStatus === 'VERIFIED').length;
+                        const mismatchCount = o.specimens.filter((s) => s.validationStatus === 'MISMATCH').length;
+                        return (
+                          <tr key={o.id}>
+                            <td>
+                              <strong>{o.orderNumber}</strong>
+                              <div style={{ fontSize: '0.72rem', color: '#64748B' }}>{o.targetLabName}</div>
+                            </td>
+                            <td>
+                              <div>{o.smallLabName}</div>
+                              <div style={{ fontSize: '0.72rem', color: '#64748B' }}>{o.patient.pseudonym}</div>
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                {o.specimens.map((s) => {
+                                  const tubeMeta = TUBE_METADATA[s.tubeType] || TUBE_METADATA[TubeType.SERUM_RED_GOLD];
+                                  return (
+                                    <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', fontSize: '0.76rem' }}>
+                                      <span className="tube-cap-pill" style={{ background: tubeMeta.bgHex, color: tubeMeta.colorHex }}>
+                                        <span className="tube-cap-dot" style={{ background: tubeMeta.colorHex }} />
+                                        {s.testCode}
+                                      </span>
+                                      <code>{s.scannedBarcode || s.barcode}</code>
+                                      {s.validationStatus === 'VERIFIED' && <span style={{ color: '#059669', fontWeight: 700 }}>✓</span>}
+                                      {s.validationStatus === 'MISMATCH' && <span style={{ color: '#DC2626', fontWeight: 700 }}>⚠ Mismatch</span>}
+                                    </div>
+                                  );
+                                })}
+                                {o.specimens.length > 0 && (
+                                  <div style={{ fontSize: '0.7rem', color: mismatchCount > 0 ? '#DC2626' : '#64748B' }}>
+                                    {verifiedCount}/{o.specimens.length} tubes barcode-verified
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            <td>
+                              <div><strong>{o.phlebotomistName || 'Broadcasting'}</strong></div>
+                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '4px' }}>
+                                {(o.phleboLiveLocation || o.sampleCollectionPhotoUrl) && (
+                                  <button type="button" className="btn-link-muted" style={{ fontSize: '0.74rem' }} onClick={() => setTrackingOrder(o)}>
+                                    {o.sampleCollectionPhotoUrl ? '📷 Photo & 📍 Live' : '📍 Live Location'}
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                            <td>{o.arrivalTemperatureCelsius !== undefined ? `${o.arrivalTemperatureCelsius}°C` : 'Pending Check'}</td>
+                            <td><span className="status-pill-blue">{formatOrderStatus(o.status)}</span></td>
+                            <td>
+                              <button
+                                type="button"
+                                className="btn-primary"
+                                onClick={() => {
+                                  setQcOrder(o);
+                                  setQcTemp(String(o.arrivalTemperatureCelsius ?? '4.2'));
+                                  setQcQuality(o.qualityStatus || SpecimenQualityStatus.INTACT);
+                                }}
+                              >
+                                Perform QC
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -823,39 +1123,209 @@ export function LargeLabDashboard({
             </div>
           )}
 
-          {/* TAB 5: RATE MANAGEMENT */}
+          {/* TAB 5: CATALOGUE & BRANCH NETWORK */}
           {activeTab === 'rates' && (
-            <div className="chart-card-modern">
-              <div className="card-top-header">
-                <h2 className="card-top-title">B2B Test Tariff Schedule ({testCatalog.length})</h2>
-                <button type="button" className="btn-primary" onClick={() => setShowAddTestModal(true)}>
-                  + Add / Update Test Rate
-                </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div className="chart-card-modern">
+                <div className="card-top-header" style={{ flexWrap: 'wrap', gap: '12px' }}>
+                  <div>
+                    <h2 className="card-top-title">
+                      Partner Test &amp; Package Catalogue ({orgCatalogItems.owned.length} Published)
+                    </h2>
+                    <p style={{ fontSize: '0.8rem', color: '#64748B' }}>
+                      Enter each test-wise &amp; combo package B2B rate for Small Labs to auto-match and compare prices live.{' '}
+                      {activeAgreement
+                        ? `Negotiated Contract: ${activeAgreement.agreedCommissionPct}% Commission • ${activeAgreement.b2bMarkupPct}% Markup`
+                        : `Default Network Rule: ${commConfig.commissionPct}% Commission`}
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <button type="button" className="btn-secondary" onClick={() => openAddCatalogModal('TEST')}>
+                      + Add Test Rate
+                    </button>
+                    <button type="button" className="btn-primary" onClick={() => openAddCatalogModal('PACKAGE')}>
+                      + Add Combo Package
+                    </button>
+                  </div>
+                </div>
+
+                {orgCatalogItems.owned.length === 0 ? (
+                  <div className="empty-state-box">
+                    <h4>No Custom Tests or Packages Published Yet</h4>
+                    <p>
+                      Add your Lab&apos;s Test Panels &amp; Health Packages below, or customize any Global Baseline test below so Small Labs see your competitive quotes at #1.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="data-table-container">
+                    <table className="modern-data-table">
+                      <thead>
+                        <tr>
+                          <th>Code &amp; Type</th>
+                          <th>Test / Package Name</th>
+                          <th>Tube Cap</th>
+                          <th>Your B2B Payout</th>
+                          <th>Small Lab Pays</th>
+                          <th>MRP / TAT</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {orgCatalogItems.owned.map((t) => {
+                          const tubeMeta = TUBE_METADATA[t.tubeType] || TUBE_METADATA[TubeType.SERUM_RED_GOLD];
+                          const largeRate =
+                            typeof t.largeLabB2bRateInr === 'number'
+                              ? t.largeLabB2bRateInr
+                              : Math.round((t.b2bPriceInr || 0) * (1 - (activeAgreement?.agreedCommissionPct ?? commConfig.commissionPct) / 100));
+                          return (
+                            <tr key={t.id}>
+                              <td>
+                                <strong>{t.code}</strong>
+                                <div style={{ marginTop: '4px' }}>
+                                  <span className={t.itemType === 'PACKAGE' ? 'package-match-pill' : 'status-pill-blue'}>
+                                    {t.itemType === 'PACKAGE' ? '📦 PACKAGE' : '🧪 TEST'}
+                                  </span>
+                                </div>
+                              </td>
+                              <td>
+                                <div><strong>{t.name}</strong></div>
+                                <div style={{ fontSize: '0.72rem', color: '#64748B' }}>{t.department}</div>
+                                {t.itemType === 'PACKAGE' && t.includedTestCodes && (
+                                  <div style={{ fontSize: '0.72rem', color: '#1D4ED8', marginTop: '2px' }}>
+                                    Includes: {t.includedTestCodes.join(', ')}
+                                  </div>
+                                )}
+                              </td>
+                              <td>
+                                <span className="tube-cap-pill" style={{ background: tubeMeta.bgHex, color: tubeMeta.colorHex }}>
+                                  <span className="tube-cap-dot" style={{ background: tubeMeta.colorHex }} />
+                                  {tubeMeta.capColorName}
+                                </span>
+                              </td>
+                              <td><strong style={{ color: '#059669' }}>{formatInr(largeRate)}</strong></td>
+                              <td><strong>{formatInr(t.b2bPriceInr)}</strong></td>
+                              <td>{formatInr(t.mrpInr)} / {t.tatHours}h</td>
+                              <td>
+                                <div style={{ display: 'flex', gap: '6px' }}>
+                                  <button type="button" className="btn-secondary" onClick={() => openEditCatalogModal(t)}>
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn-secondary"
+                                    onClick={() =>
+                                      onShowAlert({
+                                        variant: 'confirm',
+                                        title: `Delete ${t.code}?`,
+                                        message: `Remove ${t.name} from your Lab's rate card?`,
+                                        onConfirm: () => {
+                                          void deleteDiagnosticTest(t.id);
+                                        },
+                                      })
+                                    }
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {orgCatalogItems.globalFallback.length > 0 && (
+                  <div style={{ marginTop: '22px', borderTop: '1px solid #E2E8F0', paddingTop: '16px' }}>
+                    <h3 style={{ fontSize: '0.94rem', fontWeight: 700, marginBottom: '10px' }}>
+                      Global Network Baseline Panels ({orgCatalogItems.globalFallback.length})
+                    </h3>
+                    <div className="data-table-container">
+                      <table className="modern-data-table">
+                        <thead>
+                          <tr>
+                            <th>Code</th>
+                            <th>Panel Name</th>
+                            <th>Tube</th>
+                            <th>Baseline Tariff</th>
+                            <th>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {orgCatalogItems.globalFallback.map((t) => (
+                            <tr key={t.id}>
+                              <td><strong>{t.code}</strong></td>
+                              <td>{t.name} {t.itemType === 'PACKAGE' && t.includedTestCodes ? `(${t.includedTestCodes.join(', ')})` : ''}</td>
+                              <td>{TUBE_METADATA[t.tubeType]?.capColorName || formatLabel(t.tubeType)}</td>
+                              <td>{formatInr(t.b2bPriceInr)}</td>
+                              <td>
+                                <button type="button" className="btn-secondary" onClick={() => openEditCatalogModal(t)}>
+                                  Customize Rate
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </div>
-              {testCatalog.length === 0 ? (
-                <div className="empty-state-box"><h4>No Test Panels Published</h4><p>Add diagnostic tests &amp; B2B pricing for referring Small Collection Labs.</p></div>
-              ) : (
+
+              {/* Connected Centers & Branches Card */}
+              <div className="chart-card-modern">
+                <div className="card-top-header">
+                  <div>
+                    <h3 className="card-top-title">Organization Hubs &amp; Branch Collection Centers ({orgCenters.length})</h3>
+                    <p style={{ fontSize: '0.8rem', color: '#64748B' }}>
+                      Each branch center appears as a nearby sample drop-off option when Small Labs select your Hub.
+                    </p>
+                  </div>
+                  {!isBranchCenter && (
+                    <button type="button" className="btn-primary" onClick={() => setShowAddBranchModal(true)}>
+                      + Add Collection Center Branch
+                    </button>
+                  )}
+                </div>
                 <div className="data-table-container">
                   <table className="modern-data-table">
                     <thead>
-                      <tr><th>Code</th><th>Test Name</th><th>Dept</th><th>Tube</th><th>B2B Price</th><th>MRP</th><th>TAT</th></tr>
+                      <tr>
+                        <th>Center ID</th>
+                        <th>Branch Name</th>
+                        <th>Role</th>
+                        <th>City / Pincode</th>
+                        <th>Address &amp; GPS</th>
+                        <th>Login Email</th>
+                      </tr>
                     </thead>
                     <tbody>
-                      {testCatalog.map((t) => (
-                        <tr key={t.id}>
-                          <td><strong>{t.code}</strong></td>
-                          <td>{t.name}</td>
-                          <td>{t.department}</td>
-                          <td>{formatLabel(t.tubeType)}</td>
-                          <td><strong>{formatInr(t.b2bPriceInr)}</strong></td>
-                          <td>{formatInr(t.mrpInr)}</td>
-                          <td>{t.tatHours} hrs</td>
+                      {orgCenters.map((c) => (
+                        <tr key={c.id}>
+                          <td><strong>{c.id}</strong></td>
+                          <td>{c.name}</td>
+                          <td>
+                            <span className={c.centerType === 'COLLECTION_CENTER' ? 'status-pill-blue' : 'status-pill-green'}>
+                              {c.centerType === 'COLLECTION_CENTER' ? 'Branch Center' : 'Main Hub HQ'}
+                            </span>
+                          </td>
+                          <td>{c.city}{c.pincode ? ` (${c.pincode})` : ''}</td>
+                          <td>
+                            <div>{c.address}</div>
+                            {c.latitude && c.longitude && (
+                              <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
+                                GPS: {c.latitude.toFixed(4)}, {c.longitude.toFixed(4)}
+                              </div>
+                            )}
+                          </td>
+                          <td>{c.email}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-              )}
+              </div>
             </div>
           )}
 
@@ -1012,16 +1482,47 @@ export function LargeLabDashboard({
                     name: settingsName,
                     city: settingsCity,
                     address: settingsAddress,
+                    pincode: settingsPincode.trim() || undefined,
+                    latitude: Number(settingsLat) || undefined,
+                    longitude: Number(settingsLng) || undefined,
                     nablNumber: settingsNabl,
                     cutoffWindow: settingsCutoff,
                     payoutProfile,
                   });
-                  onShowAlert({ variant: 'success', title: 'Hub Settings Saved', message: 'Facility and payout receiving details updated successfully.' });
+                  onShowAlert({ variant: 'success', title: 'Hub Settings Saved', message: 'Facility location and payout receiving details updated successfully.' });
                 }}
               >
-                <div className="form-group"><label className="form-label">Hub Display Name</label><input className="form-input" value={settingsName} onChange={(e) => setSettingsName(e.target.value)} required /></div>
-                <div className="form-group"><label className="form-label">City</label><input className="form-input" value={settingsCity} onChange={(e) => setSettingsCity(e.target.value)} /></div>
+                <div className="form-group"><label className="form-label">Hub / Center Display Name</label><input className="form-input" value={settingsName} onChange={(e) => setSettingsName(e.target.value)} required /></div>
+                <div className="form-group">
+                  <label className="form-label">Quick Locality / GPS Coordinate Preset</label>
+                  <select
+                    className="form-select"
+                    defaultValue=""
+                    onChange={(e) => {
+                      const preset = LOCALITY_GPS_PRESETS.find((p) => p.label === e.target.value);
+                      if (preset) {
+                        setSettingsCity(preset.city);
+                        if (!settingsAddress.trim()) setSettingsAddress(preset.label);
+                        setSettingsLat(preset.latitude);
+                        setSettingsLng(preset.longitude);
+                      }
+                    }}
+                  >
+                    <option value="">Set coordinates from preset locality...</option>
+                    {LOCALITY_GPS_PRESETS.map((p) => (
+                      <option key={p.label} value={p.label}>{p.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div className="form-group"><label className="form-label">City</label><input className="form-input" value={settingsCity} onChange={(e) => setSettingsCity(e.target.value)} /></div>
+                  <div className="form-group"><label className="form-label">Pincode</label><input className="form-input" placeholder="e.g. 400053" value={settingsPincode} onChange={(e) => setSettingsPincode(e.target.value)} /></div>
+                </div>
                 <div className="form-group"><label className="form-label">Address</label><input className="form-input" value={settingsAddress} onChange={(e) => setSettingsAddress(e.target.value)} /></div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div className="form-group"><label className="form-label">GPS Latitude</label><input type="number" step="0.0001" className="form-input" value={settingsLat} onChange={(e) => setSettingsLat(Number(e.target.value))} /></div>
+                  <div className="form-group"><label className="form-label">GPS Longitude</label><input type="number" step="0.0001" className="form-input" value={settingsLng} onChange={(e) => setSettingsLng(Number(e.target.value))} /></div>
+                </div>
                 <div className="form-group"><label className="form-label">NABL Accreditation</label><input className="form-input" value={settingsNabl} onChange={(e) => setSettingsNabl(e.target.value)} /></div>
                 <div className="form-group"><label className="form-label">Daily Sample Cutoff</label><input className="form-input" value={settingsCutoff} onChange={(e) => setSettingsCutoff(e.target.value)} /></div>
 
@@ -1061,16 +1562,50 @@ export function LargeLabDashboard({
         </main>
       </div>
 
-      {/* MODAL: QC ACCESSIONING */}
+      {/* MODAL: QC ACCESSIONING WITH SAMPLE PROOF & BARCODE AUDIT */}
       {qcOrder && (
         <div className="modal-overlay" onClick={() => setQcOrder(null)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-card" style={{ maxWidth: '620px' }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Specimen QC Check • {qcOrder.orderNumber}</h3>
               <button type="button" className="btn-secondary" onClick={() => setQcOrder(null)}>✕</button>
             </div>
             <form onSubmit={(e) => void handleQcSubmit(e, 'ACCEPT')}>
-              <div className="modal-body">
+              <div className="modal-body" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
+                <div style={{ background: '#F8FAFC', padding: '12px', borderRadius: '10px', border: '1px solid #E2E8F0', marginBottom: '14px' }}>
+                  <div style={{ fontSize: '0.82rem', marginBottom: '8px' }}>
+                    <strong>Source:</strong> {qcOrder.smallLabName} &rarr; <strong>Receiving Center:</strong> {qcOrder.targetLabName}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {qcOrder.specimens.map((s) => {
+                      const tubeMeta = TUBE_METADATA[s.tubeType] || TUBE_METADATA[TubeType.SERUM_RED_GOLD];
+                      return (
+                        <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem', background: '#FFF', padding: '6px 10px', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span className="tube-cap-pill" style={{ background: tubeMeta.bgHex, color: tubeMeta.colorHex }}>
+                              <span className="tube-cap-dot" style={{ background: tubeMeta.colorHex }} />
+                              {tubeMeta.capColorName}
+                            </span>
+                            <strong>{s.testCode}</strong>
+                            <code>{s.scannedBarcode || s.barcode}</code>
+                          </div>
+                          <span className={s.validationStatus === 'VERIFIED' ? 'status-pill-green' : s.validationStatus === 'MISMATCH' ? 'status-pill-red' : 'status-pill-amber'}>
+                            {s.validationStatus === 'VERIFIED' ? 'Barcode Matched' : s.validationStatus === 'MISMATCH' ? 'Tube Mismatch' : 'Not Scanned'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {qcOrder.sampleCollectionPhotoUrl && (
+                    <div style={{ marginTop: '12px' }}>
+                      <div style={{ fontSize: '0.76rem', fontWeight: 700, marginBottom: '6px' }}>Phlebotomist Collection Photo</div>
+                      <a href={qcOrder.sampleCollectionPhotoUrl} target="_blank" rel="noreferrer">
+                        <img src={qcOrder.sampleCollectionPhotoUrl} alt="Collected sample tubes" className="sample-proof-thumb" />
+                      </a>
+                    </div>
+                  )}
+                </div>
+
                 <div className="form-group">
                   <label className="form-label">Arrival Cooler Temperature (°C)</label>
                   <input type="number" step="0.1" className="form-input" value={qcTemp} onChange={(e) => setQcTemp(e.target.value)} required />
@@ -1106,28 +1641,240 @@ export function LargeLabDashboard({
         </div>
       )}
 
-      {/* MODAL: ADD TEST PANEL */}
+      {/* MODAL: LIVE PHLEBOTOMIST LOCATION & SPECIMEN PROOF */}
+      {trackingOrder && (
+        <div className="modal-overlay" onClick={() => setTrackingOrder(null)}>
+          <div className="modal-card" style={{ maxWidth: '640px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Live Pickup &amp; Specimen Proof • {trackingOrder.orderNumber}</h3>
+              <button type="button" className="btn-secondary" onClick={() => setTrackingOrder(null)}>✕</button>
+            </div>
+            <div className="modal-body" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
+              <div className="live-route-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                  <div>
+                    <div style={{ fontSize: '0.88rem', fontWeight: 800, color: '#0F172A' }}>
+                      🏍️ {trackingOrder.phlebotomistName || 'Awaiting Phlebotomist'}
+                    </div>
+                    <div style={{ fontSize: '0.78rem', color: '#475569' }}>
+                      Status: <strong>{formatOrderStatus(trackingOrder.status)}</strong> • Center: {trackingOrder.targetLabName}
+                    </div>
+                    {trackingOrder.phleboLiveLocation && (
+                      <div style={{ fontSize: '0.75rem', color: '#0F766E', marginTop: '4px' }}>
+                        Live GPS: {trackingOrder.phleboLiveLocation.latitude.toFixed(5)}, {trackingOrder.phleboLiveLocation.longitude.toFixed(5)}
+                        {trackingOrder.phleboLiveLocation.updatedAt
+                          ? ` • Updated ${new Date(trackingOrder.phleboLiveLocation.updatedAt).toLocaleTimeString('en-IN')}`
+                          : ''}
+                      </div>
+                    )}
+                  </div>
+                  {trackingOrder.phleboLiveLocation && (
+                    <a
+                      className="btn-primary"
+                      style={{ textDecoration: 'none', fontSize: '0.78rem' }}
+                      href={`https://www.google.com/maps/dir/?api=1&origin=${trackingOrder.phleboLiveLocation.latitude},${trackingOrder.phleboLiveLocation.longitude}&destination=${
+                        trackingOrder.deliveryLocation?.latitude || myLab?.latitude || 19.076
+                      },${trackingOrder.deliveryLocation?.longitude || myLab?.longitude || 72.8777}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      🗺️ Open Live Route Map
+                    </a>
+                  )}
+                </div>
+              </div>
+
+              {trackingOrder.sampleCollectionPhotoUrl && (
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px' }}>Uploaded Sample Collection Photo</div>
+                  <a href={trackingOrder.sampleCollectionPhotoUrl} target="_blank" rel="noreferrer">
+                    <img src={trackingOrder.sampleCollectionPhotoUrl} alt="Sample collection proof" className="sample-proof-thumb" />
+                  </a>
+                </div>
+              )}
+
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ fontSize: '0.82rem', fontWeight: 700, marginBottom: '8px' }}>Tube &amp; Barcode Validation</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {trackingOrder.specimens.map((s) => {
+                    const tm = TUBE_METADATA[s.tubeType] || TUBE_METADATA[TubeType.SERUM_RED_GOLD];
+                    return (
+                      <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderRadius: '8px', background: '#F8FAFC', border: '1px solid #E2E8F0', fontSize: '0.78rem' }}>
+                        <div>
+                          <span className="tube-cap-pill" style={{ background: tm.bgHex, color: tm.colorHex, marginRight: '8px' }}>
+                            <span className="tube-cap-dot" style={{ background: tm.colorHex }} />
+                            {tm.label}
+                          </span>
+                          <strong>{s.testCode}</strong> — <code>{s.scannedBarcode || s.barcode}</code>
+                        </div>
+                        <span className={s.validationStatus === 'VERIFIED' ? 'status-pill-green' : s.validationStatus === 'MISMATCH' ? 'status-pill-red' : 'status-pill-amber'}>
+                          {s.validationStatus === 'VERIFIED' ? 'Verified' : s.validationStatus === 'MISMATCH' ? 'Mismatch' : 'Pending Scan'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: '0.82rem', fontWeight: 700, marginBottom: '8px' }}>Chain of Custody Log</div>
+                {custodyEvents
+                  .filter((ev) => ev.orderId === trackingOrder.id)
+                  .slice(0, 8)
+                  .map((ev) => (
+                    <div key={ev.id} style={{ fontSize: '0.78rem', padding: '6px 0', borderBottom: '1px solid #F1F5F9', display: 'flex', justifyContent: 'space-between' }}>
+                      <span>
+                        <strong>{formatLabel(ev.eventType)}</strong> by {ev.operatorName}
+                        {ev.temperatureCelsius !== undefined ? ` (${ev.temperatureCelsius}°C)` : ''}
+                      </span>
+                      <span style={{ color: '#64748B' }}>{new Date(ev.timestamp).toLocaleTimeString('en-IN')}</span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ADD / EDIT B2B TEST PANEL OR COMBO PACKAGE */}
       {showAddTestModal && (
         <div className="modal-overlay" onClick={() => setShowAddTestModal(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header"><h3>Publish B2B Test Panel</h3><button type="button" className="btn-secondary" onClick={() => setShowAddTestModal(false)}>✕</button></div>
+          <div className="modal-card" style={{ maxWidth: '600px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{editingTestId ? 'Edit Partner Rate Card Item' : testItemType === 'PACKAGE' ? 'Publish B2B Combo Package' : 'Publish B2B Test Panel'}</h3>
+              <button type="button" className="btn-secondary" onClick={() => setShowAddTestModal(false)}>✕</button>
+            </div>
             <form onSubmit={(e) => void handleSaveRatePanel(e)}>
-              <div className="modal-body">
-                <div className="form-group"><label className="form-label">Test Code</label><input className="form-input" placeholder="CBC" value={testCode} onChange={(e) => setTestCode(e.target.value)} required /></div>
-                <div className="form-group"><label className="form-label">Test Name</label><input className="form-input" placeholder="Complete Blood Count" value={testName} onChange={(e) => setTestName(e.target.value)} required /></div>
-                <div className="form-group"><label className="form-label">Department</label><select className="form-select" value={testDept} onChange={(e) => setTestDept(e.target.value as DiagnosticDepartment)}><option value="Hematology">Hematology</option><option value="Biochemistry">Biochemistry</option><option value="Immunology">Immunology</option><option value="Molecular">Molecular</option></select></div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                  <div className="form-group"><label className="form-label">Specimen</label><select className="form-select" value={testSpecimen} onChange={(e) => setTestSpecimen(e.target.value as SpecimenType)}>{Object.values(SpecimenType).map((s) => <option key={s} value={s}>{formatLabel(s)}</option>)}</select></div>
-                  <div className="form-group"><label className="form-label">Tube</label><select className="form-select" value={testTube} onChange={(e) => setTestTube(e.target.value as TubeType)}>{Object.values(TubeType).map((t) => <option key={t} value={t}>{formatLabel(t)}</option>)}</select></div>
+              <div className="modal-body" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
+                <div className="form-group">
+                  <label className="form-label">Catalogue Type</label>
+                  <select className="form-select" value={testItemType} onChange={(e) => setTestItemType(e.target.value as CatalogItemType)}>
+                    <option value="TEST">Individual Test</option>
+                    <option value="PACKAGE">Health / Combo Package</option>
+                  </select>
                 </div>
-                <div className="form-group"><label className="form-label">Storage Band</label><select className="form-select" value={testTemp} onChange={(e) => setTestTemp(e.target.value as StorageTemperature)}>{Object.values(StorageTemperature).map((t) => <option key={t} value={t}>{formatLabel(t)}</option>)}</select></div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
-                  <div className="form-group"><label className="form-label">B2B Rate (₹)</label><input type="number" className="form-input" value={testB2bPrice} onChange={(e) => setTestB2bPrice(Number(e.target.value))} /></div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '10px' }}>
+                  <div className="form-group"><label className="form-label">Code</label><input className="form-input" placeholder={testItemType === 'PACKAGE' ? 'WELL4' : 'CBC'} value={testCode} onChange={(e) => setTestCode(e.target.value)} required /></div>
+                  <div className="form-group"><label className="form-label">Name</label><input className="form-input" placeholder={testItemType === 'PACKAGE' ? 'Executive Master Package' : 'Complete Blood Count'} value={testName} onChange={(e) => setTestName(e.target.value)} required /></div>
+                </div>
+
+                {testItemType === 'PACKAGE' && (
+                  <div className="form-group" style={{ background: '#F8FAFC', padding: '12px', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+                    <label className="form-label">Included Test Codes (auto-matched when Small Labs pick tests)</label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                      {Array.from(new Set(orgCatalogItems.singleTests.map((t) => t.code))).map((code) => {
+                        const active = testIncludedCodes.includes(code);
+                        return (
+                          <button
+                            key={code}
+                            type="button"
+                            className={active ? 'btn-primary' : 'btn-secondary'}
+                            style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+                            onClick={() =>
+                              setTestIncludedCodes((prev) =>
+                                prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]
+                              )
+                            }
+                          >
+                            {active ? '✓ ' : '+ '}{code}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <input
+                      className="form-input"
+                      placeholder="Additional codes comma-separated (e.g. LFT, KFT, TSH)"
+                      value={testCustomCodesInput}
+                      onChange={(e) => setTestCustomCodesInput(e.target.value)}
+                    />
+                  </div>
+                )}
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <div className="form-group"><label className="form-label">Department</label><select className="form-select" value={testDept} onChange={(e) => setTestDept(e.target.value as DiagnosticDepartment)}><option value="Hematology">Hematology</option><option value="Biochemistry">Biochemistry</option><option value="Immunology">Immunology</option><option value="Molecular">Molecular</option><option value="Microbiology">Microbiology</option><option value="Pathology">Pathology</option><option value="Preventive Health">Preventive Health</option></select></div>
+                  <div className="form-group"><label className="form-label">Specimen</label><select className="form-select" value={testSpecimen} onChange={(e) => setTestSpecimen(e.target.value as SpecimenType)}>{Object.values(SpecimenType).map((s) => <option key={s} value={s}>{formatLabel(s)}</option>)}</select></div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <div className="form-group"><label className="form-label">Required Vacutainer / Tube</label><select className="form-select" value={testTube} onChange={(e) => setTestTube(e.target.value as TubeType)}>{Object.values(TubeType).map((t) => <option key={t} value={t}>{TUBE_METADATA[t].label}</option>)}</select></div>
+                  <div className="form-group"><label className="form-label">Storage Band</label><select className="form-select" value={testTemp} onChange={(e) => setTestTemp(e.target.value as StorageTemperature)}>{Object.values(StorageTemperature).map((t) => <option key={t} value={t}>{formatLabel(t)}</option>)}</select></div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '8px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Your B2B Rate (₹)</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      value={testLargeLabRate}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setTestLargeLabRate(v);
+                        const markup = activeAgreement?.b2bMarkupPct ?? Math.round((commConfig.commissionPct || 15) * 1.2);
+                        setTestB2bPrice(Math.round(v * (1 + markup / 100)));
+                      }}
+                    />
+                  </div>
+                  <div className="form-group"><label className="form-label">Small Lab Price (₹)</label><input type="number" className="form-input" value={testB2bPrice} onChange={(e) => setTestB2bPrice(Number(e.target.value))} /></div>
                   <div className="form-group"><label className="form-label">MRP (₹)</label><input type="number" className="form-input" value={testMrp} onChange={(e) => setTestMrp(Number(e.target.value))} /></div>
                   <div className="form-group"><label className="form-label">TAT (Hrs)</label><input type="number" className="form-input" value={testTat} onChange={(e) => setTestTat(Number(e.target.value))} /></div>
                 </div>
               </div>
-              <div className="modal-footer"><button type="button" className="btn-secondary" onClick={() => setShowAddTestModal(false)}>Cancel</button><button type="submit" className="btn-primary">Publish Panel</button></div>
+              <div className="modal-footer"><button type="button" className="btn-secondary" onClick={() => setShowAddTestModal(false)}>Cancel</button><button type="submit" className="btn-primary">{editingTestId ? 'Update Tariff' : 'Publish to Rate Card'}</button></div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ADD COLLECTION CENTER BRANCH (MAIN HUB HQ ONLY) */}
+      {showAddBranchModal && (
+        <div className="modal-overlay" onClick={() => setShowAddBranchModal(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Add Collection Center / Branch</h3>
+              <button type="button" className="btn-secondary" onClick={() => setShowAddBranchModal(false)}>✕</button>
+            </div>
+            <form onSubmit={(e) => void handleSaveBranchCenter(e)}>
+              <div className="modal-body">
+                <div className="form-group"><label className="form-label">Branch / Center Name</label><input className="form-input" placeholder="e.g. Metro Diagnostics - Thane Branch" value={branchName} onChange={(e) => setBranchName(e.target.value)} required /></div>
+                <div className="form-group">
+                  <label className="form-label">Quick Locality / GPS Preset</label>
+                  <select
+                    className="form-select"
+                    defaultValue=""
+                    onChange={(e) => {
+                      const preset = LOCALITY_GPS_PRESETS.find((p) => p.label === e.target.value);
+                      if (preset) {
+                        setBranchCity(preset.city);
+                        setBranchAddress(preset.label);
+                        setBranchLat(preset.latitude);
+                        setBranchLng(preset.longitude);
+                      }
+                    }}
+                  >
+                    <option value="">Choose locality preset...</option>
+                    {LOCALITY_GPS_PRESETS.map((p) => (
+                      <option key={p.label} value={p.label}>{p.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <div className="form-group"><label className="form-label">City</label><input className="form-input" value={branchCity} onChange={(e) => setBranchCity(e.target.value)} required /></div>
+                  <div className="form-group"><label className="form-label">Pincode</label><input className="form-input" placeholder="e.g. 400601" value={branchPincode} onChange={(e) => setBranchPincode(e.target.value)} /></div>
+                </div>
+                <div className="form-group"><label className="form-label">Full Branch Address</label><input className="form-input" value={branchAddress} onChange={(e) => setBranchAddress(e.target.value)} required /></div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <div className="form-group"><label className="form-label">Latitude</label><input type="number" step="0.0001" className="form-input" value={branchLat} onChange={(e) => setBranchLat(Number(e.target.value))} /></div>
+                  <div className="form-group"><label className="form-label">Longitude</label><input type="number" step="0.0001" className="form-input" value={branchLng} onChange={(e) => setBranchLng(Number(e.target.value))} /></div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <div className="form-group"><label className="form-label">Branch Contact Email</label><input type="email" className="form-input" value={branchEmail} onChange={(e) => setBranchEmail(e.target.value)} /></div>
+                  <div className="form-group"><label className="form-label">Phone</label><input className="form-input" value={branchPhone} onChange={(e) => setBranchPhone(e.target.value)} /></div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn-secondary" onClick={() => setShowAddBranchModal(false)}>Cancel</button>
+                <button type="submit" className="btn-primary">Register Branch</button>
+              </div>
             </form>
           </div>
         </div>

@@ -13,12 +13,21 @@ export interface PayoutProfile {
   updatedAt?: string;
 }
 
+export type LabCenterType = 'MAIN_HUB' | 'COLLECTION_CENTER';
+
 export interface LabFacility {
   id: string;
   name: string;
   type: LabFacilityTier;
+  centerType?: LabCenterType;
+  parentLabId?: string;
+  parentLabName?: string;
   city: string;
   address?: string;
+  pincode?: string;
+  latitude?: number;
+  longitude?: number;
+  serviceRadiusKm?: number;
   phone?: string;
   email: string;
   nablNumber?: string;
@@ -76,21 +85,31 @@ export type DiagnosticDepartment =
   | 'Immunology'
   | 'Molecular'
   | 'Microbiology'
-  | 'Pathology';
+  | 'Pathology'
+  | 'Preventive Health';
+
+export type CatalogItemType = 'TEST' | 'PACKAGE';
 
 export interface DiagnosticTestItem {
   id: string;
   code: string;
   name: string;
+  itemType?: CatalogItemType;
+  includedTestCodes?: string[];
+  requiredTubeTypes?: TubeType[];
+  description?: string;
   department: DiagnosticDepartment;
   specimenType: SpecimenType;
   tubeType: TubeType;
   temperatureRequirement: StorageTemperature;
   tatHours: number;
-  b2bPriceInr: number;
+  b2bPriceInr: number; // Payable tariff charged to Small Collection Lab
+  largeLabB2bRateInr?: number; // Negotiated base B2B settlement rate paid out to Large Reference Lab
   mrpInr: number;
   isActive: boolean;
   labId?: string;
+  ownerOrgId?: string;
+  labName?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -104,6 +123,7 @@ export interface DiagnosticReportRecord {
   smallLabId: string;
   smallLabName: string;
   targetLabId: string;
+  targetParentLabId?: string;
   targetLabName: string;
   testsSummary: string;
   pathologistName: string;
@@ -123,7 +143,9 @@ export interface SettlementRecord {
   smallLabId: string;
   smallLabName: string;
   targetLabId: string;
+  targetParentLabId?: string;
   targetLabName: string;
+  dropType?: 'LARGE_LAB' | 'SELF_DROP' | 'CUSTOM_ADDRESS';
   phlebotomistId?: string;
   phlebotomistName?: string;
   grossAmountInr: number;
@@ -180,10 +202,27 @@ export interface PlatformSlaConfig {
   updatedAt: string;
 }
 
+export interface LargeLabB2bAgreement {
+  labId: string;
+  labName?: string;
+  agreedCommissionPct: number;
+  b2bMarkupPct: number;
+  minPayoutInr?: number;
+  settlementCycle?: 'DAILY' | 'T_PLUS_2' | 'WEEKLY';
+  notes?: string;
+  updatedAt?: string;
+}
+
 export interface CommissionConfig {
   commissionPct: number;
+  defaultMarginMode?: 'PCT_OF_GROSS' | 'MARKUP_ON_B2B';
   courierBaseFeeInr: number;
+  includedBaseKm?: number;
+  perKmFeeInr?: number;
+  customDropBaseFeeInr?: number;
   statSurchargeInr: number;
+  defaultBroadcastRadiusKm?: number; // 1 to 5 km live trigger radius
+  largeLabAgreements?: Record<string, LargeLabB2bAgreement>;
   updatedBy?: string;
   updatedAt: string;
 }

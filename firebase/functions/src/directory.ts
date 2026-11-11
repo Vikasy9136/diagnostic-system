@@ -83,6 +83,7 @@ export async function findProvisionedUserByEmail(email: string): Promise<UserPro
         email: normalized,
         displayName: fbUser.displayName || 'LabSetu Platform Admin',
         role: UserRole.ADMIN,
+        adminSubRole: 'SUPER_ADMIN',
         isActive: !fbUser.disabled,
         createdByAdmin: true,
         createdAt: fbUser.metadata.creationTime || new Date().toISOString(),
@@ -94,6 +95,7 @@ export async function findProvisionedUserByEmail(email: string): Promise<UserPro
         email: normalized,
         displayName: 'LabSetu Platform Admin',
         role: UserRole.ADMIN,
+        adminSubRole: 'SUPER_ADMIN',
         isActive: true,
         createdByAdmin: true,
         createdAt: new Date().toISOString(),
@@ -149,9 +151,18 @@ export async function createOrUpdateManagedUser(
     }
   }
 
+  const resolvedAdminSubRole =
+    payload.role === UserRole.ADMIN ? payload.adminSubRole || 'SUPER_ADMIN' : undefined;
+  const resolvedParentLabId =
+    payload.role === UserRole.LARGE_LAB && payload.parentLabId?.trim()
+      ? payload.parentLabId.trim()
+      : undefined;
+
   await auth.setCustomUserClaims(uid, {
     role: payload.role,
+    ...(resolvedAdminSubRole ? { adminSubRole: resolvedAdminSubRole } : {}),
     ...(payload.labId?.trim() ? { labId: payload.labId.trim() } : {}),
+    ...(resolvedParentLabId ? { parentLabId: resolvedParentLabId } : {}),
     ...(payload.phlebotomistId?.trim()
       ? { phlebotomistId: payload.phlebotomistId.trim() }
       : {}),
@@ -164,7 +175,9 @@ export async function createOrUpdateManagedUser(
     displayName: payload.displayName.trim(),
     ...(payload.phoneNumber?.trim() ? { phoneNumber: payload.phoneNumber.trim() } : {}),
     role: payload.role,
+    ...(resolvedAdminSubRole ? { adminSubRole: resolvedAdminSubRole } : {}),
     ...(payload.labId?.trim() ? { labId: payload.labId.trim() } : {}),
+    ...(resolvedParentLabId ? { parentLabId: resolvedParentLabId } : {}),
     ...(payload.phlebotomistId?.trim()
       ? { phlebotomistId: payload.phlebotomistId.trim() }
       : {}),
@@ -207,7 +220,14 @@ export async function createOrUpdateManagedUser(
 
 export async function updateManagedUserStatus(
   identifier: string,
-  updates: { isActive?: boolean; role?: UserRole; labId?: string; phlebotomistId?: string }
+  updates: {
+    isActive?: boolean;
+    role?: UserRole;
+    adminSubRole?: UserProfile['adminSubRole'];
+    labId?: string;
+    parentLabId?: string;
+    phlebotomistId?: string;
+  }
 ): Promise<UserProfile> {
   const isEmail = identifier.includes('@');
   let profile: UserProfile | null = null;
@@ -223,13 +243,31 @@ export async function updateManagedUserStatus(
     throw new AppError(`Managed user not found: ${identifier}`, 404, 'NOT_FOUND');
   }
 
+  const nextRole = updates.role ?? profile.role;
+  const nextAdminSubRole =
+    nextRole === UserRole.ADMIN
+      ? updates.adminSubRole !== undefined
+        ? updates.adminSubRole
+        : profile.adminSubRole || 'SUPER_ADMIN'
+      : undefined;
+  const nextLabId = updates.labId !== undefined ? updates.labId : profile.labId;
+  const nextParentLabId =
+    nextRole === UserRole.LARGE_LAB
+      ? updates.parentLabId !== undefined
+        ? updates.parentLabId || undefined
+        : profile.parentLabId
+      : undefined;
+  const nextPhleboId =
+    updates.phlebotomistId !== undefined ? updates.phlebotomistId : profile.phlebotomistId;
+
   const nextProfile: UserProfile = {
     ...profile,
     isActive: updates.isActive ?? profile.isActive,
-    role: updates.role ?? profile.role,
-    labId: updates.labId !== undefined ? updates.labId : profile.labId,
-    phlebotomistId:
-      updates.phlebotomistId !== undefined ? updates.phlebotomistId : profile.phlebotomistId,
+    role: nextRole,
+    ...(nextAdminSubRole ? { adminSubRole: nextAdminSubRole } : {}),
+    ...(nextLabId ? { labId: nextLabId } : {}),
+    ...(nextParentLabId ? { parentLabId: nextParentLabId } : {}),
+    ...(nextPhleboId ? { phlebotomistId: nextPhleboId } : {}),
     updatedAt: new Date().toISOString(),
   };
 
@@ -237,7 +275,9 @@ export async function updateManagedUserStatus(
     await auth.updateUser(nextProfile.id, { disabled: !nextProfile.isActive });
     await auth.setCustomUserClaims(nextProfile.id, {
       role: nextProfile.role,
+      ...(nextProfile.adminSubRole ? { adminSubRole: nextProfile.adminSubRole } : {}),
       ...(nextProfile.labId ? { labId: nextProfile.labId } : {}),
+      ...(nextProfile.parentLabId ? { parentLabId: nextProfile.parentLabId } : {}),
       ...(nextProfile.phlebotomistId ? { phlebotomistId: nextProfile.phlebotomistId } : {}),
     });
   } catch (err) {
@@ -408,7 +448,9 @@ export async function requestPasswordReset(
 
   await auth.setCustomUserClaims(targetUid, {
     role: profile.role,
+    ...(profile.adminSubRole ? { adminSubRole: profile.adminSubRole } : {}),
     ...(profile.labId ? { labId: profile.labId } : {}),
+    ...(profile.parentLabId ? { parentLabId: profile.parentLabId } : {}),
     ...(profile.phlebotomistId ? { phlebotomistId: profile.phlebotomistId } : {}),
   });
 
@@ -550,7 +592,9 @@ export async function verifyEmailOtp(
 
   const claims = {
     role: profile.role,
+    ...(profile.adminSubRole ? { adminSubRole: profile.adminSubRole } : {}),
     ...(profile.labId ? { labId: profile.labId } : {}),
+    ...(profile.parentLabId ? { parentLabId: profile.parentLabId } : {}),
     ...(profile.phlebotomistId ? { phlebotomistId: profile.phlebotomistId } : {}),
   };
 
@@ -593,7 +637,9 @@ export async function verifyAndSyncSessionRole(
 
   await auth.setCustomUserClaims(uid, {
     role: profile.role,
+    ...(profile.adminSubRole ? { adminSubRole: profile.adminSubRole } : {}),
     ...(profile.labId ? { labId: profile.labId } : {}),
+    ...(profile.parentLabId ? { parentLabId: profile.parentLabId } : {}),
     ...(profile.phlebotomistId ? { phlebotomistId: profile.phlebotomistId } : {}),
   });
 
@@ -662,7 +708,9 @@ export async function syncFirebaseUserFromDirectory(
 
   await auth.setCustomUserClaims(targetUid, {
     role: afterData.role,
+    ...(afterData.adminSubRole ? { adminSubRole: afterData.adminSubRole } : {}),
     ...(afterData.labId ? { labId: afterData.labId } : {}),
+    ...(afterData.parentLabId ? { parentLabId: afterData.parentLabId } : {}),
     ...(afterData.phlebotomistId ? { phlebotomistId: afterData.phlebotomistId } : {}),
   });
 

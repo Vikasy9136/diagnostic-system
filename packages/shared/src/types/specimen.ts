@@ -60,6 +60,10 @@ export interface SpecimenItem {
   temperatureRequirement: StorageTemperature;
   collectedAt?: string;
   qualityStatus?: SpecimenQualityStatus;
+  scannedBarcode?: string;
+  scannedTubeType?: TubeType;
+  validationStatus?: 'VERIFIED' | 'MISMATCH' | 'PENDING';
+  validationMessage?: string;
   notes?: string;
 }
 

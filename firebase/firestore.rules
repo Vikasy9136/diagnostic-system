@@ -62,13 +62,19 @@ service cloud.firestore {
     function getLabId() {
       return request.auth.token.labId != null
         ? request.auth.token.labId
-        : (isDirectoryActive() ? directoryEntry().labId : null);
+        : (isDirectoryActive() ? directoryEntry().get('labId', null) : null);
+    }
+
+    function getParentLabId() {
+      return request.auth.token.parentLabId != null
+        ? request.auth.token.parentLabId
+        : (isDirectoryActive() ? directoryEntry().get('parentLabId', null) : null);
     }
 
     function getPhlebotomistId() {
       return request.auth.token.phlebotomistId != null
         ? request.auth.token.phlebotomistId
-        : (isDirectoryActive() ? directoryEntry().phlebotomistId : null);
+        : (isDirectoryActive() ? directoryEntry().get('phlebotomistId', null) : null);
     }
 
     // =========================================================================
@@ -99,11 +105,16 @@ service cloud.firestore {
     // =========================================================================
     match /labs/{labId} {
       allow read: if isAuthenticated();
-      allow create, delete: if isAdmin();
+      allow create: if isAdmin()
+        || (isLargeLab()
+          && request.resource.data.get('parentLabId', null) == getLabId()
+          && request.resource.data.type == 'LARGE_LAB'
+          && request.resource.data.get('centerType', '') == 'COLLECTION_CENTER');
+      allow delete: if isAdmin();
       allow update: if isAdmin()
         || (isAuthenticated()
           && (isSmallLab() || isLargeLab())
-          && getLabId() == labId
+          && (getLabId() == labId || (isLargeLab() && resource.data.get('parentLabId', null) == getLabId()))
           && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['verified', 'verificationStatus', 'type']));
     }
 
@@ -146,21 +157,41 @@ service cloud.firestore {
     match /orders/{orderId} {
       allow read, write: if isAdmin();
 
-      // Small Labs create bookings for their own lab and cancel before pickup
+      // Small Labs create bookings, track them, cancel before pickup, AND run QC/reports on SELF_DROP orders
       allow create: if isSmallLab()
         && (request.resource.data.smallLabId == getLabId() || getLabId() == null);
       allow read: if isSmallLab()
-        && (resource.data.smallLabId == getLabId() || getLabId() == null);
+        && (
+          resource.data.smallLabId == getLabId()
+          || resource.data.targetLabId == getLabId()
+          || getLabId() == null
+        );
       allow update: if isSmallLab()
-        && (resource.data.smallLabId == getLabId() || getLabId() == null)
-        && resource.data.status in ['CREATED', 'READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO']
-        && request.resource.data.status in ['READY_FOR_PICKUP', 'CANCELLED'];
+        && (
+          (
+            (resource.data.smallLabId == getLabId() || getLabId() == null)
+            && resource.data.status in ['CREATED', 'READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO']
+            && request.resource.data.status in ['READY_FOR_PICKUP', 'CANCELLED']
+          )
+          || (
+            resource.data.targetLabId == getLabId()
+            && request.resource.data.status in ['DELIVERED_TO_LAB', 'UNDER_ANALYSIS', 'REPORT_UPLOADED', 'COMPLETED', 'REJECTED']
+          )
+        );
 
-      // Large Partner Labs inspect & process specimens targeted to their facility
+      // Large Partner Labs (Branch center sees targetLabId == labId; Main HQ also sees child targetParentLabId == labId)
       allow read: if isLargeLab()
-        && (resource.data.targetLabId == getLabId() || getLabId() == null);
+        && (
+          resource.data.targetLabId == getLabId()
+          || resource.data.get('targetParentLabId', null) == getLabId()
+          || getLabId() == null
+        );
       allow update: if isLargeLab()
-        && (resource.data.targetLabId == getLabId() || getLabId() == null)
+        && (
+          resource.data.targetLabId == getLabId()
+          || resource.data.get('targetParentLabId', null) == getLabId()
+          || getLabId() == null
+        )
         && request.resource.data.status in ['DELIVERED_TO_LAB', 'UNDER_ANALYSIS', 'REPORT_UPLOADED', 'COMPLETED', 'REJECTED'];
 
       // Field Phlebotomists read assigned orders or open dispatch pool, accept/collect/deliver
@@ -172,7 +203,11 @@ service cloud.firestore {
       allow update: if isPhlebotomist()
         && (
           resource.data.phlebotomistId == getPhlebotomistId()
-          || (resource.data.status == 'READY_FOR_PICKUP' && request.resource.data.phlebotomistId == getPhlebotomistId())
+          || (
+            resource.data.status == 'READY_FOR_PICKUP'
+            && (resource.data.phlebotomistId == null || resource.data.phlebotomistId == '')
+            && request.resource.data.phlebotomistId == getPhlebotomistId()
+          )
         )
         && request.resource.data.status in ['READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED_TO_LAB'];
     }
@@ -182,10 +217,23 @@ service cloud.firestore {
     // =========================================================================
     match /reports/{reportId} {
       allow read: if isAdmin()
-        || (isSmallLab() && (resource.data.smallLabId == getLabId() || getLabId() == null))
-        || (isLargeLab() && (resource.data.targetLabId == getLabId() || getLabId() == null));
+        || (isSmallLab() && (
+          resource.data.smallLabId == getLabId()
+          || resource.data.targetLabId == getLabId()
+          || getLabId() == null
+        ))
+        || (isLargeLab() && (
+          resource.data.targetLabId == getLabId()
+          || resource.data.get('targetParentLabId', null) == getLabId()
+          || getLabId() == null
+        ));
       allow create, update: if isAdmin()
-        || (isLargeLab() && (request.resource.data.targetLabId == getLabId() || getLabId() == null));
+        || (isLargeLab() && (
+          request.resource.data.targetLabId == getLabId()
+          || request.resource.data.get('targetParentLabId', null) == getLabId()
+          || getLabId() == null
+        ))
+        || (isSmallLab() && request.resource.data.targetLabId == getLabId());
       allow delete: if isAdmin();
     }
 
@@ -195,7 +243,11 @@ service cloud.firestore {
     match /settlements/{settlementId} {
       allow read: if isAdmin()
         || (isSmallLab() && (resource.data.smallLabId == getLabId() || getLabId() == null))
-        || (isLargeLab() && (resource.data.targetLabId == getLabId() || getLabId() == null))
+        || (isLargeLab() && (
+          resource.data.targetLabId == getLabId()
+          || resource.data.get('targetParentLabId', null) == getLabId()
+          || getLabId() == null
+        ))
         || (isPhlebotomist() && resource.data.phlebotomistId == getPhlebotomistId());
       allow create: if isAdmin()
         || ((isSmallLab() || isLargeLab())

@@ -18,11 +18,29 @@ export enum AuthMethod {
 }
 
 /**
+ * Sub-roles for Platform Admin team members
+ */
+export type AdminTeamRole =
+  | 'SUPER_ADMIN'
+  | 'FINANCE_B2B'
+  | 'OPS_DISPATCH'
+  | 'CATALOG_LABS';
+
+export const ADMIN_SUB_ROLE_LABELS: Record<AdminTeamRole, string> = {
+  SUPER_ADMIN: 'Super Admin (Full Control)',
+  FINANCE_B2B: 'Finance & B2B Commission Manager',
+  OPS_DISPATCH: 'Dispatch & Cold-Chain Operations',
+  CATALOG_LABS: 'Lab Network & Catalog Manager',
+};
+
+/**
  * Custom claims embedded in the Firebase Auth ID Token
  */
 export interface UserCustomClaims {
   role: UserRole;
-  labId?: string; // Associated Small Lab or Large Lab ID (if applicable)
+  adminSubRole?: AdminTeamRole;
+  labId?: string; // Associated Small Lab or Large Lab Center ID (if applicable)
+  parentLabId?: string; // Root Large Lab HQ org ID when account belongs to a specific center
   phlebotomistId?: string; // Associated Phlebotomist profile ID
 }
 
@@ -35,7 +53,9 @@ export interface UserProfile {
   displayName: string;
   phoneNumber?: string;
   role: UserRole;
+  adminSubRole?: AdminTeamRole;
   labId?: string;
+  parentLabId?: string;
   phlebotomistId?: string;
   isActive: boolean;
   fcmTokens?: string[];
@@ -51,8 +71,10 @@ export interface CreateManagedUserPayload {
   email: string;
   displayName: string;
   role: UserRole;
+  adminSubRole?: AdminTeamRole;
   phoneNumber?: string;
   labId?: string;
+  parentLabId?: string;
   phlebotomistId?: string;
   password?: string;
   isActive?: boolean;

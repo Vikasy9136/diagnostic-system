@@ -27,6 +27,11 @@ service firebase.storage {
         );
     }
 
+    function isSmallLab() {
+      return isAuthenticated()
+        && (request.auth.token.role == 'SMALL_LAB' || hasDirectoryRole('SMALL_LAB'));
+    }
+
     function isLargeLab() {
       return isAuthenticated()
         && (request.auth.token.role == 'LARGE_LAB' || hasDirectoryRole('LARGE_LAB'));
@@ -45,7 +50,13 @@ service firebase.storage {
     // Diagnostic Reports: reports/{orderId}/{fileName}
     match /reports/{orderId}/{fileName} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin() || isLargeLab();
+      allow write: if isAdmin() || isLargeLab() || isSmallLab();
+    }
+
+    // Phlebotomist Collection Sample Photos: samples/{orderId}/{fileName}
+    match /samples/{orderId}/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isCourierOrLab();
     }
 
     // Custody Handover Digital Signatures: signatures/{orderId}/{fileName}

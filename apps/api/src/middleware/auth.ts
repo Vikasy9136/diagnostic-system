@@ -79,7 +79,13 @@ export async function requireAuth(
           uid: decoded.uid,
           email: decoded.email,
           role: tokenRole,
+          ...(provisioned?.adminSubRole || decoded.adminSubRole
+            ? { adminSubRole: (provisioned?.adminSubRole || decoded.adminSubRole) as UserCustomClaims['adminSubRole'] }
+            : {}),
           labId: (provisioned?.labId || decoded.labId) as string | undefined,
+          ...(provisioned?.parentLabId || decoded.parentLabId
+            ? { parentLabId: (provisioned?.parentLabId || decoded.parentLabId) as string }
+            : {}),
           phlebotomistId: (provisioned?.phlebotomistId || decoded.phlebotomistId) as
             | string
             | undefined,
@@ -120,7 +126,9 @@ export async function requireAuth(
           uid: currentProfile.id || devOtpSession.uid,
           email: currentProfile.email,
           role: currentProfile.role,
+          ...(currentProfile.adminSubRole ? { adminSubRole: currentProfile.adminSubRole } : {}),
           labId: currentProfile.labId,
+          ...(currentProfile.parentLabId ? { parentLabId: currentProfile.parentLabId } : {}),
           phlebotomistId: currentProfile.phlebotomistId,
         };
         return next();
@@ -159,7 +167,9 @@ export async function requireAuth(
           uid,
           email: provisioned.email,
           role: provisioned.role,
+          ...(provisioned.adminSubRole ? { adminSubRole: provisioned.adminSubRole } : {}),
           labId: provisioned.labId,
+          ...(provisioned.parentLabId ? { parentLabId: provisioned.parentLabId } : {}),
           phlebotomistId: provisioned.phlebotomistId,
         };
         return next();

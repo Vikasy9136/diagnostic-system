@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
+  ADMIN_SUB_ROLE_LABELS,
+  type AdminTeamRole,
+  type CatalogItemType,
   computeBookingTrendPoints,
   computeDailyVolumeBars,
+  computeOrderPricingSplit,
   computeStatusBreakdown,
   CustodyEvent,
   DiagnosticReportRecord,
@@ -11,9 +15,13 @@ import {
   formatOrderStatus,
   isOrderCompleted,
   LABSETU_THEME,
+  type LabCenterType,
   LabFacility,
+  type LargeLabB2bAgreement,
+  LOCALITY_GPS_PRESETS,
   NotificationCategory,
   NotificationPriority,
+  OrderPriority,
   OrderStatus,
   PayoutRecord,
   PhlebotomistProfile,
@@ -24,6 +32,7 @@ import {
   SettlementRecord,
   SpecimenType,
   StorageTemperature,
+  TUBE_METADATA,
   TubeType,
   UserProfile,
   UserRole,
@@ -73,6 +82,7 @@ import {
   subscribeUserDirectory,
   toggleManagedUserStatus,
   updateLabVerification,
+  updateManagedUserAccess,
 } from '../services/firestoreService';
 import { releasePartnerPayoutApi } from '../services/razorpayCheckout';
 
@@ -109,11 +119,62 @@ type AdminTab =
   | 'master-data'
   | 'settings';
 
+const ADMIN_TAB_PERMISSIONS: Record<AdminTeamRole, AdminTab[]> = {
+  SUPER_ADMIN: [
+    'dashboard',
+    'users',
+    'bookings',
+    'labs',
+    'labs-small',
+    'labs-large',
+    'labs-verify',
+    'phlebotomists',
+    'samples',
+    'reports',
+    'payments',
+    'commission',
+    'analytics',
+    'master-data',
+    'settings',
+  ],
+  FINANCE_B2B: ['dashboard', 'payments', 'commission', 'analytics', 'reports', 'settings'],
+  OPS_DISPATCH: [
+    'dashboard',
+    'bookings',
+    'labs',
+    'labs-small',
+    'labs-large',
+    'labs-verify',
+    'phlebotomists',
+    'samples',
+    'reports',
+    'analytics',
+    'settings',
+  ],
+  CATALOG_LABS: [
+    'dashboard',
+    'users',
+    'labs',
+    'labs-small',
+    'labs-large',
+    'labs-verify',
+    'master-data',
+    'settings',
+  ],
+};
+
 export function AdminDashboard({
   session,
   onSignOut,
   onShowAlert,
 }: AdminDashboardProps) {
+  const myAdminSubRole: AdminTeamRole =
+    session.profile.email.toLowerCase() === ADMIN_LOGIN_EMAIL.toLowerCase()
+      ? 'SUPER_ADMIN'
+      : session.profile.adminSubRole || 'SUPER_ADMIN';
+  const allowedTabs = ADMIN_TAB_PERMISSIONS[myAdminSubRole];
+  const canViewTab = (tab: AdminTab) => allowedTabs.includes(tab);
+
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const [labsMenuOpen, setLabsMenuOpen] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -145,31 +206,65 @@ export function AdminDashboard({
   const [commConfig, setCommConfig] = useState<CommissionConfig>(DEFAULT_COMMISSION_CONFIG);
   const [emailSettings, setEmailSettings] = useState<EmailDeliverySettings>(DEFAULT_EMAIL_SETTINGS);
 
+  // Commission Simulator & Negotiated Large Lab B2B Agreement State
+  const [simLabOrgId, setSimLabOrgId] = useState<string>('');
+  const [simSmallTariff, setSimSmallTariff] = useState<number>(1200);
+  const [simLargeB2bRate, setSimLargeB2bRate] = useState<number>(950);
+  const [simDistanceKm, setSimDistanceKm] = useState<number>(7.5);
+  const [simPriority, setSimPriority] = useState<OrderPriority>(OrderPriority.ROUTINE);
+  const [simDropType, setSimDropType] = useState<'LARGE_LAB' | 'SELF_DROP' | 'CUSTOM_ADDRESS'>('LARGE_LAB');
+  const [agreementLabId, setAgreementLabId] = useState<string>('');
+  const [agreementCommPct, setAgreementCommPct] = useState<number>(15);
+  const [agreementMarkupPct, setAgreementMarkupPct] = useState<number>(18);
+  const [agreementMinPayout, setAgreementMinPayout] = useState<number>(0);
+  const [agreementCycle, setAgreementCycle] = useState<'DAILY' | 'T_PLUS_2' | 'WEEKLY'>('DAILY');
+  const [agreementNotes, setAgreementNotes] = useState<string>('');
+
   // Filters & Modals
   const [roleFilter, setRoleFilter] = useState<'ALL' | UserRole>('ALL');
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>('ALL');
+  const [catalogOwnerFilter, setCatalogOwnerFilter] = useState<string>('ALL');
   const [selectedCourier, setSelectedCourier] = useState<PhlebotomistProfile | null>(null);
   const [assignModalOrder, setAssignModalOrder] = useState<PickupOrder | null>(null);
   const [assignPhleboId, setAssignPhleboId] = useState('');
+
+  // Edit User Access Modal
+  const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
+  const [editUserAdminSubRole, setEditUserAdminSubRole] = useState<AdminTeamRole>('OPS_DISPATCH');
+  const [editUserLabId, setEditUserLabId] = useState('');
+  const [editUserParentLabId, setEditUserParentLabId] = useState('');
 
   // Add Role User Modal State
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserName, setNewUserName] = useState('');
   const [newUserRole, setNewUserRole] = useState<UserRole>(UserRole.SMALL_LAB);
+  const [newUserAdminSubRole, setNewUserAdminSubRole] = useState<AdminTeamRole>('OPS_DISPATCH');
+  const [newUserCenterType, setNewUserCenterType] = useState<LabCenterType>('MAIN_HUB');
+  const [newUserParentLabId, setNewUserParentLabId] = useState('');
   const [newUserLabId, setNewUserLabId] = useState('');
   const [newUserPhleboId, setNewUserPhleboId] = useState('');
   const [newUserPhone, setNewUserPhone] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserCity, setNewUserCity] = useState('Mumbai');
+  const [newUserAddress, setNewUserAddress] = useState('');
+  const [newUserPincode, setNewUserPincode] = useState('');
+  const [newUserLat, setNewUserLat] = useState<number>(LOCALITY_GPS_PRESETS[0].latitude);
+  const [newUserLng, setNewUserLng] = useState<number>(LOCALITY_GPS_PRESETS[0].longitude);
   const [savingUser, setSavingUser] = useState(false);
 
   // Add Lab Modal State
   const [showAddLabModal, setShowAddLabModal] = useState(false);
   const [labName, setLabName] = useState('');
   const [labTier, setLabTier] = useState<LabFacilityTier>('SMALL_LAB');
+  const [labCenterType, setLabCenterType] = useState<LabCenterType>('MAIN_HUB');
+  const [labParentId, setLabParentId] = useState('');
   const [labCity, setLabCity] = useState('Mumbai');
   const [labAddress, setLabAddress] = useState('');
+  const [labPincode, setLabPincode] = useState('');
+  const [labLat, setLabLat] = useState<number>(LOCALITY_GPS_PRESETS[0].latitude);
+  const [labLng, setLabLng] = useState<number>(LOCALITY_GPS_PRESETS[0].longitude);
+  const [labRadiusKm, setLabRadiusKm] = useState<number>(15);
   const [labEmail, setLabEmail] = useState('');
   const [labPhone, setLabPhone] = useState('');
   const [labNabl, setLabNabl] = useState('');
@@ -180,10 +275,17 @@ export function AdminDashboard({
   const [phleboEmail, setPhleboEmail] = useState('');
   const [phleboPhone, setPhleboPhone] = useState('');
   const [phleboZone, setPhleboZone] = useState('Mumbai Central');
+  const [phleboLat, setPhleboLat] = useState<number>(LOCALITY_GPS_PRESETS[0].latitude);
+  const [phleboLng, setPhleboLng] = useState<number>(LOCALITY_GPS_PRESETS[0].longitude);
   const [phleboVehicle, setPhleboVehicle] = useState('Cold-Chain Two-Wheeler');
 
-  // Add Test Catalogue Modal State
+  // Add / Edit Test & Package Catalogue Modal State
   const [showAddTestModal, setShowAddTestModal] = useState(false);
+  const [editingTestId, setEditingTestId] = useState<string | null>(null);
+  const [testOwnerOrgId, setTestOwnerOrgId] = useState<string>('GLOBAL');
+  const [testItemType, setTestItemType] = useState<CatalogItemType>('TEST');
+  const [testIncludedCodes, setTestIncludedCodes] = useState<string[]>([]);
+  const [testCustomCodesInput, setTestCustomCodesInput] = useState<string>('');
   const [testCode, setTestCode] = useState('');
   const [testName, setTestName] = useState('');
   const [testDept, setTestDept] = useState<DiagnosticDepartment>('Hematology');
@@ -191,6 +293,7 @@ export function AdminDashboard({
   const [testTube, setTestTube] = useState<TubeType>(TubeType.EDTA_LAVENDER);
   const [testTemp, setTestTemp] = useState<StorageTemperature>(StorageTemperature.REFRIGERATED);
   const [testTat, setTestTat] = useState(4);
+  const [testLargeLabRate, setTestLargeLabRate] = useState(190);
   const [testB2bPrice, setTestB2bPrice] = useState(250);
   const [testMrp, setTestMrp] = useState(500);
 
@@ -310,15 +413,68 @@ export function AdminDashboard({
     };
   }, [labs, phlebotomists, orders, settlements, custodyEvents, trendDays]);
 
+  const largeLabOrgs = useMemo(
+    () =>
+      labs.filter(
+        (l) =>
+          l.type === 'LARGE_LAB' &&
+          (!l.parentLabId || l.centerType === 'MAIN_HUB')
+      ),
+    [labs]
+  );
+
+  const singleTestsCatalog = useMemo(
+    () =>
+      testCatalog.filter((t) => (t.itemType || 'TEST') === 'TEST' && t.isActive !== false),
+    [testCatalog]
+  );
+
+  useEffect(() => {
+    if (!agreementLabId && largeLabOrgs.length > 0) {
+      const firstOrg = largeLabOrgs[0];
+      setAgreementLabId(firstOrg.id);
+      const existing = commConfig.largeLabAgreements?.[firstOrg.id];
+      if (existing) {
+        setAgreementCommPct(existing.agreedCommissionPct);
+        setAgreementMarkupPct(existing.b2bMarkupPct);
+        setAgreementMinPayout(existing.minPayoutInr || 0);
+        setAgreementCycle(existing.settlementCycle || 'DAILY');
+        setAgreementNotes(existing.notes || '');
+      }
+    }
+  }, [largeLabOrgs, agreementLabId, commConfig.largeLabAgreements]);
+
+  const simulatedSplit = useMemo(
+    () =>
+      computeOrderPricingSplit({
+        smallLabTestTotalInr: simSmallTariff,
+        largeLabB2bTotalInr:
+          simDropType === 'LARGE_LAB' ? simLargeB2bRate : undefined,
+        commissionConfig: commConfig,
+        targetLabId: simLabOrgId || undefined,
+        priority: simPriority,
+        distanceKm: simDistanceKm,
+        dropType: simDropType,
+      }),
+    [simSmallTariff, simLargeB2bRate, commConfig, simLabOrgId, simPriority, simDistanceKm, simDropType]
+  );
+
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   function openAddUserModal(presetRole: UserRole = UserRole.SMALL_LAB) {
     setNewUserRole(presetRole);
+    setNewUserAdminSubRole('OPS_DISPATCH');
+    setNewUserCenterType('MAIN_HUB');
+    setNewUserParentLabId(largeLabOrgs[0]?.id || '');
     setNewUserEmail('');
     setNewUserName('');
     setNewUserPhone('');
     setNewUserPassword('');
     setNewUserCity('Mumbai');
+    setNewUserAddress('');
+    setNewUserPincode('');
+    setNewUserLat(LOCALITY_GPS_PRESETS[0].latitude);
+    setNewUserLng(LOCALITY_GPS_PRESETS[0].longitude);
     setNewUserLabId(
       presetRole === UserRole.SMALL_LAB
         ? `LAB-SM-${Date.now().toString().slice(-3)}`
@@ -335,17 +491,36 @@ export function AdminDashboard({
   async function handleProvisionUserSubmit(e: FormEvent) {
     e.preventDefault();
     if (!newUserEmail.trim() || !newUserName.trim()) return;
+    const isLargeCenter =
+      newUserRole === UserRole.LARGE_LAB && newUserCenterType === 'COLLECTION_CENTER';
+    const parentOrg = isLargeCenter
+      ? largeLabOrgs.find((l) => l.id === newUserParentLabId)
+      : undefined;
+    if (isLargeCenter && !parentOrg) {
+      onShowAlert({
+        variant: 'warning',
+        title: 'Parent Hub Required',
+        message: 'Select the parent Large Reference Lab Hub before creating a Collection Center login.',
+      });
+      return;
+    }
+
     setSavingUser(true);
     try {
+      const resolvedLabId =
+        newUserRole === UserRole.SMALL_LAB || newUserRole === UserRole.LARGE_LAB
+          ? newUserLabId.trim() ||
+            `${newUserRole === UserRole.SMALL_LAB ? 'LAB-SM' : isLargeCenter ? 'LAB-CC' : 'LAB-LG'}-${Date.now().toString().slice(-3)}`
+          : undefined;
+
       const payload: CreateManagedUserPayload = {
         email: newUserEmail.trim().toLowerCase(),
         displayName: newUserName.trim(),
         role: newUserRole,
+        adminSubRole: newUserRole === UserRole.ADMIN ? newUserAdminSubRole : undefined,
         phoneNumber: newUserPhone.trim() || undefined,
-        labId:
-          newUserRole === UserRole.SMALL_LAB || newUserRole === UserRole.LARGE_LAB
-            ? newUserLabId.trim()
-            : undefined,
+        labId: resolvedLabId,
+        parentLabId: isLargeCenter ? parentOrg?.id : undefined,
         phlebotomistId:
           newUserRole === UserRole.PHLEBOTOMIST ? newUserPhleboId.trim() : undefined,
         password: newUserPassword.trim() || undefined,
@@ -354,18 +529,30 @@ export function AdminDashboard({
       const { profile, apiSynced } = await provisionRoleUser(session.bearerToken, payload, {
         createFacilityRecord: true,
         city: newUserCity,
+        address: newUserAddress.trim() || undefined,
+        pincode: newUserPincode.trim() || undefined,
+        latitude: Number(newUserLat),
+        longitude: Number(newUserLng),
+        centerType: newUserRole === UserRole.LARGE_LAB ? newUserCenterType : undefined,
+        parentLabName: parentOrg?.name,
       });
       setShowAddUserModal(false);
       onShowAlert({
         variant: 'success',
         title: 'Account Created',
-        message: `${profile.displayName} (${profile.email}) can now sign in as ${ROLE_LABELS[profile.role]}.`,
+        message: `${profile.displayName} (${profile.email}) can now sign in as ${
+          profile.role === UserRole.ADMIN && profile.adminSubRole
+            ? ADMIN_SUB_ROLE_LABELS[profile.adminSubRole]
+            : ROLE_LABELS[profile.role]
+        }.`,
         detail: `${
           profile.labId
-            ? `Lab ID: ${profile.labId}`
+            ? `${isLargeCenter ? 'Center' : 'Lab'} ID: ${profile.labId}${
+                profile.parentLabId ? ` (HQ: ${profile.parentLabId})` : ''
+              }`
             : profile.phlebotomistId
             ? `Courier ID: ${profile.phlebotomistId}`
-            : 'Platform Admin'
+            : `Admin Team: ${ADMIN_SUB_ROLE_LABELS[profile.adminSubRole || 'SUPER_ADMIN']}`
         } • ${
           profile.role === UserRole.PHLEBOTOMIST
             ? 'Mobile App sign-in enabled'
@@ -385,15 +572,57 @@ export function AdminDashboard({
     }
   }
 
+  async function handleSaveUserAccessEdit(e: FormEvent) {
+    e.preventDefault();
+    if (!editingUser) return;
+    await updateManagedUserAccess(session.bearerToken, editingUser, {
+      adminSubRole: editingUser.role === UserRole.ADMIN ? editUserAdminSubRole : undefined,
+      labId:
+        editingUser.role === UserRole.SMALL_LAB || editingUser.role === UserRole.LARGE_LAB
+          ? editUserLabId.trim() || undefined
+          : undefined,
+      parentLabId:
+        editingUser.role === UserRole.LARGE_LAB
+          ? editUserParentLabId.trim() || undefined
+          : undefined,
+    });
+    setEditingUser(null);
+    onShowAlert({
+      variant: 'success',
+      title: 'Access Updated',
+      message: `Updated role permissions and facility assignment for ${editingUser.email}.`,
+    });
+  }
+
   async function handleSaveNewLab(e: FormEvent) {
     e.preventDefault();
-    const id = `${labTier === 'SMALL_LAB' ? 'LAB-SM' : 'LAB-LG'}-${Date.now().toString().slice(-4)}`;
+    const isChildCenter = labTier === 'LARGE_LAB' && labCenterType === 'COLLECTION_CENTER';
+    const parentOrg = isChildCenter ? largeLabOrgs.find((l) => l.id === labParentId) : undefined;
+    if (isChildCenter && !parentOrg) {
+      onShowAlert({
+        variant: 'warning',
+        title: 'Parent HQ Required',
+        message: 'Select the Parent Reference Lab Hub for this Collection Center.',
+      });
+      return;
+    }
+
+    const id = `${
+      labTier === 'SMALL_LAB' ? 'LAB-SM' : isChildCenter ? 'LAB-CC' : 'LAB-LG'
+    }-${Date.now().toString().slice(-4)}`;
     await saveLabFacility({
       id,
       name: labName.trim(),
       type: labTier,
+      centerType: labTier === 'LARGE_LAB' ? labCenterType : undefined,
+      parentLabId: isChildCenter ? parentOrg?.id : undefined,
+      parentLabName: isChildCenter ? parentOrg?.name : undefined,
       city: labCity.trim() || 'Mumbai',
       address: labAddress.trim() || `${labName.trim()}, ${labCity.trim()}`,
+      pincode: labPincode.trim() || undefined,
+      latitude: Number(labLat) || LOCALITY_GPS_PRESETS[0].latitude,
+      longitude: Number(labLng) || LOCALITY_GPS_PRESETS[0].longitude,
+      serviceRadiusKm: Number(labRadiusKm) || 15,
       email: labEmail.trim().toLowerCase(),
       phone: labPhone.trim(),
       nablNumber: labNabl.trim() || undefined,
@@ -405,6 +634,7 @@ export function AdminDashboard({
     setShowAddLabModal(false);
     setLabName('');
     setLabAddress('');
+    setLabPincode('');
     setLabEmail('');
     setLabPhone('');
     onShowAlert({
@@ -424,6 +654,8 @@ export function AdminDashboard({
       phone: phleboPhone.trim(),
       status: 'ONLINE',
       currentLocation: phleboZone.trim() || 'Mumbai Zone',
+      latitude: Number(phleboLat) || LOCALITY_GPS_PRESETS[0].latitude,
+      longitude: Number(phleboLng) || LOCALITY_GPS_PRESETS[0].longitude,
       batteryPct: 100,
       chillerTempCelsius: 4.2,
       coolerBoxId: `CB-${id}`,
@@ -443,30 +675,138 @@ export function AdminDashboard({
     });
   }
 
+  function openAddTestModal(itemType: CatalogItemType = 'TEST') {
+    setEditingTestId(null);
+    setTestOwnerOrgId('GLOBAL');
+    setTestItemType(itemType);
+    setTestIncludedCodes([]);
+    setTestCustomCodesInput('');
+    setTestCode('');
+    setTestName('');
+    setTestDept(itemType === 'PACKAGE' ? 'Preventive Health' : 'Hematology');
+    setTestSpecimen(SpecimenType.BLOOD);
+    setTestTube(TubeType.EDTA_LAVENDER);
+    setTestTemp(StorageTemperature.REFRIGERATED);
+    setTestTat(itemType === 'PACKAGE' ? 12 : 4);
+    setTestLargeLabRate(itemType === 'PACKAGE' ? 680 : 190);
+    setTestB2bPrice(itemType === 'PACKAGE' ? 850 : 250);
+    setTestMrp(itemType === 'PACKAGE' ? 1500 : 500);
+    setShowAddTestModal(true);
+  }
+
+  function openEditTestModal(item: DiagnosticTestItem) {
+    setEditingTestId(item.id);
+    setTestOwnerOrgId(item.ownerOrgId || item.labId || 'GLOBAL');
+    setTestItemType(item.itemType || 'TEST');
+    setTestIncludedCodes(item.includedTestCodes || []);
+    setTestCustomCodesInput('');
+    setTestCode(item.code);
+    setTestName(item.name);
+    setTestDept(item.department);
+    setTestSpecimen(item.specimenType);
+    setTestTube(item.tubeType);
+    setTestTemp(item.temperatureRequirement);
+    setTestTat(item.tatHours);
+    setTestLargeLabRate(
+      typeof item.largeLabB2bRateInr === 'number'
+        ? item.largeLabB2bRateInr
+        : Math.round((item.b2bPriceInr || 0) * 0.85)
+    );
+    setTestB2bPrice(item.b2bPriceInr);
+    setTestMrp(item.mrpInr);
+    setShowAddTestModal(true);
+  }
+
   async function handleSaveTest(e: FormEvent) {
     e.preventDefault();
-    const cleanCode = testCode.trim().toUpperCase();
+    const cleanCode = testCode.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
     if (!cleanCode || !testName.trim()) return;
+
+    const customCodes = testCustomCodesInput
+      .split(',')
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+    const mergedIncludedCodes =
+      testItemType === 'PACKAGE'
+        ? Array.from(new Set([...testIncludedCodes, ...customCodes]))
+        : undefined;
+
+    if (testItemType === 'PACKAGE' && (!mergedIncludedCodes || mergedIncludedCodes.length < 2)) {
+      onShowAlert({
+        variant: 'warning',
+        title: 'Select Package Tests',
+        message: 'A Health Package must include at least 2 test codes so bookings can auto-match it.',
+      });
+      return;
+    }
+
+    const ownerOrg =
+      testOwnerOrgId !== 'GLOBAL'
+        ? largeLabOrgs.find((l) => l.id === testOwnerOrgId)
+        : undefined;
+    const docId =
+      editingTestId ||
+      (ownerOrg ? `${ownerOrg.id}__${cleanCode}` : cleanCode);
+
     await saveDiagnosticTest({
-      id: cleanCode,
+      id: docId,
       code: cleanCode,
       name: testName.trim(),
+      itemType: testItemType,
+      includedTestCodes: mergedIncludedCodes,
       department: testDept,
       specimenType: testSpecimen,
       tubeType: testTube,
       temperatureRequirement: testTemp,
       tatHours: Number(testTat) || 4,
       b2bPriceInr: Number(testB2bPrice) || 250,
+      largeLabB2bRateInr: Number(testLargeLabRate) || 0,
       mrpInr: Number(testMrp) || 500,
       isActive: true,
+      ownerOrgId: ownerOrg ? ownerOrg.id : undefined,
+      labId: ownerOrg ? ownerOrg.id : undefined,
+      labName: ownerOrg ? ownerOrg.name : 'Global Network Default',
     });
     setShowAddTestModal(false);
+    setEditingTestId(null);
     setTestCode('');
     setTestName('');
     onShowAlert({
       variant: 'success',
-      title: 'Test Panel Saved',
-      message: `${cleanCode} (${testName.trim()}) has been added to the test catalogue.`,
+      title: testItemType === 'PACKAGE' ? 'Health Package Saved' : 'Test Panel Saved',
+      message: `${cleanCode} (${testName.trim()}) has been saved${
+        ownerOrg ? ` for ${ownerOrg.name}` : ' to global catalogue'
+      }.`,
+    });
+  }
+
+  async function handleSaveAgreement(e: FormEvent) {
+    e.preventDefault();
+    if (!agreementLabId) return;
+    const targetLab = largeLabOrgs.find((l) => l.id === agreementLabId);
+    if (!targetLab) return;
+    const nextAgreement: LargeLabB2bAgreement = {
+      labId: targetLab.id,
+      labName: targetLab.name,
+      agreedCommissionPct: Number(agreementCommPct) || 0,
+      b2bMarkupPct: Number(agreementMarkupPct) || 0,
+      minPayoutInr: Number(agreementMinPayout) || 0,
+      settlementCycle: agreementCycle,
+      notes: agreementNotes.trim() || undefined,
+      updatedAt: new Date().toISOString(),
+    };
+    const nextConfig: CommissionConfig = {
+      ...commConfig,
+      largeLabAgreements: {
+        ...(commConfig.largeLabAgreements || {}),
+        [targetLab.id]: nextAgreement,
+      },
+    };
+    await saveCommissionSettings(nextConfig, session.profile.email);
+    onShowAlert({
+      variant: 'success',
+      title: 'B2B Agreement Updated',
+      message: `Saved negotiated B2B rate rule for ${targetLab.name} (${nextAgreement.agreedCommissionPct}% commission, ${nextAgreement.b2bMarkupPct}% markup).`,
     });
   }
 
@@ -721,84 +1061,110 @@ export function AdminDashboard({
           </div>
           <div className="brand-title-wrap">
             <span className="brand-title">{LABSETU_THEME.brand.name}</span>
-            <span className="brand-subtitle">Admin Command</span>
+            <span className="brand-subtitle">{ADMIN_SUB_ROLE_LABELS[myAdminSubRole]}</span>
           </div>
         </div>
 
         <ul className="sidebar-nav">
-          <li className={`sidebar-nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
-            <span>📊</span>
-            <span>Admin Dashboard</span>
-          </li>
-          <li className={`sidebar-nav-item ${activeTab === 'users' ? 'active' : ''}`} onClick={() => setActiveTab('users')}>
-            <span>🛡️</span>
-            <span>Users &amp; Roles</span>
-            <span className="nav-badge-green">{managedUsers.length}</span>
-          </li>
-          <li className={`sidebar-nav-item ${activeTab === 'bookings' ? 'active' : ''}`} onClick={() => setActiveTab('bookings')}>
-            <span>📦</span>
-            <span>Bookings</span>
-            <span className="nav-badge-red">{orders.length}</span>
-          </li>
-
-          <li
-            className={`sidebar-nav-item ${activeTab.startsWith('labs') ? 'active' : ''}`}
-            onClick={() => {
-              setLabsMenuOpen(!labsMenuOpen);
-              setActiveTab('labs');
-            }}
-          >
-            <span>🏥</span>
-            <span>Labs &amp; Partners</span>
-            <span className="chevron-icon">{labsMenuOpen ? '▴' : '▾'}</span>
-          </li>
-          {labsMenuOpen && (
-            <ul className="sidebar-submenu">
-              <li className={`sidebar-subitem ${activeTab === 'labs-small' ? 'active' : ''}`} onClick={() => setActiveTab('labs-small')}>
-                • Small Labs ({metrics.smallLabsCount})
-              </li>
-              <li className={`sidebar-subitem ${activeTab === 'labs-large' ? 'active' : ''}`} onClick={() => setActiveTab('labs-large')}>
-                • Large Labs ({metrics.largeLabsCount})
-              </li>
-              <li className={`sidebar-subitem ${activeTab === 'labs-verify' ? 'active' : ''}`} onClick={() => setActiveTab('labs-verify')}>
-                • Verification ({metrics.pendingLabsCount})
-              </li>
-            </ul>
+          {canViewTab('dashboard') && (
+            <li className={`sidebar-nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
+              <span>📊</span>
+              <span>Admin Dashboard</span>
+            </li>
+          )}
+          {canViewTab('users') && (
+            <li className={`sidebar-nav-item ${activeTab === 'users' ? 'active' : ''}`} onClick={() => setActiveTab('users')}>
+              <span>🛡️</span>
+              <span>Users &amp; Roles</span>
+              <span className="nav-badge-green">{managedUsers.length}</span>
+            </li>
+          )}
+          {canViewTab('bookings') && (
+            <li className={`sidebar-nav-item ${activeTab === 'bookings' ? 'active' : ''}`} onClick={() => setActiveTab('bookings')}>
+              <span>📦</span>
+              <span>Bookings</span>
+              <span className="nav-badge-red">{orders.length}</span>
+            </li>
           )}
 
-          <li className={`sidebar-nav-item ${activeTab === 'phlebotomists' ? 'active' : ''}`} onClick={() => setActiveTab('phlebotomists')}>
-            <span>🏍️</span>
-            <span>Phlebotomists</span>
-            <span className="nav-badge-teal">{phlebotomists.length}</span>
-          </li>
-          <li className={`sidebar-nav-item ${activeTab === 'samples' ? 'active' : ''}`} onClick={() => setActiveTab('samples')}>
-            <span>🧪</span>
-            <span>Samples Cold-Chain</span>
-          </li>
-          <li className={`sidebar-nav-item ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => setActiveTab('reports')}>
-            <span>📄</span>
-            <span>Reports</span>
-          </li>
-          <li className={`sidebar-nav-item ${activeTab === 'payments' ? 'active' : ''}`} onClick={() => setActiveTab('payments')}>
-            <span>💳</span>
-            <span>Payments &amp; Settlements</span>
-          </li>
-          <li className={`sidebar-nav-item ${activeTab === 'commission' ? 'active' : ''}`} onClick={() => setActiveTab('commission')}>
-            <span>%</span>
-            <span>Commissions</span>
-          </li>
-          <li className={`sidebar-nav-item ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => setActiveTab('analytics')}>
-            <span>📈</span>
-            <span>Analytics</span>
-          </li>
-          <li className={`sidebar-nav-item ${activeTab === 'master-data' ? 'active' : ''}`} onClick={() => setActiveTab('master-data')}>
-            <span>🗂️</span>
-            <span>Master Test Data</span>
-          </li>
-          <li className={`sidebar-nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>
-            <span>⚙️</span>
-            <span>Settings</span>
-          </li>
+          {canViewTab('labs') && (
+            <>
+              <li
+                className={`sidebar-nav-item ${activeTab.startsWith('labs') ? 'active' : ''}`}
+                onClick={() => {
+                  setLabsMenuOpen(!labsMenuOpen);
+                  setActiveTab('labs');
+                }}
+              >
+                <span>🏥</span>
+                <span>Labs &amp; Partners</span>
+                <span className="chevron-icon">{labsMenuOpen ? '▴' : '▾'}</span>
+              </li>
+              {labsMenuOpen && (
+                <ul className="sidebar-submenu">
+                  <li className={`sidebar-subitem ${activeTab === 'labs-small' ? 'active' : ''}`} onClick={() => setActiveTab('labs-small')}>
+                    • Small Labs ({metrics.smallLabsCount})
+                  </li>
+                  <li className={`sidebar-subitem ${activeTab === 'labs-large' ? 'active' : ''}`} onClick={() => setActiveTab('labs-large')}>
+                    • Large Labs ({metrics.largeLabsCount})
+                  </li>
+                  <li className={`sidebar-subitem ${activeTab === 'labs-verify' ? 'active' : ''}`} onClick={() => setActiveTab('labs-verify')}>
+                    • Verification ({metrics.pendingLabsCount})
+                  </li>
+                </ul>
+              )}
+            </>
+          )}
+
+          {canViewTab('phlebotomists') && (
+            <li className={`sidebar-nav-item ${activeTab === 'phlebotomists' ? 'active' : ''}`} onClick={() => setActiveTab('phlebotomists')}>
+              <span>🏍️</span>
+              <span>Phlebotomists</span>
+              <span className="nav-badge-teal">{phlebotomists.length}</span>
+            </li>
+          )}
+          {canViewTab('samples') && (
+            <li className={`sidebar-nav-item ${activeTab === 'samples' ? 'active' : ''}`} onClick={() => setActiveTab('samples')}>
+              <span>🧪</span>
+              <span>Samples Cold-Chain</span>
+            </li>
+          )}
+          {canViewTab('reports') && (
+            <li className={`sidebar-nav-item ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => setActiveTab('reports')}>
+              <span>📄</span>
+              <span>Reports</span>
+            </li>
+          )}
+          {canViewTab('payments') && (
+            <li className={`sidebar-nav-item ${activeTab === 'payments' ? 'active' : ''}`} onClick={() => setActiveTab('payments')}>
+              <span>💳</span>
+              <span>Payments &amp; Settlements</span>
+            </li>
+          )}
+          {canViewTab('commission') && (
+            <li className={`sidebar-nav-item ${activeTab === 'commission' ? 'active' : ''}`} onClick={() => setActiveTab('commission')}>
+              <span>%</span>
+              <span>Commissions</span>
+            </li>
+          )}
+          {canViewTab('analytics') && (
+            <li className={`sidebar-nav-item ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => setActiveTab('analytics')}>
+              <span>📈</span>
+              <span>Analytics</span>
+            </li>
+          )}
+          {canViewTab('master-data') && (
+            <li className={`sidebar-nav-item ${activeTab === 'master-data' ? 'active' : ''}`} onClick={() => setActiveTab('master-data')}>
+              <span>🗂️</span>
+              <span>Master Test Data</span>
+            </li>
+          )}
+          {canViewTab('settings') && (
+            <li className={`sidebar-nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>
+              <span>⚙️</span>
+              <span>Settings</span>
+            </li>
+          )}
         </ul>
 
         <div
@@ -807,13 +1173,13 @@ export function AdminDashboard({
             onShowAlert({
               variant: 'info',
               title: 'LabSetu Operations',
-              message: `Connected Live Dashboard\nPrimary Admin: ${ADMIN_LOGIN_EMAIL}`,
+              message: `Signed in as ${ADMIN_SUB_ROLE_LABELS[myAdminSubRole]}\nPrimary Admin: ${ADMIN_LOGIN_EMAIL}`,
             })
           }
         >
           <div className="sidebar-footer-icon">🎧</div>
           <div>
-            <div className="sidebar-footer-title">Admin Control Desk</div>
+            <div className="sidebar-footer-title">{ADMIN_SUB_ROLE_LABELS[myAdminSubRole]}</div>
             <div className="sidebar-footer-subtitle">Live Auto-Sync Active</div>
           </div>
         </div>
@@ -885,7 +1251,7 @@ export function AdminDashboard({
               <div className="user-photo-avatar">{initials}</div>
               <div className="user-profile-info">
                 <span className="user-profile-name">{session.profile.displayName}</span>
-                <span className="user-profile-role">{session.profile.email}</span>
+                <span className="user-profile-role">{ADMIN_SUB_ROLE_LABELS[myAdminSubRole]} • {session.profile.email}</span>
               </div>
               <button type="button" className="signout-btn" onClick={onSignOut}>
                 Sign Out
@@ -1087,26 +1453,42 @@ export function AdminDashboard({
 
               {/* Quick Actions */}
               <section className="quick-actions-bar">
-                <button type="button" className="action-card-btn" onClick={() => openAddUserModal(UserRole.SMALL_LAB)}>
-                  <span className="action-btn-icon">🛡️</span>
-                  <span className="action-btn-text">+ Add Role User</span>
-                </button>
-                <button type="button" className="action-card-btn" onClick={() => setShowAddLabModal(true)}>
-                  <span className="action-btn-icon">🏥</span>
-                  <span className="action-btn-text">+ Add Lab Facility</span>
-                </button>
-                <button type="button" className="action-card-btn" onClick={() => setShowAddPhleboModal(true)}>
-                  <span className="action-btn-icon">🏍️</span>
-                  <span className="action-btn-text">+ Add Phlebotomist</span>
-                </button>
-                <button type="button" className="action-card-btn" onClick={() => setShowAddTestModal(true)}>
-                  <span className="action-btn-icon">🧪</span>
-                  <span className="action-btn-text">+ Add Test Panel</span>
-                </button>
-                <button type="button" className="action-card-btn" onClick={() => setActiveTab('bookings')}>
-                  <span className="action-btn-icon">📋</span>
-                  <span className="action-btn-text">Manage Bookings</span>
-                </button>
+                {canViewTab('users') && (
+                  <button type="button" className="action-card-btn" onClick={() => openAddUserModal(UserRole.SMALL_LAB)}>
+                    <span className="action-btn-icon">🛡️</span>
+                    <span className="action-btn-text">+ Add Role User</span>
+                  </button>
+                )}
+                {canViewTab('labs') && (
+                  <button type="button" className="action-card-btn" onClick={() => setShowAddLabModal(true)}>
+                    <span className="action-btn-icon">🏥</span>
+                    <span className="action-btn-text">+ Add Lab Facility</span>
+                  </button>
+                )}
+                {canViewTab('phlebotomists') && (
+                  <button type="button" className="action-card-btn" onClick={() => setShowAddPhleboModal(true)}>
+                    <span className="action-btn-icon">🏍️</span>
+                    <span className="action-btn-text">+ Add Phlebotomist</span>
+                  </button>
+                )}
+                {canViewTab('master-data') && (
+                  <button type="button" className="action-card-btn" onClick={() => openAddTestModal('TEST')}>
+                    <span className="action-btn-icon">🧪</span>
+                    <span className="action-btn-text">+ Add Test / Package</span>
+                  </button>
+                )}
+                {canViewTab('bookings') && (
+                  <button type="button" className="action-card-btn" onClick={() => setActiveTab('bookings')}>
+                    <span className="action-btn-icon">📋</span>
+                    <span className="action-btn-text">Manage Bookings</span>
+                  </button>
+                )}
+                {canViewTab('commission') && (
+                  <button type="button" className="action-card-btn" onClick={() => setActiveTab('commission')}>
+                    <span className="action-btn-icon">%</span>
+                    <span className="action-btn-text">B2B Rate Rules</span>
+                  </button>
+                )}
                 <button type="button" className="action-card-btn" onClick={handleExportCsv}>
                   <span className="action-btn-icon">📥</span>
                   <span className="action-btn-text">Export CSV</span>
@@ -1247,34 +1629,64 @@ export function AdminDashboard({
                       <tr key={u.email}>
                         <td><strong>{u.displayName}</strong></td>
                         <td>{u.email}</td>
-                        <td><span className="status-pill-blue">{ROLE_LABELS[u.role]}</span></td>
-                        <td>{u.labId || u.phlebotomistId || 'Global'}</td>
+                        <td>
+                          <span className="status-pill-blue">{ROLE_LABELS[u.role]}</span>
+                          {u.role === UserRole.ADMIN && (
+                            <div style={{ fontSize: '0.72rem', color: '#0F766E', fontWeight: 600, marginTop: '4px' }}>
+                              {ADMIN_SUB_ROLE_LABELS[u.adminSubRole || 'SUPER_ADMIN']}
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          <div>{u.labId || u.phlebotomistId || 'Global'}</div>
+                          {u.parentLabId && (
+                            <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
+                              Branch of {u.parentLabId}
+                            </div>
+                          )}
+                        </td>
                         <td>
                           <span className={u.isActive ? 'status-pill-green' : 'status-pill-red'}>
                             {u.isActive ? '● Active' : '● Paused'}
                           </span>
                         </td>
                         <td>
-                          {u.email.toLowerCase() === ADMIN_LOGIN_EMAIL.toLowerCase() ? (
-                            <span style={{ fontSize: '0.75rem', color: '#64748B' }}>Primary Admin</span>
-                          ) : (
-                            <button
-                              type="button"
-                              className="btn-secondary"
-                              onClick={() =>
-                                onShowAlert({
-                                  variant: 'confirm',
-                                  title: u.isActive ? 'Pause Account?' : 'Activate Account?',
-                                  message: `${u.isActive ? 'Pause' : 'Restore'} sign-in access for ${u.email}?`,
-                                  onConfirm: () => {
-                                    void toggleManagedUserStatus(session.bearerToken, u, !u.isActive);
-                                  },
-                                })
-                              }
-                            >
-                              {u.isActive ? 'Pause' : 'Activate'}
-                            </button>
-                          )}
+                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                            {u.email.toLowerCase() === ADMIN_LOGIN_EMAIL.toLowerCase() ? (
+                              <span style={{ fontSize: '0.75rem', color: '#64748B', fontWeight: 600 }}>Root Super Admin</span>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn-secondary"
+                                  onClick={() => {
+                                    setEditingUser(u);
+                                    setEditUserAdminSubRole(u.adminSubRole || 'OPS_DISPATCH');
+                                    setEditUserLabId(u.labId || '');
+                                    setEditUserParentLabId(u.parentLabId || '');
+                                  }}
+                                >
+                                  Edit Access
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-secondary"
+                                  onClick={() =>
+                                    onShowAlert({
+                                      variant: 'confirm',
+                                      title: u.isActive ? 'Pause Account?' : 'Activate Account?',
+                                      message: `${u.isActive ? 'Pause' : 'Restore'} sign-in access for ${u.email}?`,
+                                      onConfirm: () => {
+                                        void toggleManagedUserStatus(session.bearerToken, u, !u.isActive);
+                                      },
+                                    })
+                                  }
+                                >
+                                  {u.isActive ? 'Pause' : 'Activate'}
+                                </button>
+                              </>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -1402,10 +1814,32 @@ export function AdminDashboard({
                         })
                         .map((lab) => (
                           <tr key={lab.id}>
-                            <td><strong>{lab.id}</strong></td>
-                            <td>{lab.name}</td>
-                            <td>{lab.type === 'SMALL_LAB' ? 'Collection Center' : 'Reference Hub'}</td>
-                            <td>{lab.city}</td>
+                            <td>
+                              <strong>{lab.id}</strong>
+                              {lab.pincode && <div style={{ fontSize: '0.72rem', color: '#64748B' }}>PIN: {lab.pincode}</div>}
+                            </td>
+                            <td>
+                              <div><strong>{lab.name}</strong></div>
+                              <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
+                                {lab.address}
+                              </div>
+                            </td>
+                            <td>
+                              <div>{lab.type === 'SMALL_LAB' ? 'Small Collection Lab' : lab.centerType === 'COLLECTION_CENTER' ? 'Large Lab Branch' : 'Large Lab Main Hub'}</div>
+                              {lab.parentLabId && (
+                                <div style={{ fontSize: '0.72rem', color: '#0F766E' }}>
+                                  Parent HQ: {lab.parentLabName || lab.parentLabId}
+                                </div>
+                              )}
+                            </td>
+                            <td>
+                              <div>{lab.city}</div>
+                              {lab.latitude && lab.longitude && (
+                                <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
+                                  GPS: {lab.latitude.toFixed(3)}, {lab.longitude.toFixed(3)}
+                                </div>
+                              )}
+                            </td>
                             <td>{lab.email}</td>
                             <td>
                               <span className={lab.verificationStatus === 'VERIFIED' ? 'status-pill-green' : 'status-pill-amber'}>
@@ -1429,7 +1863,15 @@ export function AdminDashboard({
                                     onShowAlert({
                                       variant: 'info',
                                       title: lab.name,
-                                      message: `ID: ${lab.id}\nType: ${lab.type === 'SMALL_LAB' ? 'Collection Center' : 'Reference Hub'}\nCity: ${lab.city}\nAccreditation: ${lab.nablNumber || 'Standard'}`,
+                                      message: `ID: ${lab.id}\nType: ${
+                                        lab.type === 'SMALL_LAB'
+                                          ? 'Small Collection Lab'
+                                          : lab.centerType === 'COLLECTION_CENTER'
+                                          ? `Branch of ${lab.parentLabName || lab.parentLabId}`
+                                          : 'Large Reference Main Hub'
+                                      }\nCity: ${lab.city}${lab.pincode ? ` (${lab.pincode})` : ''}\nGPS: ${
+                                        lab.latitude ? `${lab.latitude.toFixed(4)}, ${lab.longitude?.toFixed(4)}` : 'Not set'
+                                      }\nAccreditation: ${lab.nablNumber || 'Standard'}`,
                                     })
                                   }
                                 >
@@ -1800,33 +2242,352 @@ export function AdminDashboard({
             </div>
           )}
 
-          {/* TAB 9: COMMISSION */}
+          {/* TAB 9: COMMISSION & B2B RATE RULES */}
           {activeTab === 'commission' && (
-            <div className="chart-card-modern" style={{ maxWidth: '640px' }}>
-              <h2 className="card-top-title">Commission &amp; Service Fee Rules</h2>
-              <div style={{ marginTop: '16px' }}>
-                <div className="form-group">
-                  <label className="form-label">Platform Fee (%)</label>
-                  <input type="number" className="form-input" value={commConfig.commissionPct} onChange={(e) => setCommConfig({ ...commConfig, commissionPct: Number(e.target.value) })} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '20px' }}>
+                <div className="chart-card-modern">
+                  <h2 className="card-top-title">Global Commission, Logistics &amp; Dispatch Radius</h2>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '4px' }}>
+                    Configure Small Lab pricing markup/commission, distance courier split, and 1–5 km live rider broadcast radius.
+                  </p>
+                  <div style={{ marginTop: '16px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                      <div className="form-group">
+                        <label className="form-label">Default Platform Fee (%)</label>
+                        <input
+                          type="number"
+                          className="form-input"
+                          value={commConfig.commissionPct}
+                          onChange={(e) => setCommConfig({ ...commConfig, commissionPct: Number(e.target.value) })}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Default Margin Model</label>
+                        <select
+                          className="form-select"
+                          value={commConfig.defaultMarginMode || 'PCT_OF_GROSS'}
+                          onChange={(e) =>
+                            setCommConfig({
+                              ...commConfig,
+                              defaultMarginMode: e.target.value as 'PCT_OF_GROSS' | 'MARKUP_ON_B2B',
+                            })
+                          }
+                        >
+                          <option value="PCT_OF_GROSS">% Commission of Tariff</option>
+                          <option value="MARKUP_ON_B2B">Markup on Negotiated Large Lab Rate</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+                      <div className="form-group">
+                        <label className="form-label">Courier Base Fee (₹)</label>
+                        <input
+                          type="number"
+                          className="form-input"
+                          value={commConfig.courierBaseFeeInr}
+                          onChange={(e) => setCommConfig({ ...commConfig, courierBaseFeeInr: Number(e.target.value) })}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Included Base Km</label>
+                        <input
+                          type="number"
+                          className="form-input"
+                          value={commConfig.includedBaseKm ?? 5}
+                          onChange={(e) => setCommConfig({ ...commConfig, includedBaseKm: Number(e.target.value) })}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Extra Per-Km Rate (₹)</label>
+                        <input
+                          type="number"
+                          className="form-input"
+                          value={commConfig.perKmFeeInr ?? 20}
+                          onChange={(e) => setCommConfig({ ...commConfig, perKmFeeInr: Number(e.target.value) })}
+                        />
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                      <div className="form-group">
+                        <label className="form-label">Self / Custom Drop Courier Fee (₹)</label>
+                        <input
+                          type="number"
+                          className="form-input"
+                          value={commConfig.customDropBaseFeeInr ?? 180}
+                          onChange={(e) => setCommConfig({ ...commConfig, customDropBaseFeeInr: Number(e.target.value) })}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">STAT Priority Surcharge (₹)</label>
+                        <input
+                          type="number"
+                          className="form-input"
+                          value={commConfig.statSurchargeInr}
+                          onChange={(e) => setCommConfig({ ...commConfig, statSurchargeInr: Number(e.target.value) })}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label">
+                        Default Live Rider Broadcast Radius: <strong>{commConfig.defaultBroadcastRadiusKm ?? 5} km</strong> (1–5 km)
+                      </label>
+                      <input
+                        type="range"
+                        min={1}
+                        max={5}
+                        step={1}
+                        style={{ width: '100%', accentColor: '#0D9488' }}
+                        value={commConfig.defaultBroadcastRadiusKm ?? 5}
+                        onChange={(e) => setCommConfig({ ...commConfig, defaultBroadcastRadiusKm: Number(e.target.value) })}
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={async () => {
+                        await saveCommissionSettings(commConfig, session.profile.email);
+                        onShowAlert({
+                          variant: 'success',
+                          title: 'Commission Rules Saved',
+                          message: 'Global commission, distance logistics, and live broadcast rules have been updated.',
+                        });
+                      }}
+                    >
+                      Save Global Commission Rules
+                    </button>
+                  </div>
                 </div>
-                <div className="form-group">
-                  <label className="form-label">Courier Base Fee (₹)</label>
-                  <input type="number" className="form-input" value={commConfig.courierBaseFeeInr} onChange={(e) => setCommConfig({ ...commConfig, courierBaseFeeInr: Number(e.target.value) })} />
+
+                {/* Live B2B Split Simulator */}
+                <div className="chart-card-modern">
+                  <h2 className="card-top-title">Interactive B2B Rate &amp; Payout Split Simulator</h2>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '4px' }}>
+                    Preview exactly what the Small Lab pays, what the Large Lab &amp; Phlebotomist earn, and LabSetu&apos;s platform fee.
+                  </p>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '14px' }}>
+                    <div className="form-group">
+                      <label className="form-label">Drop Destination</label>
+                      <select
+                        className="form-select"
+                        value={simDropType}
+                        onChange={(e) => setSimDropType(e.target.value as 'LARGE_LAB' | 'SELF_DROP' | 'CUSTOM_ADDRESS')}
+                      >
+                        <option value="LARGE_LAB">Partner Large Reference Lab</option>
+                        <option value="SELF_DROP">Return to Small Lab (Self Drop)</option>
+                        <option value="CUSTOM_ADDRESS">Custom Drop Address</option>
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Partner Large Lab</label>
+                      <select
+                        className="form-select"
+                        value={simLabOrgId}
+                        onChange={(e) => setSimLabOrgId(e.target.value)}
+                      >
+                        <option value="">Global Default Rule</option>
+                        {largeLabOrgs.map((org) => (
+                          <option key={org.id} value={org.id}>{org.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Small Lab Payable Tariff (₹)</label>
+                      <input
+                        type="number"
+                        className="form-input"
+                        value={simSmallTariff}
+                        onChange={(e) => setSimSmallTariff(Number(e.target.value))}
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Negotiated Large Lab Rate (₹)</label>
+                      <input
+                        type="number"
+                        className="form-input"
+                        value={simLargeB2bRate}
+                        disabled={simDropType !== 'LARGE_LAB'}
+                        onChange={(e) => setSimLargeB2bRate(Number(e.target.value))}
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Route Distance (km)</label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        className="form-input"
+                        value={simDistanceKm}
+                        onChange={(e) => setSimDistanceKm(Number(e.target.value))}
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Urgency</label>
+                      <select
+                        className="form-select"
+                        value={simPriority}
+                        onChange={(e) => setSimPriority(e.target.value as OrderPriority)}
+                      >
+                        <option value={OrderPriority.ROUTINE}>Routine Dispatch</option>
+                        <option value={OrderPriority.STAT_CRITICAL}>STAT Urgent</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="comm-simulator-grid">
+                    <div className="comm-split-box">
+                      <div style={{ fontSize: '0.74rem', color: '#64748B' }}>Small Lab Pays</div>
+                      <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0F172A' }}>{formatInr(simulatedSplit.grossAmountInr)}</div>
+                      <div style={{ fontSize: '0.7rem', color: '#64748B' }}>Tests + {simulatedSplit.distanceFeeInr > 0 ? `${formatInr(simulatedSplit.distanceFeeInr)} km fee` : 'Base courier'}</div>
+                    </div>
+                    <div className="comm-split-box">
+                      <div style={{ fontSize: '0.74rem', color: '#64748B' }}>Large Lab B2B Share</div>
+                      <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0D9488' }}>{formatInr(simulatedSplit.labPayoutInr)}</div>
+                      <div style={{ fontSize: '0.7rem', color: '#64748B' }}>Settlement payout</div>
+                    </div>
+                    <div className="comm-split-box">
+                      <div style={{ fontSize: '0.74rem', color: '#64748B' }}>Phlebotomist Payout</div>
+                      <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#2563EB' }}>{formatInr(simulatedSplit.phleboPayoutInr)}</div>
+                      <div style={{ fontSize: '0.7rem', color: '#64748B' }}>+{simulatedSplit.extraDistanceKm} extra km</div>
+                    </div>
+                    <div className="comm-split-box">
+                      <div style={{ fontSize: '0.74rem', color: '#64748B' }}>Platform Net Fee</div>
+                      <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#7C3AED' }}>{formatInr(simulatedSplit.platformFeeInr)}</div>
+                      <div style={{ fontSize: '0.7rem', color: '#64748B' }}>Applied: {simulatedSplit.appliedCommissionPct}%</div>
+                    </div>
+                  </div>
                 </div>
-                <div className="form-group">
-                  <label className="form-label">STAT Priority Surcharge (₹)</label>
-                  <input type="number" className="form-input" value={commConfig.statSurchargeInr} onChange={(e) => setCommConfig({ ...commConfig, statSurchargeInr: Number(e.target.value) })} />
+              </div>
+
+              {/* Per-Large-Lab Negotiated B2B Rate Agreements */}
+              <div className="chart-card-modern">
+                <div className="card-top-header">
+                  <div>
+                    <h2 className="card-top-title">Per-Large-Lab Negotiated B2B Rate Agreements</h2>
+                    <p style={{ fontSize: '0.8rem', color: '#64748B' }}>
+                      Define custom commercial contracts with each Reference Lab Hub governing commission %, Small Lab markup %, and settlement cycles.
+                    </p>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={async () => {
-                    await saveCommissionSettings(commConfig, session.profile.email);
-                    onShowAlert({ variant: 'success', title: 'Commission Rules Saved', message: 'Commission and service fee rules have been saved.' });
-                  }}
-                >
-                  Save Commission Rules
-                </button>
+
+                {largeLabOrgs.length === 0 ? (
+                  <div className="empty-state-box">
+                    <h4>No Large Reference Lab Hubs Registered Yet</h4>
+                    <p>Add a Large Reference Lab Hub first to configure partner-specific B2B commercial terms.</p>
+                  </div>
+                ) : (
+                  <form onSubmit={(e) => void handleSaveAgreement(e)} style={{ marginBottom: '20px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                      <div className="form-group">
+                        <label className="form-label">Select Large Lab Hub</label>
+                        <select
+                          className="form-select"
+                          value={agreementLabId}
+                          onChange={(e) => {
+                            const id = e.target.value;
+                            setAgreementLabId(id);
+                            const existing = commConfig.largeLabAgreements?.[id];
+                            setAgreementCommPct(existing?.agreedCommissionPct ?? commConfig.commissionPct);
+                            setAgreementMarkupPct(existing?.b2bMarkupPct ?? 18);
+                            setAgreementMinPayout(existing?.minPayoutInr ?? 0);
+                            setAgreementCycle(existing?.settlementCycle ?? 'DAILY');
+                            setAgreementNotes(existing?.notes ?? '');
+                          }}
+                        >
+                          {largeLabOrgs.map((org) => (
+                            <option key={org.id} value={org.id}>{org.name} ({org.id})</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Agreed Commission (%)</label>
+                        <input
+                          type="number"
+                          className="form-input"
+                          value={agreementCommPct}
+                          onChange={(e) => setAgreementCommPct(Number(e.target.value))}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Default Small Lab Markup (%)</label>
+                        <input
+                          type="number"
+                          className="form-input"
+                          value={agreementMarkupPct}
+                          onChange={(e) => setAgreementMarkupPct(Number(e.target.value))}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Settlement Cycle</label>
+                        <select
+                          className="form-select"
+                          value={agreementCycle}
+                          onChange={(e) => setAgreementCycle(e.target.value as 'DAILY' | 'T_PLUS_2' | 'WEEKLY')}
+                        >
+                          <option value="DAILY">Daily Payout</option>
+                          <option value="T_PLUS_2">T+2 Settlement</option>
+                          <option value="WEEKLY">Weekly Batch</option>
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Min Order Payout (₹)</label>
+                        <input
+                          type="number"
+                          className="form-input"
+                          value={agreementMinPayout}
+                          onChange={(e) => setAgreementMinPayout(Number(e.target.value))}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                      <div className="form-group" style={{ flex: 1, minWidth: '240px', marginBottom: 0 }}>
+                        <label className="form-label">Contract Notes</label>
+                        <input
+                          className="form-input"
+                          placeholder="e.g. Q4 negotiated corporate B2B rate card"
+                          value={agreementNotes}
+                          onChange={(e) => setAgreementNotes(e.target.value)}
+                        />
+                      </div>
+                      <button type="submit" className="btn-primary">Save Partner B2B Agreement</button>
+                    </div>
+                  </form>
+                )}
+
+                {commConfig.largeLabAgreements && Object.keys(commConfig.largeLabAgreements).length > 0 && (
+                  <div className="data-table-container">
+                    <table className="modern-data-table">
+                      <thead>
+                        <tr>
+                          <th>Partner Large Lab</th>
+                          <th>Agreed Commission</th>
+                          <th>Small Lab Markup</th>
+                          <th>Settlement Cycle</th>
+                          <th>Notes</th>
+                          <th>Updated</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.values(commConfig.largeLabAgreements).map((ag) => (
+                          <tr key={ag.labId}>
+                            <td>
+                              <strong>{ag.labName || ag.labId}</strong>
+                              <div style={{ fontSize: '0.72rem', color: '#64748B' }}>{ag.labId}</div>
+                            </td>
+                            <td><span className="status-pill-blue">{ag.agreedCommissionPct}%</span></td>
+                            <td>{ag.b2bMarkupPct}%</td>
+                            <td>{ag.settlementCycle || 'DAILY'}</td>
+                            <td>{ag.notes || '—'}</td>
+                            <td>{ag.updatedAt ? new Date(ag.updatedAt).toLocaleDateString('en-IN') : '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1850,54 +2611,136 @@ export function AdminDashboard({
             </div>
           )}
 
-          {/* TAB 11: MASTER DATA */}
+          {/* TAB 11: MASTER TEST & PACKAGE DATA */}
           {activeTab === 'master-data' && (
             <div className="chart-card-modern">
-              <div className="card-top-header">
+              <div className="card-top-header" style={{ flexWrap: 'wrap', gap: '12px' }}>
                 <div>
-                  <h2 className="card-top-title">Master Test Catalogue ({testCatalog.length})</h2>
-                  <p style={{ fontSize: '0.8rem', color: '#64748B' }}>Tests, tube types, and partner pricing available for bookings</p>
+                  <h2 className="card-top-title">Master Tests &amp; Partner Package Catalogue ({testCatalog.length})</h2>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B' }}>
+                    Single tests, combo health packages, negotiated Large Lab B2B rates, and Small Lab payable tariffs
+                  </p>
                 </div>
-                <button type="button" className="btn-primary" onClick={() => setShowAddTestModal(true)}>
-                  + Add Test Panel
-                </button>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <select
+                    className="form-select"
+                    style={{ width: '210px' }}
+                    value={catalogOwnerFilter}
+                    onChange={(e) => setCatalogOwnerFilter(e.target.value)}
+                  >
+                    <option value="ALL">All Owners ({testCatalog.length})</option>
+                    <option value="GLOBAL">Global Network Default</option>
+                    {largeLabOrgs.map((org) => (
+                      <option key={org.id} value={org.id}>{org.name}</option>
+                    ))}
+                  </select>
+                  <button type="button" className="btn-secondary" onClick={() => openAddTestModal('TEST')}>
+                    + Add Test Panel
+                  </button>
+                  <button type="button" className="btn-primary" onClick={() => openAddTestModal('PACKAGE')}>
+                    + Add Health Package
+                  </button>
+                </div>
               </div>
               {testCatalog.length === 0 ? (
                 <div className="empty-state-box">
                   <h4>Test Catalogue Is Empty</h4>
-                  <p>Add diagnostic tests (e.g., CBC, LFT, TSH) so Collection Labs can book sample pickups.</p>
-                  <button type="button" className="btn-primary" onClick={() => setShowAddTestModal(true)}>+ Add First Test Panel</button>
+                  <p>Add diagnostic tests (e.g., CBC, LFT, TSH) or Health Packages so Collection Labs can book and compare quotes.</p>
+                  <button type="button" className="btn-primary" onClick={() => openAddTestModal('TEST')}>+ Add First Test Panel</button>
                 </div>
               ) : (
                 <div className="data-table-container">
                   <table className="modern-data-table">
                     <thead>
                       <tr>
-                        <th>Code</th>
-                        <th>Name</th>
-                        <th>Department</th>
-                        <th>Tube</th>
-                        <th>B2B Price</th>
-                        <th>TAT</th>
+                        <th>Code &amp; Type</th>
+                        <th>Test / Package Details</th>
+                        <th>Partner Lab Owner</th>
+                        <th>Tube Cap</th>
+                        <th>Large Lab Rate</th>
+                        <th>Small Lab Pays</th>
+                        <th>Margin / MRP</th>
                         <th>Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {testCatalog.map((t) => (
-                        <tr key={t.id}>
-                          <td><strong>{t.code}</strong></td>
-                          <td>{t.name}</td>
-                          <td>{t.department}</td>
-                          <td>{formatLabel(t.tubeType)}</td>
-                          <td>{formatInr(t.b2bPriceInr)}</td>
-                          <td>{t.tatHours} hrs</td>
-                          <td>
-                            <button type="button" className="btn-secondary" onClick={() => void deleteDiagnosticTest(t.id)}>
-                              Delete
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {testCatalog
+                        .filter((t) => {
+                          if (catalogOwnerFilter === 'GLOBAL') return !t.ownerOrgId && !t.labId;
+                          if (catalogOwnerFilter !== 'ALL') return t.ownerOrgId === catalogOwnerFilter || t.labId === catalogOwnerFilter;
+                          return true;
+                        })
+                        .map((t) => {
+                          const tubeMeta = TUBE_METADATA[t.tubeType] || TUBE_METADATA[TubeType.SERUM_RED_GOLD];
+                          const largeRate =
+                            typeof t.largeLabB2bRateInr === 'number'
+                              ? t.largeLabB2bRateInr
+                              : Math.round((t.b2bPriceInr || 0) * (1 - commConfig.commissionPct / 100));
+                          const marginInr = Math.max(0, (t.b2bPriceInr || 0) - largeRate);
+                          return (
+                            <tr key={t.id}>
+                              <td>
+                                <strong>{t.code}</strong>
+                                <div style={{ marginTop: '4px' }}>
+                                  <span className={t.itemType === 'PACKAGE' ? 'package-match-pill' : 'status-pill-blue'}>
+                                    {t.itemType === 'PACKAGE' ? '📦 PACKAGE' : '🧪 TEST'}
+                                  </span>
+                                </div>
+                              </td>
+                              <td>
+                                <div><strong>{t.name}</strong></div>
+                                <div style={{ fontSize: '0.73rem', color: '#64748B' }}>
+                                  {t.department} • TAT {t.tatHours} hrs
+                                </div>
+                                {t.itemType === 'PACKAGE' && t.includedTestCodes && t.includedTestCodes.length > 0 && (
+                                  <div style={{ fontSize: '0.72rem', color: '#1D4ED8', marginTop: '3px' }}>
+                                    Includes: {t.includedTestCodes.join(', ')}
+                                  </div>
+                                )}
+                              </td>
+                              <td>
+                                <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>
+                                  {t.ownerOrgId ? (t.labName || t.ownerOrgId) : 'Global Default'}
+                                </span>
+                              </td>
+                              <td>
+                                <span className="tube-cap-pill" style={{ background: tubeMeta.bgHex, color: tubeMeta.colorHex }}>
+                                  <span className="tube-cap-dot" style={{ background: tubeMeta.colorHex }} />
+                                  {tubeMeta.capColorName}
+                                </span>
+                              </td>
+                              <td>{formatInr(largeRate)}</td>
+                              <td><strong>{formatInr(t.b2bPriceInr)}</strong></td>
+                              <td>
+                                <span style={{ color: '#059669', fontWeight: 700 }}>{formatInr(marginInr)}</span>
+                                <div style={{ fontSize: '0.7rem', color: '#64748B' }}>MRP {formatInr(t.mrpInr)}</div>
+                              </td>
+                              <td>
+                                <div style={{ display: 'flex', gap: '6px' }}>
+                                  <button type="button" className="btn-secondary" onClick={() => openEditTestModal(t)}>
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn-secondary"
+                                    onClick={() =>
+                                      onShowAlert({
+                                        variant: 'confirm',
+                                        title: `Remove ${t.code}?`,
+                                        message: `Delete ${t.name} from the catalogue?`,
+                                        onConfirm: () => {
+                                          void deleteDiagnosticTest(t.id);
+                                        },
+                                      })
+                                    }
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
                     </tbody>
                   </table>
                 </div>
@@ -1992,58 +2835,167 @@ export function AdminDashboard({
       {/* MODAL: ADD ROLE USER */}
       {showAddUserModal && (
         <div className="modal-overlay" onClick={() => setShowAddUserModal(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-card" style={{ maxWidth: '580px' }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Add Team or Partner Account</h3>
               <button type="button" className="btn-secondary" onClick={() => setShowAddUserModal(false)}>✕</button>
             </div>
             <form onSubmit={(e) => void handleProvisionUserSubmit(e)}>
-              <div className="modal-body" style={{ maxHeight: '72vh', overflowY: 'auto' }}>
+              <div className="modal-body" style={{ maxHeight: '74vh', overflowY: 'auto' }}>
                 <div className="form-group">
                   <label className="form-label">Role</label>
                   <select className="form-select" value={newUserRole} onChange={(e) => setNewUserRole(e.target.value as UserRole)}>
                     <option value={UserRole.SMALL_LAB}>Small Collection Lab</option>
-                    <option value={UserRole.LARGE_LAB}>Large Reference Lab</option>
+                    <option value={UserRole.LARGE_LAB}>Large Reference Lab / Center</option>
                     <option value={UserRole.PHLEBOTOMIST}>Field Phlebotomist (Mobile App Only)</option>
-                    <option value={UserRole.ADMIN}>Platform Admin</option>
+                    <option value={UserRole.ADMIN}>Admin Team Member</option>
                   </select>
                 </div>
+
+                {newUserRole === UserRole.ADMIN && (
+                  <div className="form-group">
+                    <label className="form-label">Admin Team Sub-Role Permission</label>
+                    <select
+                      className="form-select"
+                      value={newUserAdminSubRole}
+                      onChange={(e) => setNewUserAdminSubRole(e.target.value as AdminTeamRole)}
+                    >
+                      {(Object.keys(ADMIN_SUB_ROLE_LABELS) as AdminTeamRole[]).map((sr) => (
+                        <option key={sr} value={sr}>{ADMIN_SUB_ROLE_LABELS[sr]}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {newUserRole === UserRole.LARGE_LAB && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    <div className="form-group">
+                      <label className="form-label">Center Hierarchy</label>
+                      <select
+                        className="form-select"
+                        value={newUserCenterType}
+                        onChange={(e) => setNewUserCenterType(e.target.value as LabCenterType)}
+                      >
+                        <option value="MAIN_HUB">Main Reference Hub (HQ)</option>
+                        <option value="COLLECTION_CENTER">Branch / Collection Center</option>
+                      </select>
+                    </div>
+                    {newUserCenterType === 'COLLECTION_CENTER' && (
+                      <div className="form-group">
+                        <label className="form-label">Parent Large Lab HQ</label>
+                        <select
+                          className="form-select"
+                          value={newUserParentLabId}
+                          onChange={(e) => setNewUserParentLabId(e.target.value)}
+                          required
+                        >
+                          <option value="">Select Parent Hub...</option>
+                          {largeLabOrgs.map((org) => (
+                            <option key={org.id} value={org.id}>{org.name} ({org.id})</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {newUserRole === UserRole.PHLEBOTOMIST && (
                   <div className="admin-auth-alert success" style={{ marginBottom: '12px', fontSize: '0.8rem' }}>
                     Field Phlebotomists sign in only on the LabSetu Mobile App.
                   </div>
                 )}
-                <div className="form-group">
-                  <label className="form-label">Name / Facility</label>
-                  <input className="form-input" value={newUserName} onChange={(e) => setNewUserName(e.target.value)} required />
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Name / Facility</label>
+                    <input className="form-input" value={newUserName} onChange={(e) => setNewUserName(e.target.value)} required />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Email Address</label>
+                    <input type="email" className="form-input" value={newUserEmail} onChange={(e) => setNewUserEmail(e.target.value)} required />
+                  </div>
                 </div>
-                <div className="form-group">
-                  <label className="form-label">Email Address</label>
-                  <input type="email" className="form-input" value={newUserEmail} onChange={(e) => setNewUserEmail(e.target.value)} required />
-                </div>
+
                 {(newUserRole === UserRole.SMALL_LAB || newUserRole === UserRole.LARGE_LAB) && (
-                  <div className="form-group">
-                    <label className="form-label">Lab ID (Linked automatically to facility profile)</label>
-                    <input className="form-input" value={newUserLabId} onChange={(e) => setNewUserLabId(e.target.value)} />
-                  </div>
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                      <div className="form-group">
+                        <label className="form-label">Center / Lab ID</label>
+                        <input className="form-input" value={newUserLabId} onChange={(e) => setNewUserLabId(e.target.value)} />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Quick Area / GPS Preset</label>
+                        <select
+                          className="form-select"
+                          defaultValue=""
+                          onChange={(e) => {
+                            const preset = LOCALITY_GPS_PRESETS.find((p) => p.label === e.target.value);
+                            if (preset) {
+                              setNewUserCity(preset.city);
+                              setNewUserAddress(preset.label);
+                              setNewUserLat(preset.latitude);
+                              setNewUserLng(preset.longitude);
+                            }
+                          }}
+                        >
+                          <option value="">Choose locality preset...</option>
+                          {LOCALITY_GPS_PRESETS.map((p) => (
+                            <option key={p.label} value={p.label}>{p.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Street Address</label>
+                      <input className="form-input" placeholder="e.g. Plot 14, Link Road" value={newUserAddress} onChange={(e) => setNewUserAddress(e.target.value)} />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
+                      <div className="form-group">
+                        <label className="form-label">Pincode</label>
+                        <input className="form-input" placeholder="400053" value={newUserPincode} onChange={(e) => setNewUserPincode(e.target.value)} />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Latitude</label>
+                        <input type="number" step="0.0001" className="form-input" value={newUserLat} onChange={(e) => setNewUserLat(Number(e.target.value))} />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Longitude</label>
+                        <input type="number" step="0.0001" className="form-input" value={newUserLng} onChange={(e) => setNewUserLng(Number(e.target.value))} />
+                      </div>
+                    </div>
+                  </>
                 )}
+
                 {newUserRole === UserRole.PHLEBOTOMIST && (
-                  <div className="form-group">
-                    <label className="form-label">Phlebotomist ID</label>
-                    <input className="form-input" value={newUserPhleboId} onChange={(e) => setNewUserPhleboId(e.target.value)} />
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
+                    <div className="form-group">
+                      <label className="form-label">Phlebotomist ID</label>
+                      <input className="form-input" value={newUserPhleboId} onChange={(e) => setNewUserPhleboId(e.target.value)} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Base Latitude</label>
+                      <input type="number" step="0.0001" className="form-input" value={newUserLat} onChange={(e) => setNewUserLat(Number(e.target.value))} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Base Longitude</label>
+                      <input type="number" step="0.0001" className="form-input" value={newUserLng} onChange={(e) => setNewUserLng(Number(e.target.value))} />
+                    </div>
                   </div>
                 )}
-                <div className="form-group">
-                  <label className="form-label">City</label>
-                  <input className="form-input" value={newUserCity} onChange={(e) => setNewUserCity(e.target.value)} />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Phone (Optional)</label>
-                  <input className="form-input" value={newUserPhone} onChange={(e) => setNewUserPhone(e.target.value)} />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Initial Password (Optional)</label>
-                  <input type="password" className="form-input" value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} />
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
+                  <div className="form-group">
+                    <label className="form-label">City</label>
+                    <input className="form-input" value={newUserCity} onChange={(e) => setNewUserCity(e.target.value)} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Phone (Optional)</label>
+                    <input className="form-input" value={newUserPhone} onChange={(e) => setNewUserPhone(e.target.value)} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Initial Password (Optional)</label>
+                    <input type="password" className="form-input" value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} />
+                  </div>
                 </div>
               </div>
               <div className="modal-footer">
@@ -2055,22 +3007,146 @@ export function AdminDashboard({
         </div>
       )}
 
+      {/* MODAL: EDIT USER ACCESS & BRANCH ASSIGNMENT */}
+      {editingUser && (
+        <div className="modal-overlay" onClick={() => setEditingUser(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Edit Access • {editingUser.displayName}</h3>
+              <button type="button" className="btn-secondary" onClick={() => setEditingUser(null)}>✕</button>
+            </div>
+            <form onSubmit={(e) => void handleSaveUserAccessEdit(e)}>
+              <div className="modal-body">
+                <p style={{ fontSize: '0.82rem', color: '#64748B', marginBottom: '12px' }}>
+                  {editingUser.email} • <strong>{ROLE_LABELS[editingUser.role]}</strong>
+                </p>
+                {editingUser.role === UserRole.ADMIN && (
+                  <div className="form-group">
+                    <label className="form-label">Admin Team Sub-Role</label>
+                    <select
+                      className="form-select"
+                      value={editUserAdminSubRole}
+                      onChange={(e) => setEditUserAdminSubRole(e.target.value as AdminTeamRole)}
+                    >
+                      {(Object.keys(ADMIN_SUB_ROLE_LABELS) as AdminTeamRole[]).map((sr) => (
+                        <option key={sr} value={sr}>{ADMIN_SUB_ROLE_LABELS[sr]}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {(editingUser.role === UserRole.SMALL_LAB || editingUser.role === UserRole.LARGE_LAB) && (
+                  <div className="form-group">
+                    <label className="form-label">Assigned Lab / Center ID</label>
+                    <input className="form-input" value={editUserLabId} onChange={(e) => setEditUserLabId(e.target.value)} required />
+                  </div>
+                )}
+                {editingUser.role === UserRole.LARGE_LAB && (
+                  <div className="form-group">
+                    <label className="form-label">Parent Large Lab HQ (Leave blank if this user is Main Hub HQ)</label>
+                    <select
+                      className="form-select"
+                      value={editUserParentLabId}
+                      onChange={(e) => setEditUserParentLabId(e.target.value)}
+                    >
+                      <option value="">None (Main Reference Hub HQ)</option>
+                      {largeLabOrgs.map((org) => (
+                        <option key={org.id} value={org.id}>{org.name} ({org.id})</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn-secondary" onClick={() => setEditingUser(null)}>Cancel</button>
+                <button type="submit" className="btn-primary">Save Access Changes</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* MODAL: ADD LAB FACILITY */}
       {showAddLabModal && (
         <div className="modal-overlay" onClick={() => setShowAddLabModal(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-card" style={{ maxWidth: '580px' }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Register Lab Facility</h3>
+              <h3>Register Lab Facility or Branch Center</h3>
               <button type="button" className="btn-secondary" onClick={() => setShowAddLabModal(false)}>✕</button>
             </div>
             <form onSubmit={(e) => void handleSaveNewLab(e)}>
-              <div className="modal-body">
-                <div className="form-group"><label className="form-label">Facility Type</label><select className="form-select" value={labTier} onChange={(e) => setLabTier(e.target.value as LabFacilityTier)}><option value="SMALL_LAB">Small Collection Center</option><option value="LARGE_LAB">Large Reference Hub</option></select></div>
-                <div className="form-group"><label className="form-label">Lab Name</label><input className="form-input" value={labName} onChange={(e) => setLabName(e.target.value)} required /></div>
-                <div className="form-group"><label className="form-label">City</label><input className="form-input" value={labCity} onChange={(e) => setLabCity(e.target.value)} required /></div>
-                <div className="form-group"><label className="form-label">Address</label><input className="form-input" value={labAddress} onChange={(e) => setLabAddress(e.target.value)} required /></div>
-                <div className="form-group"><label className="form-label">Contact Email</label><input type="email" className="form-input" value={labEmail} onChange={(e) => setLabEmail(e.target.value)} required /></div>
-                <div className="form-group"><label className="form-label">Phone</label><input className="form-input" value={labPhone} onChange={(e) => setLabPhone(e.target.value)} /></div>
+              <div className="modal-body" style={{ maxHeight: '74vh', overflowY: 'auto' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Facility Tier</label>
+                    <select className="form-select" value={labTier} onChange={(e) => setLabTier(e.target.value as LabFacilityTier)}>
+                      <option value="SMALL_LAB">Small Collection Lab</option>
+                      <option value="LARGE_LAB">Large Reference Lab / Center</option>
+                    </select>
+                  </div>
+                  {labTier === 'LARGE_LAB' && (
+                    <div className="form-group">
+                      <label className="form-label">Center Role</label>
+                      <select className="form-select" value={labCenterType} onChange={(e) => setLabCenterType(e.target.value as LabCenterType)}>
+                        <option value="MAIN_HUB">Main Reference Hub (HQ)</option>
+                        <option value="COLLECTION_CENTER">Branch / Collection Center</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                {labTier === 'LARGE_LAB' && labCenterType === 'COLLECTION_CENTER' && (
+                  <div className="form-group">
+                    <label className="form-label">Parent Large Lab HQ</label>
+                    <select className="form-select" value={labParentId} onChange={(e) => setLabParentId(e.target.value)} required>
+                      <option value="">Select Parent Hub...</option>
+                      {largeLabOrgs.map((org) => (
+                        <option key={org.id} value={org.id}>{org.name} ({org.id})</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div className="form-group"><label className="form-label">Lab / Center Name</label><input className="form-input" value={labName} onChange={(e) => setLabName(e.target.value)} required /></div>
+                  <div className="form-group">
+                    <label className="form-label">Quick Area / GPS Preset</label>
+                    <select
+                      className="form-select"
+                      defaultValue=""
+                      onChange={(e) => {
+                        const preset = LOCALITY_GPS_PRESETS.find((p) => p.label === e.target.value);
+                        if (preset) {
+                          setLabCity(preset.city);
+                          setLabAddress(preset.label);
+                          setLabLat(preset.latitude);
+                          setLabLng(preset.longitude);
+                        }
+                      }}
+                    >
+                      <option value="">Pick locality coordinates...</option>
+                      {LOCALITY_GPS_PRESETS.map((p) => (
+                        <option key={p.label} value={p.label}>{p.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div className="form-group"><label className="form-label">City</label><input className="form-input" value={labCity} onChange={(e) => setLabCity(e.target.value)} required /></div>
+                  <div className="form-group"><label className="form-label">Pincode</label><input className="form-input" placeholder="e.g. 400053" value={labPincode} onChange={(e) => setLabPincode(e.target.value)} /></div>
+                </div>
+                <div className="form-group"><label className="form-label">Full Address</label><input className="form-input" value={labAddress} onChange={(e) => setLabAddress(e.target.value)} required /></div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
+                  <div className="form-group"><label className="form-label">Latitude</label><input type="number" step="0.0001" className="form-input" value={labLat} onChange={(e) => setLabLat(Number(e.target.value))} /></div>
+                  <div className="form-group"><label className="form-label">Longitude</label><input type="number" step="0.0001" className="form-input" value={labLng} onChange={(e) => setLabLng(Number(e.target.value))} /></div>
+                  <div className="form-group"><label className="form-label">Service Radius (km)</label><input type="number" className="form-input" value={labRadiusKm} onChange={(e) => setLabRadiusKm(Number(e.target.value))} /></div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div className="form-group"><label className="form-label">Contact Email</label><input type="email" className="form-input" value={labEmail} onChange={(e) => setLabEmail(e.target.value)} required /></div>
+                  <div className="form-group"><label className="form-label">Phone</label><input className="form-input" value={labPhone} onChange={(e) => setLabPhone(e.target.value)} /></div>
+                </div>
                 <div className="form-group"><label className="form-label">NABL / License ID</label><input className="form-input" value={labNabl} onChange={(e) => setLabNabl(e.target.value)} /></div>
               </div>
               <div className="modal-footer">
@@ -2092,7 +3168,31 @@ export function AdminDashboard({
                 <div className="form-group"><label className="form-label">Name</label><input className="form-input" value={phleboName} onChange={(e) => setPhleboName(e.target.value)} required /></div>
                 <div className="form-group"><label className="form-label">Email</label><input type="email" className="form-input" value={phleboEmail} onChange={(e) => setPhleboEmail(e.target.value)} required /></div>
                 <div className="form-group"><label className="form-label">Phone</label><input className="form-input" value={phleboPhone} onChange={(e) => setPhleboPhone(e.target.value)} required /></div>
-                <div className="form-group"><label className="form-label">Active Zone</label><input className="form-input" value={phleboZone} onChange={(e) => setPhleboZone(e.target.value)} /></div>
+                <div className="form-group">
+                  <label className="form-label">Locality / GPS Zone Preset</label>
+                  <select
+                    className="form-select"
+                    defaultValue=""
+                    onChange={(e) => {
+                      const preset = LOCALITY_GPS_PRESETS.find((p) => p.label === e.target.value);
+                      if (preset) {
+                        setPhleboZone(preset.label);
+                        setPhleboLat(preset.latitude);
+                        setPhleboLng(preset.longitude);
+                      }
+                    }}
+                  >
+                    <option value="">Select preset GPS zone...</option>
+                    {LOCALITY_GPS_PRESETS.map((p) => (
+                      <option key={p.label} value={p.label}>{p.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group"><label className="form-label">Active Zone Label</label><input className="form-input" value={phleboZone} onChange={(e) => setPhleboZone(e.target.value)} /></div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <div className="form-group"><label className="form-label">Latitude</label><input type="number" step="0.0001" className="form-input" value={phleboLat} onChange={(e) => setPhleboLat(Number(e.target.value))} /></div>
+                  <div className="form-group"><label className="form-label">Longitude</label><input type="number" step="0.0001" className="form-input" value={phleboLng} onChange={(e) => setPhleboLng(Number(e.target.value))} /></div>
+                </div>
                 <div className="form-group"><label className="form-label">Vehicle</label><input className="form-input" value={phleboVehicle} onChange={(e) => setPhleboVehicle(e.target.value)} /></div>
               </div>
               <div className="modal-footer"><button type="button" className="btn-secondary" onClick={() => setShowAddPhleboModal(false)}>Cancel</button><button type="submit" className="btn-primary">Save</button></div>
@@ -2101,23 +3201,153 @@ export function AdminDashboard({
         </div>
       )}
 
-      {/* MODAL: ADD TEST PANEL */}
+      {/* MODAL: ADD / EDIT TEST PANEL OR PACKAGE */}
       {showAddTestModal && (
         <div className="modal-overlay" onClick={() => setShowAddTestModal(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header"><h3>Add Master Test Panel</h3><button type="button" className="btn-secondary" onClick={() => setShowAddTestModal(false)}>✕</button></div>
+          <div className="modal-card" style={{ maxWidth: '600px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{editingTestId ? 'Edit Catalogue Item' : testItemType === 'PACKAGE' ? 'Add Partner Health Package' : 'Add Test Panel'}</h3>
+              <button type="button" className="btn-secondary" onClick={() => setShowAddTestModal(false)}>✕</button>
+            </div>
             <form onSubmit={(e) => void handleSaveTest(e)}>
-              <div className="modal-body">
-                <div className="form-group"><label className="form-label">Test Code</label><input className="form-input" placeholder="e.g. CBC" value={testCode} onChange={(e) => setTestCode(e.target.value)} required /></div>
-                <div className="form-group"><label className="form-label">Test Name</label><input className="form-input" placeholder="Complete Blood Count" value={testName} onChange={(e) => setTestName(e.target.value)} required /></div>
-                <div className="form-group"><label className="form-label">Department</label><select className="form-select" value={testDept} onChange={(e) => setTestDept(e.target.value as DiagnosticDepartment)}><option value="Hematology">Hematology</option><option value="Biochemistry">Biochemistry</option><option value="Immunology">Immunology</option><option value="Molecular">Molecular</option><option value="Microbiology">Microbiology</option></select></div>
-                <div className="form-group"><label className="form-label">Specimen Type</label><select className="form-select" value={testSpecimen} onChange={(e) => setTestSpecimen(e.target.value as SpecimenType)}>{Object.values(SpecimenType).map((s) => <option key={s} value={s}>{formatLabel(s)}</option>)}</select></div>
-                <div className="form-group"><label className="form-label">Tube Type</label><select className="form-select" value={testTube} onChange={(e) => setTestTube(e.target.value as TubeType)}>{Object.values(TubeType).map((t) => <option key={t} value={t}>{formatLabel(t)}</option>)}</select></div>
-                <div className="form-group"><label className="form-label">Cold-Chain Band</label><select className="form-select" value={testTemp} onChange={(e) => setTestTemp(e.target.value as StorageTemperature)}>{Object.values(StorageTemperature).map((t) => <option key={t} value={t}>{formatLabel(t)}</option>)}</select></div>
-                <div className="form-group"><label className="form-label">B2B Rate (₹)</label><input type="number" className="form-input" value={testB2bPrice} onChange={(e) => setTestB2bPrice(Number(e.target.value))} /></div>
-                <div className="form-group"><label className="form-label">Retail MRP (₹) &amp; TAT Hours</label><div style={{ display: 'flex', gap: '8px' }}><input type="number" className="form-input" value={testMrp} onChange={(e) => setTestMrp(Number(e.target.value))} /><input type="number" className="form-input" value={testTat} onChange={(e) => setTestTat(Number(e.target.value))} /></div></div>
+              <div className="modal-body" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Catalogue Owner (Reference Lab)</label>
+                    <select
+                      className="form-select"
+                      value={testOwnerOrgId}
+                      disabled={Boolean(editingTestId)}
+                      onChange={(e) => setTestOwnerOrgId(e.target.value)}
+                    >
+                      <option value="GLOBAL">Global Network Default</option>
+                      {largeLabOrgs.map((org) => (
+                        <option key={org.id} value={org.id}>{org.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Item Type</label>
+                    <select
+                      className="form-select"
+                      value={testItemType}
+                      onChange={(e) => setTestItemType(e.target.value as CatalogItemType)}
+                    >
+                      <option value="TEST">Individual Diagnostic Test</option>
+                      <option value="PACKAGE">Combo Health Package</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '10px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Code</label>
+                    <input className="form-input" placeholder={testItemType === 'PACKAGE' ? 'e.g. EXEC5' : 'e.g. CBC'} value={testCode} onChange={(e) => setTestCode(e.target.value)} required />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Display Name</label>
+                    <input className="form-input" placeholder={testItemType === 'PACKAGE' ? 'Master Wellness Panel' : 'Complete Blood Count'} value={testName} onChange={(e) => setTestName(e.target.value)} required />
+                  </div>
+                </div>
+
+                {testItemType === 'PACKAGE' && (
+                  <div className="form-group" style={{ background: '#F8FAFC', padding: '12px', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+                    <label className="form-label">Included Individual Tests (used for auto package matching)</label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                      {Array.from(new Set(singleTestsCatalog.map((t) => t.code))).map((code) => {
+                        const active = testIncludedCodes.includes(code);
+                        return (
+                          <button
+                            key={code}
+                            type="button"
+                            className={active ? 'btn-primary' : 'btn-secondary'}
+                            style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+                            onClick={() =>
+                              setTestIncludedCodes((prev) =>
+                                prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]
+                              )
+                            }
+                          >
+                            {active ? '✓ ' : '+ '}{code}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <input
+                      className="form-input"
+                      placeholder="Additional codes comma-separated (e.g. TSH, HBA1C)"
+                      value={testCustomCodesInput}
+                      onChange={(e) => setTestCustomCodesInput(e.target.value)}
+                    />
+                  </div>
+                )}
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Department</label>
+                    <select className="form-select" value={testDept} onChange={(e) => setTestDept(e.target.value as DiagnosticDepartment)}>
+                      <option value="Hematology">Hematology</option>
+                      <option value="Biochemistry">Biochemistry</option>
+                      <option value="Immunology">Immunology</option>
+                      <option value="Molecular">Molecular</option>
+                      <option value="Microbiology">Microbiology</option>
+                      <option value="Pathology">Pathology</option>
+                      <option value="Preventive Health">Preventive Health</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Specimen Type</label>
+                    <select className="form-select" value={testSpecimen} onChange={(e) => setTestSpecimen(e.target.value as SpecimenType)}>
+                      {Object.values(SpecimenType).map((s) => <option key={s} value={s}>{formatLabel(s)}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Required Vacutainer / Tube</label>
+                    <select className="form-select" value={testTube} onChange={(e) => setTestTube(e.target.value as TubeType)}>
+                      {Object.values(TubeType).map((t) => (
+                        <option key={t} value={t}>{TUBE_METADATA[t].label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Cold-Chain Band</label>
+                    <select className="form-select" value={testTemp} onChange={(e) => setTestTemp(e.target.value as StorageTemperature)}>
+                      {Object.values(StorageTemperature).map((t) => <option key={t} value={t}>{formatLabel(t)}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '8px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Large Lab Rate (₹)</label>
+                    <input type="number" className="form-input" value={testLargeLabRate} onChange={(e) => setTestLargeLabRate(Number(e.target.value))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Small Lab Pays (₹)</label>
+                    <input type="number" className="form-input" value={testB2bPrice} onChange={(e) => setTestB2bPrice(Number(e.target.value))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Retail MRP (₹)</label>
+                    <input type="number" className="form-input" value={testMrp} onChange={(e) => setTestMrp(Number(e.target.value))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">TAT (Hrs)</label>
+                    <input type="number" className="form-input" value={testTat} onChange={(e) => setTestTat(Number(e.target.value))} />
+                  </div>
+                </div>
+
+                <div style={{ fontSize: '0.8rem', padding: '10px 12px', borderRadius: '8px', background: '#F0FDFA', color: '#0F766E' }}>
+                  Platform Spread Margin: <strong>{formatInr(Math.max(0, testB2bPrice - testLargeLabRate))}</strong>{' '}
+                  ({testB2bPrice > 0 ? Math.round(((testB2bPrice - testLargeLabRate) / testB2bPrice) * 100) : 0}% of Small Lab Tariff)
+                </div>
               </div>
-              <div className="modal-footer"><button type="button" className="btn-secondary" onClick={() => setShowAddTestModal(false)}>Cancel</button><button type="submit" className="btn-primary">Save Test</button></div>
+              <div className="modal-footer">
+                <button type="button" className="btn-secondary" onClick={() => setShowAddTestModal(false)}>Cancel</button>
+                <button type="submit" className="btn-primary">{editingTestId ? 'Update Item' : 'Save Catalogue Item'}</button>
+              </div>
             </form>
           </div>
         </div>

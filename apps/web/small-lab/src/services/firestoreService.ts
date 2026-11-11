@@ -12,15 +12,20 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 import {
+  type AdminTeamRole,
+  calculateHaversineDistanceKm,
   type CommissionConfig,
+  computeOrderPricingSplit,
   type CreateManagedUserPayload,
   type CustodyEvent,
   CustodyEventType,
   type DiagnosticReportRecord,
   type DiagnosticTestItem,
+  type DropDestinationType,
   type EmailDeliverySettings,
   type EmailMetadataValue,
   type EmailTemplateType,
+  type LabCenterType,
   type LabFacility,
   type LabVerificationStatus,
   NotificationCategory,
@@ -60,10 +65,26 @@ export const DEFAULT_PLATFORM_SLA: PlatformSlaConfig = {
 
 export const DEFAULT_COMMISSION_CONFIG: CommissionConfig = {
   commissionPct: 15,
-  courierBaseFeeInr: 250,
+  defaultMarginMode: 'PCT_OF_GROSS',
+  courierBaseFeeInr: 180,
+  includedBaseKm: 5,
+  perKmFeeInr: 18,
+  customDropBaseFeeInr: 200,
   statSurchargeInr: 150,
+  defaultBroadcastRadiusKm: 5,
+  largeLabAgreements: {},
   updatedAt: new Date().toISOString(),
 };
+
+function stripUndefinedFields<T extends object>(obj: T): T {
+  const clean: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(obj)) {
+    if (val !== undefined) {
+      clean[key] = val;
+    }
+  }
+  return clean as T;
+}
 
 export const DEFAULT_EMAIL_SETTINGS: EmailDeliverySettings = {
   adminEmail: ADMIN_LOGIN_EMAIL,
@@ -286,15 +307,81 @@ export function subscribeOrders(
     };
   }
 
-  let q = query(colRef);
   if (profile.role === UserRole.SMALL_LAB && profile.labId) {
-    q = query(colRef, where('smallLabId', '==', profile.labId));
-  } else if (profile.role === UserRole.LARGE_LAB && profile.labId) {
-    q = query(colRef, where('targetLabId', '==', profile.labId));
+    const mapById = new Map<string, PickupOrder>();
+    const emit = () => {
+      onData(
+        Array.from(mapById.values()).sort((a, b) =>
+          (b.createdAt || '').localeCompare(a.createdAt || '')
+        )
+      );
+    };
+    const u1 = onSnapshot(
+      query(colRef, where('smallLabId', '==', profile.labId)),
+      (snap) => {
+        snap.docs.forEach((d) => {
+          mapById.set(d.id, { id: d.id, ...(d.data() as Omit<PickupOrder, 'id'>) });
+        });
+        emit();
+      },
+      (err) => onError?.(err)
+    );
+    const u2 = onSnapshot(
+      query(colRef, where('targetLabId', '==', profile.labId)),
+      (snap) => {
+        snap.docs.forEach((d) => {
+          mapById.set(d.id, { id: d.id, ...(d.data() as Omit<PickupOrder, 'id'>) });
+        });
+        emit();
+      },
+      (err) => onError?.(err)
+    );
+    return () => {
+      u1();
+      u2();
+    };
+  }
+
+  if (profile.role === UserRole.LARGE_LAB && profile.labId) {
+    const mapById = new Map<string, PickupOrder>();
+    const emit = () => {
+      onData(
+        Array.from(mapById.values()).sort((a, b) =>
+          (b.createdAt || '').localeCompare(a.createdAt || '')
+        )
+      );
+    };
+    const u1 = onSnapshot(
+      query(colRef, where('targetLabId', '==', profile.labId)),
+      (snap) => {
+        snap.docs.forEach((d) => {
+          mapById.set(d.id, { id: d.id, ...(d.data() as Omit<PickupOrder, 'id'>) });
+        });
+        emit();
+      },
+      (err) => onError?.(err)
+    );
+    let u2: Unsubscribe = () => {};
+    if (!profile.parentLabId) {
+      u2 = onSnapshot(
+        query(colRef, where('targetParentLabId', '==', profile.labId)),
+        (snap) => {
+          snap.docs.forEach((d) => {
+            mapById.set(d.id, { id: d.id, ...(d.data() as Omit<PickupOrder, 'id'>) });
+          });
+          emit();
+        },
+        (err) => onError?.(err)
+      );
+    }
+    return () => {
+      u1();
+      u2();
+    };
   }
 
   return onSnapshot(
-    q,
+    query(colRef),
     (snap) => {
       const list = snap.docs
         .map((d) => ({ id: d.id, ...(d.data() as Omit<PickupOrder, 'id'>) }))
@@ -311,15 +398,82 @@ export function subscribeReports(
   onError?: (err: Error) => void
 ): Unsubscribe {
   const colRef = collection(db, 'reports');
-  let q = query(colRef);
+
   if (profile.role === UserRole.SMALL_LAB && profile.labId) {
-    q = query(colRef, where('smallLabId', '==', profile.labId));
-  } else if (profile.role === UserRole.LARGE_LAB && profile.labId) {
-    q = query(colRef, where('targetLabId', '==', profile.labId));
+    const mapById = new Map<string, DiagnosticReportRecord>();
+    const emit = () => {
+      onData(
+        Array.from(mapById.values()).sort((a, b) =>
+          (b.verifiedAt || '').localeCompare(a.verifiedAt || '')
+        )
+      );
+    };
+    const u1 = onSnapshot(
+      query(colRef, where('smallLabId', '==', profile.labId)),
+      (snap) => {
+        snap.docs.forEach((d) => {
+          mapById.set(d.id, { id: d.id, ...(d.data() as Omit<DiagnosticReportRecord, 'id'>) });
+        });
+        emit();
+      },
+      (err) => onError?.(err)
+    );
+    const u2 = onSnapshot(
+      query(colRef, where('targetLabId', '==', profile.labId)),
+      (snap) => {
+        snap.docs.forEach((d) => {
+          mapById.set(d.id, { id: d.id, ...(d.data() as Omit<DiagnosticReportRecord, 'id'>) });
+        });
+        emit();
+      },
+      (err) => onError?.(err)
+    );
+    return () => {
+      u1();
+      u2();
+    };
+  }
+
+  if (profile.role === UserRole.LARGE_LAB && profile.labId) {
+    const mapById = new Map<string, DiagnosticReportRecord>();
+    const emit = () => {
+      onData(
+        Array.from(mapById.values()).sort((a, b) =>
+          (b.verifiedAt || '').localeCompare(a.verifiedAt || '')
+        )
+      );
+    };
+    const u1 = onSnapshot(
+      query(colRef, where('targetLabId', '==', profile.labId)),
+      (snap) => {
+        snap.docs.forEach((d) => {
+          mapById.set(d.id, { id: d.id, ...(d.data() as Omit<DiagnosticReportRecord, 'id'>) });
+        });
+        emit();
+      },
+      (err) => onError?.(err)
+    );
+    let u2: Unsubscribe = () => {};
+    if (!profile.parentLabId) {
+      u2 = onSnapshot(
+        query(colRef, where('targetParentLabId', '==', profile.labId)),
+        (snap) => {
+          snap.docs.forEach((d) => {
+            mapById.set(d.id, { id: d.id, ...(d.data() as Omit<DiagnosticReportRecord, 'id'>) });
+          });
+          emit();
+        },
+        (err) => onError?.(err)
+      );
+    }
+    return () => {
+      u1();
+      u2();
+    };
   }
 
   return onSnapshot(
-    q,
+    query(colRef),
     (snap) => {
       const list = snap.docs
         .map((d) => ({ id: d.id, ...(d.data() as Omit<DiagnosticReportRecord, 'id'>) }))
@@ -336,12 +490,48 @@ export function subscribeSettlements(
   onError?: (err: Error) => void
 ): Unsubscribe {
   const colRef = collection(db, 'settlements');
+  if (profile.role === UserRole.LARGE_LAB && profile.labId) {
+    const mapById = new Map<string, SettlementRecord>();
+    const emit = () => {
+      onData(
+        Array.from(mapById.values()).sort((a, b) =>
+          (b.createdAt || '').localeCompare(a.createdAt || '')
+        )
+      );
+    };
+    const u1 = onSnapshot(
+      query(colRef, where('targetLabId', '==', profile.labId)),
+      (snap) => {
+        snap.docs.forEach((d) => {
+          mapById.set(d.id, { id: d.id, ...(d.data() as Omit<SettlementRecord, 'id'>) });
+        });
+        emit();
+      },
+      (err) => onError?.(err)
+    );
+    let u2: Unsubscribe = () => {};
+    if (!profile.parentLabId) {
+      u2 = onSnapshot(
+        query(colRef, where('targetParentLabId', '==', profile.labId)),
+        (snap) => {
+          snap.docs.forEach((d) => {
+            mapById.set(d.id, { id: d.id, ...(d.data() as Omit<SettlementRecord, 'id'>) });
+          });
+          emit();
+        },
+        (err) => onError?.(err)
+      );
+    }
+    return () => {
+      u1();
+      u2();
+    };
+  }
+
   let q = query(colRef);
 
   if (profile.role === UserRole.SMALL_LAB && profile.labId) {
     q = query(colRef, where('smallLabId', '==', profile.labId));
-  } else if (profile.role === UserRole.LARGE_LAB && profile.labId) {
-    q = query(colRef, where('targetLabId', '==', profile.labId));
   } else if (profile.role === UserRole.PHLEBOTOMIST) {
     if (!profile.phlebotomistId) {
       onData([]);
@@ -448,7 +638,17 @@ export function subscribeNotifications(
 
   const mergeDocs = (docs: { id: string; data: () => unknown }[]) => {
     docs.forEach((d) => {
-      byId.set(d.id, { id: d.id, ...(d.data() as Omit<PlatformNotification, 'id'>) });
+      const item = { id: d.id, ...(d.data() as Omit<PlatformNotification, 'id'>) };
+      if (
+        item.labId &&
+        profile.labId &&
+        profile.parentLabId &&
+        item.labId !== profile.labId &&
+        item.recipientEmail?.toLowerCase() !== normalized
+      ) {
+        return;
+      }
+      byId.set(d.id, item);
     });
     emit();
   };
@@ -515,6 +715,12 @@ export async function provisionRoleUser(
     createFacilityRecord?: boolean;
     city?: string;
     address?: string;
+    pincode?: string;
+    latitude?: number;
+    longitude?: number;
+    serviceRadiusKm?: number;
+    centerType?: LabCenterType;
+    parentLabName?: string;
     nablNumber?: string;
     vehicleInfo?: string;
   }
@@ -529,6 +735,14 @@ export async function provisionRoleUser(
       ? payload.labId?.trim() || `LAB-LG-${Date.now().toString().slice(-4)}`
       : undefined;
 
+  const resolvedParentLabId =
+    payload.role === UserRole.LARGE_LAB && payload.parentLabId?.trim()
+      ? payload.parentLabId.trim()
+      : undefined;
+
+  const resolvedAdminSubRole: AdminTeamRole | undefined =
+    payload.role === UserRole.ADMIN ? payload.adminSubRole || 'SUPER_ADMIN' : undefined;
+
   const resolvedPhleboId =
     payload.role === UserRole.PHLEBOTOMIST
       ? payload.phlebotomistId?.trim() || `PHL-${Date.now().toString().slice(-4)}`
@@ -537,8 +751,10 @@ export async function provisionRoleUser(
   const enrichedPayload: CreateManagedUserPayload = {
     ...payload,
     email: normalized,
-    labId: resolvedLabId,
-    phlebotomistId: resolvedPhleboId,
+    ...(resolvedAdminSubRole ? { adminSubRole: resolvedAdminSubRole } : {}),
+    ...(resolvedLabId ? { labId: resolvedLabId } : {}),
+    ...(resolvedParentLabId ? { parentLabId: resolvedParentLabId } : {}),
+    ...(resolvedPhleboId ? { phlebotomistId: resolvedPhleboId } : {}),
   };
 
   let createdProfile: UserProfile | null = null;
@@ -559,22 +775,27 @@ export async function provisionRoleUser(
       apiSynced = true;
     }
   } catch {
-    // Direct Firestore provisioning continues seamlessly
+    // Direct data sync continues seamlessly
   }
 
-  const profile: UserProfile = createdProfile || {
+  const fallbackProfile: UserProfile = {
     id: `usr-${normalized.replace(/[^a-z0-9]/g, '').slice(0, 12)}-${Date.now().toString(36)}`,
     email: normalized,
     displayName: enrichedPayload.displayName.trim(),
     role: enrichedPayload.role,
+    ...(resolvedAdminSubRole ? { adminSubRole: resolvedAdminSubRole } : {}),
     ...(enrichedPayload.phoneNumber ? { phoneNumber: enrichedPayload.phoneNumber.trim() } : {}),
     ...(resolvedLabId ? { labId: resolvedLabId } : {}),
+    ...(resolvedParentLabId ? { parentLabId: resolvedParentLabId } : {}),
     ...(resolvedPhleboId ? { phlebotomistId: resolvedPhleboId } : {}),
     isActive: true,
     createdByAdmin: true,
     createdAt: now,
     updatedAt: now,
   };
+  const profile: UserProfile = stripUndefinedFields<UserProfile>(
+    createdProfile || fallbackProfile
+  );
 
   if (auth.currentUser) {
     await setDoc(doc(db, 'user_directory', normalized), profile, { merge: true });
@@ -584,35 +805,51 @@ export async function provisionRoleUser(
         (profile.role === UserRole.SMALL_LAB || profile.role === UserRole.LARGE_LAB) &&
         resolvedLabId
       ) {
-        const labPayload: LabFacility = {
+        const isLarge = profile.role === UserRole.LARGE_LAB;
+        const resolvedCenterType: LabCenterType =
+          extra?.centerType || (resolvedParentLabId ? 'COLLECTION_CENTER' : 'MAIN_HUB');
+
+        const rawLabPayload: LabFacility = {
           id: resolvedLabId,
           name: profile.displayName,
-          type: profile.role === UserRole.SMALL_LAB ? 'SMALL_LAB' : 'LARGE_LAB',
+          type: isLarge ? 'LARGE_LAB' : 'SMALL_LAB',
+          ...(isLarge ? { centerType: resolvedCenterType } : {}),
+          ...(isLarge && resolvedParentLabId ? { parentLabId: resolvedParentLabId } : {}),
+          ...(isLarge && extra?.parentLabName ? { parentLabName: extra.parentLabName.trim() } : {}),
           city: extra?.city?.trim() || 'Mumbai',
           address: extra?.address?.trim() || `${profile.displayName} Facility`,
+          ...(extra?.pincode?.trim() ? { pincode: extra.pincode.trim() } : {}),
+          latitude: typeof extra?.latitude === 'number' ? extra.latitude : 19.1438,
+          longitude: typeof extra?.longitude === 'number' ? extra.longitude : 72.9378,
+          ...(typeof extra?.serviceRadiusKm === 'number'
+            ? { serviceRadiusKm: extra.serviceRadiusKm }
+            : isLarge
+            ? { serviceRadiusKm: 15 }
+            : {}),
           phone: profile.phoneNumber || '',
           email: normalized,
           nablNumber:
             extra?.nablNumber?.trim() ||
-            (profile.role === UserRole.LARGE_LAB ? 'NABL ISO 15189' : 'Registered Center'),
+            (isLarge ? 'NABL ISO 15189' : 'Registered Center'),
           verified: true,
           verificationStatus: 'VERIFIED',
-          cutoffWindow:
-            profile.role === UserRole.LARGE_LAB ? '08:30 PM Daily Cutoff' : undefined,
+          ...(isLarge ? { cutoffWindow: '08:30 PM Daily Cutoff', courierEtaMins: 20 } : {}),
           rating: 5.0,
-          courierEtaMins: profile.role === UserRole.LARGE_LAB ? 20 : undefined,
           createdAt: now,
           updatedAt: now,
         };
+        const labPayload: LabFacility = stripUndefinedFields<LabFacility>(rawLabPayload);
         await setDoc(doc(db, 'labs', resolvedLabId), labPayload, { merge: true });
       } else if (profile.role === UserRole.PHLEBOTOMIST && resolvedPhleboId) {
-        const phleboPayload: PhlebotomistProfile = {
+        const rawPhleboPayload: PhlebotomistProfile = {
           id: resolvedPhleboId,
           name: profile.displayName,
           phone: profile.phoneNumber || '',
           email: normalized,
           status: 'ONLINE',
           currentLocation: extra?.city?.trim() || 'Active Field Zone',
+          latitude: typeof extra?.latitude === 'number' ? extra.latitude : 19.1363,
+          longitude: typeof extra?.longitude === 'number' ? extra.longitude : 72.8277,
           batteryPct: 100,
           chillerTempCelsius: 4.2,
           coolerBoxId: `CB-${resolvedPhleboId}`,
@@ -623,6 +860,8 @@ export async function provisionRoleUser(
           createdAt: now,
           updatedAt: now,
         };
+        const phleboPayload: PhlebotomistProfile =
+          stripUndefinedFields<PhlebotomistProfile>(rawPhleboPayload);
         await setDoc(doc(db, 'phlebotomists', resolvedPhleboId), phleboPayload, {
           merge: true,
         });
@@ -639,7 +878,9 @@ export async function provisionRoleUser(
           displayName: profile.displayName,
           email: normalized,
           role: profile.role,
+          ...(profile.adminSubRole ? { adminSubRole: profile.adminSubRole } : {}),
           ...(profile.labId ? { labId: profile.labId } : {}),
+          ...(profile.parentLabId ? { parentLabId: profile.parentLabId } : {}),
           ...(profile.phlebotomistId ? { phlebotomistId: profile.phlebotomistId } : {}),
           hasPassword: Boolean(payload.password),
           ...(typeof window !== 'undefined' ? { portalOrigin: window.location.origin } : {}),
@@ -648,7 +889,7 @@ export async function provisionRoleUser(
           subject: `Welcome to LabSetu — ${ROLE_LABELS[profile.role]} Account Ready`,
           text: `Hello ${profile.displayName}, Admin (${ADMIN_LOGIN_EMAIL}) has created your ${ROLE_LABELS[profile.role]} account for ${normalized}. ${
             profile.role === UserRole.PHLEBOTOMIST
-              ? 'Please open the LabSetu Mobile App and sign in using Google Sign-In, Email & Password, or Email OTP.'
+              ? 'Please open the LabSetu Mobile App and sign in using Email OTP or your password.'
               : `Sign in at ${window.location.origin}/login using Google Sign-In, Email & Password, or Email OTP.`
           }`,
         },
@@ -665,6 +906,21 @@ export async function toggleManagedUserStatus(
   user: UserProfile,
   nextActive: boolean
 ): Promise<void> {
+  return updateManagedUserAccess(bearerToken, user, { isActive: nextActive });
+}
+
+export async function updateManagedUserAccess(
+  bearerToken: string,
+  user: UserProfile,
+  updates: {
+    isActive?: boolean;
+    role?: UserRole;
+    adminSubRole?: AdminTeamRole;
+    labId?: string;
+    parentLabId?: string;
+    phlebotomistId?: string;
+  }
+): Promise<void> {
   const normalized = user.email.trim().toLowerCase();
   const updatedAt = new Date().toISOString();
 
@@ -675,28 +931,31 @@ export async function toggleManagedUserStatus(
         'Content-Type': 'application/json',
         Authorization: `Bearer ${bearerToken}`,
       },
-      body: JSON.stringify({ isActive: nextActive }),
+      body: JSON.stringify(updates),
     });
   } catch {
     // Non-fatal when API is offline locally
   }
 
-  await setDoc(
-    doc(db, 'user_directory', normalized),
-    { ...user, isActive: nextActive, updatedAt },
-    { merge: true }
-  );
+  const nextProfile = stripUndefinedFields({
+    ...user,
+    ...updates,
+    updatedAt,
+  });
+  await setDoc(doc(db, 'user_directory', normalized), nextProfile, { merge: true });
 }
 
-export async function saveLabFacility(lab: Omit<LabFacility, 'createdAt' | 'updatedAt'> & { createdAt?: string }): Promise<void> {
+export async function saveLabFacility(
+  lab: Omit<LabFacility, 'createdAt' | 'updatedAt'> & { createdAt?: string }
+): Promise<void> {
   const now = new Date().toISOString();
   await setDoc(
     doc(db, 'labs', lab.id),
-    {
+    stripUndefinedFields({
       ...lab,
       createdAt: lab.createdAt || now,
       updatedAt: now,
-    },
+    }),
     { merge: true }
   );
 }
@@ -707,6 +966,10 @@ export async function updateLabOperationsProfile(
     name?: string;
     city?: string;
     address?: string;
+    pincode?: string;
+    latitude?: number;
+    longitude?: number;
+    serviceRadiusKm?: number;
     phone?: string;
     nablNumber?: string;
     cutoffWindow?: string;
@@ -714,10 +977,13 @@ export async function updateLabOperationsProfile(
     payoutProfile?: PayoutProfile;
   }
 ): Promise<void> {
-  await updateDoc(doc(db, 'labs', labId), {
-    ...updates,
-    updatedAt: new Date().toISOString(),
-  });
+  await updateDoc(
+    doc(db, 'labs', labId),
+    stripUndefinedFields({
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    })
+  );
 }
 
 export async function updateLabVerification(
@@ -824,11 +1090,11 @@ export async function saveDiagnosticTest(
   const now = new Date().toISOString();
   await setDoc(
     doc(db, 'test_catalog', test.id),
-    {
+    stripUndefinedFields({
       ...test,
       createdAt: test.createdAt || now,
       updatedAt: now,
-    },
+    }),
     { merge: true }
   );
 }
@@ -842,9 +1108,30 @@ export async function createLiveBooking(params: {
   operatorUid: string;
   patient: { id: string; pseudonym: string; age: number; gender: 'MALE' | 'FEMALE' | 'OTHER' };
   smallLab: { id: string; name: string; address: string; phone?: string };
-  targetLab: { id: string; name: string; address: string };
+  targetLab: { id: string; name: string; address: string; parentLabId?: string };
+  dropType?: DropDestinationType;
+  pickupLocation?: {
+    address: string;
+    latitude: number;
+    longitude: number;
+    contactName?: string;
+    contactPhone?: string;
+  };
+  deliveryLocation?: {
+    address: string;
+    latitude: number;
+    longitude: number;
+    contactName?: string;
+    contactPhone?: string;
+  };
   phlebotomist?: { id: string; name: string } | null;
   selectedTests: DiagnosticTestItem[];
+  smallLabPayableTestTotalInr?: number;
+  largeLabB2bTotalInr?: number;
+  matchedPackageNames?: string[];
+  packageSavingsInr?: number;
+  distanceKm?: number;
+  broadcastRadiusKm?: number;
   priority: OrderPriority;
   scheduledPickupAt: string;
   commissionConfig: CommissionConfig;
@@ -863,15 +1150,54 @@ export async function createLiveBooking(params: {
     temperatureRequirement: t.temperatureRequirement,
   }));
 
-  const testsTotal = params.selectedTests.reduce((sum, t) => sum + (t.b2bPriceInr || 0), 0);
-  const surcharge =
-    params.priority === OrderPriority.STAT_CRITICAL
-      ? params.commissionConfig.statSurchargeInr
-      : 0;
-  const courierFeeInr = params.commissionConfig.courierBaseFeeInr + surcharge;
-  const totalAmountInr = testsTotal + courierFeeInr;
-  const platformFeeInr = Math.round((totalAmountInr * params.commissionConfig.commissionPct) / 100);
-  const labPayoutInr = Math.max(0, totalAmountInr - platformFeeInr - courierFeeInr);
+  const dropType: DropDestinationType = params.dropType || 'LARGE_LAB';
+  const rawTestTotal =
+    typeof params.smallLabPayableTestTotalInr === 'number'
+      ? params.smallLabPayableTestTotalInr
+      : params.selectedTests.reduce((sum, t) => sum + (t.b2bPriceInr || 0), 0);
+
+  const rawLargeB2bTotal =
+    typeof params.largeLabB2bTotalInr === 'number'
+      ? params.largeLabB2bTotalInr
+      : params.selectedTests.every((t) => typeof t.largeLabB2bRateInr === 'number')
+      ? params.selectedTests.reduce((sum, t) => sum + (t.largeLabB2bRateInr || 0), 0)
+      : undefined;
+
+  const pricingOrgId = params.targetLab.parentLabId || params.targetLab.id;
+  const pricingSplit = computeOrderPricingSplit({
+    smallLabTestTotalInr: rawTestTotal,
+    largeLabB2bTotalInr: rawLargeB2bTotal,
+    commissionConfig: params.commissionConfig,
+    targetLabId: dropType === 'LARGE_LAB' ? pricingOrgId : undefined,
+    priority: params.priority,
+    distanceKm: params.distanceKm,
+    dropType,
+  });
+
+  const resolvedPickup = params.pickupLocation || {
+    address: params.smallLab.address,
+    latitude: 19.1438,
+    longitude: 72.9378,
+    ...(params.smallLab.phone ? { contactPhone: params.smallLab.phone } : {}),
+  };
+  const resolvedDelivery = params.deliveryLocation || {
+    address: params.targetLab.address,
+    latitude: 19.1726,
+    longitude: 72.9565,
+  };
+  const computedDistanceKm =
+    typeof params.distanceKm === 'number'
+      ? params.distanceKm
+      : calculateHaversineDistanceKm(
+          resolvedPickup.latitude,
+          resolvedPickup.longitude,
+          resolvedDelivery.latitude,
+          resolvedDelivery.longitude
+        );
+  const broadcastRadiusKm =
+    params.broadcastRadiusKm ??
+    params.commissionConfig.defaultBroadcastRadiusKm ??
+    5;
 
   const custodyEvent: CustodyEvent = {
     id: `EVT-${Date.now()}`,
@@ -881,17 +1207,27 @@ export async function createLiveBooking(params: {
     operatorId: params.operatorUid,
     operatorName: params.sessionUser.displayName,
     operatorRole: params.sessionUser.role,
-    notes: `Booking created by ${params.smallLab.name} for ${params.patient.pseudonym}`,
+    notes: `Booking created by ${params.smallLab.name} -> ${params.targetLab.name} (${
+      dropType === 'LARGE_LAB'
+        ? 'Partner Reference Lab'
+        : dropType === 'SELF_DROP'
+        ? 'Self Lab Return Drop'
+        : 'Custom Drop Address'
+    })`,
   };
 
   const hasPhlebo = Boolean(params.phlebotomist?.id);
-  const newOrder: PickupOrder = {
+  const rawOrder: PickupOrder = {
     id: orderNumber,
     orderNumber,
     smallLabId: params.smallLab.id,
     smallLabName: params.smallLab.name,
     targetLabId: params.targetLab.id,
+    ...(params.targetLab.parentLabId
+      ? { targetParentLabId: params.targetLab.parentLabId }
+      : {}),
     targetLabName: params.targetLab.name,
+    dropType,
     phlebotomistId: params.phlebotomist?.id || '',
     ...(params.phlebotomist?.name ? { phlebotomistName: params.phlebotomist.name } : {}),
     status: hasPhlebo ? OrderStatus.ASSIGNED_TO_PHLEBO : OrderStatus.READY_FOR_PICKUP,
@@ -899,52 +1235,59 @@ export async function createLiveBooking(params: {
     patient: params.patient,
     specimens,
     custodyHistory: [custodyEvent],
-    pickupLocation: {
-      address: params.smallLab.address,
-      latitude: 19.1438,
-      longitude: 72.9378,
-      ...(params.smallLab.phone ? { contactPhone: params.smallLab.phone } : {}),
-    },
-    deliveryLocation: {
-      address: params.targetLab.address,
-      latitude: 19.1726,
-      longitude: 72.9565,
-    },
+    pickupLocation: resolvedPickup,
+    deliveryLocation: resolvedDelivery,
     scheduledPickupAt: params.scheduledPickupAt,
-    totalAmountInr,
-    courierFeeInr,
+    totalAmountInr: pricingSplit.grossAmountInr,
+    courierFeeInr: pricingSplit.courierFeeInr,
+    largeLabB2bAmountInr: pricingSplit.labPayoutInr,
+    platformFeeInr: pricingSplit.platformFeeInr,
+    ...(params.matchedPackageNames?.length
+      ? { matchedPackageNames: params.matchedPackageNames }
+      : {}),
+    ...(typeof params.packageSavingsInr === 'number' && params.packageSavingsInr > 0
+      ? { packageSavingsInr: params.packageSavingsInr }
+      : {}),
+    distanceKm: computedDistanceKm,
+    broadcastRadiusKm,
     paymentStatus: 'UNPAID',
     handoverOtp,
     department: params.selectedTests[0]?.department || 'Pathology',
     createdAt: now,
     updatedAt: now,
   };
+  const newOrder: PickupOrder = stripUndefinedFields<PickupOrder>(rawOrder);
 
   await setDoc(doc(db, 'orders', orderNumber), newOrder);
   await addDoc(collection(db, 'custody_events'), custodyEvent);
 
-  const settlement: SettlementRecord = {
+  const rawSettlement: SettlementRecord = {
     id: `STL-${orderNumber.replace('BK-', '')}`,
     orderId: orderNumber,
     orderNumber,
     smallLabId: params.smallLab.id,
     smallLabName: params.smallLab.name,
     targetLabId: params.targetLab.id,
+    ...(params.targetLab.parentLabId
+      ? { targetParentLabId: params.targetLab.parentLabId }
+      : {}),
     targetLabName: params.targetLab.name,
+    dropType,
     ...(params.phlebotomist?.id ? { phlebotomistId: params.phlebotomist.id } : {}),
     ...(params.phlebotomist?.name ? { phlebotomistName: params.phlebotomist.name } : {}),
-    grossAmountInr: totalAmountInr,
-    platformFeeInr,
-    labPayoutInr,
-    phleboPayoutInr: courierFeeInr,
+    grossAmountInr: pricingSplit.grossAmountInr,
+    platformFeeInr: pricingSplit.platformFeeInr,
+    labPayoutInr: pricingSplit.labPayoutInr,
+    phleboPayoutInr: pricingSplit.phleboPayoutInr,
     billingPeriod: currentBillingPeriod(),
     paymentStatus: 'UNPAID',
-    labPayoutStatus: 'PENDING',
+    labPayoutStatus: pricingSplit.labPayoutInr > 0 ? 'PENDING' : 'PAID',
     phleboPayoutStatus: 'PENDING',
     status: 'PENDING',
     createdAt: now,
     updatedAt: now,
   };
+  const settlement: SettlementRecord = stripUndefinedFields<SettlementRecord>(rawSettlement);
   await setDoc(doc(db, 'settlements', settlement.id), settlement);
 
   // Update patient visit counter if linked to saved patient record
@@ -966,7 +1309,7 @@ export async function createLiveBooking(params: {
 
   await dispatchPlatformAlert({
     title: `New Booking ${orderNumber} (${params.priority})`,
-    message: `${params.smallLab.name} requested pickup for ${params.patient.pseudonym} -> ${params.targetLab.name}. Handover OTP: ${handoverOtp}`,
+    message: `${params.smallLab.name} requested pickup for ${params.patient.pseudonym} -> ${params.targetLab.name} (${computedDistanceKm} km). Handover OTP: ${handoverOtp}`,
     category: NotificationCategory.BOOKING_CREATED,
     priority:
       params.priority === OrderPriority.STAT_CRITICAL
@@ -988,10 +1331,33 @@ export async function createLiveBooking(params: {
     },
   });
 
+  if (dropType === 'LARGE_LAB' && params.targetLab.id) {
+    await dispatchPlatformAlert({
+      title: `Incoming Booking ${orderNumber} -> ${params.targetLab.name}`,
+      message: `${params.smallLab.name} booked ${specimens.map((s) => s.testCode).join(', ')} (${broadcastRadiusKm} km live dispatch triggered).`,
+      category: NotificationCategory.BOOKING_CREATED,
+      priority: NotificationPriority.NORMAL,
+      recipientRole: UserRole.LARGE_LAB,
+      labId: params.targetLab.id,
+      orderId: orderNumber,
+      queueEmail: false,
+    });
+  }
+
   if (params.phlebotomist?.id) {
     await dispatchPlatformAlert({
       title: `Pickup Assigned: ${orderNumber}`,
       message: `Collect ${specimens.map((s) => s.testCode).join(', ')} from ${params.smallLab.name} for ${params.targetLab.name}.`,
+      category: NotificationCategory.PICKUP_ASSIGNED,
+      priority: NotificationPriority.HIGH,
+      recipientRole: UserRole.PHLEBOTOMIST,
+      orderId: orderNumber,
+      queueEmail: false,
+    });
+  } else {
+    await dispatchPlatformAlert({
+      title: `Live Pickup Broadcast (${broadcastRadiusKm} km): ${orderNumber}`,
+      message: `${params.smallLab.name} pickup (${computedDistanceKm} km route -> ${params.targetLab.name}). Payout: ₹${pricingSplit.phleboPayoutInr}.`,
       category: NotificationCategory.PICKUP_ASSIGNED,
       priority: NotificationPriority.HIGH,
       recipientRole: UserRole.PHLEBOTOMIST,
@@ -1130,6 +1496,7 @@ export async function publishDiagnosticReport(params: {
   file: File | null;
   operatorUid: string;
   operatorName: string;
+  operatorRole?: UserRole;
 }): Promise<DiagnosticReportRecord> {
   const now = new Date().toISOString();
   const reportId = `RPT-${params.order.orderNumber.replace('BK-', '')}-${Date.now()
@@ -1154,7 +1521,7 @@ export async function publishDiagnosticReport(params: {
     ? undefined
     : Math.max(1, Math.round((Date.now() - createdMs) / 60000));
 
-  const record: DiagnosticReportRecord = {
+  const record: DiagnosticReportRecord = stripUndefinedFields({
     id: reportId,
     orderId: params.order.id,
     orderNumber: params.order.orderNumber,
@@ -1163,6 +1530,9 @@ export async function publishDiagnosticReport(params: {
     smallLabId: params.order.smallLabId,
     smallLabName: params.order.smallLabName,
     targetLabId: params.order.targetLabId,
+    ...(params.order.targetParentLabId
+      ? { targetParentLabId: params.order.targetParentLabId }
+      : {}),
     targetLabName: params.order.targetLabName,
     testsSummary: params.order.specimens.map((s) => s.testCode).join(', ') || 'Panel',
     pathologistName: params.pathologistName.trim() || 'Chief Pathologist',
@@ -1173,7 +1543,7 @@ export async function publishDiagnosticReport(params: {
     turnaroundMinutes,
     verifiedAt: now,
     createdAt: now,
-  };
+  });
 
   await setDoc(doc(db, 'reports', reportId), record);
 
@@ -1184,7 +1554,7 @@ export async function publishDiagnosticReport(params: {
     timestamp: now,
     operatorId: params.operatorUid,
     operatorName: params.operatorName,
-    operatorRole: UserRole.LARGE_LAB,
+    operatorRole: params.operatorRole || UserRole.LARGE_LAB,
     notes: `Verified report ${reportId} uploaded by ${record.pathologistName}`,
   };
 
@@ -1269,6 +1639,7 @@ export async function dispatchPlatformAlert(opts: {
   priority: NotificationPriority;
   recipientEmail?: string;
   recipientRole?: UserRole | 'ALL';
+  labId?: string;
   orderId?: string;
   queueEmail?: boolean;
   templateType?: EmailTemplateType;
@@ -1296,6 +1667,7 @@ export async function dispatchPlatformAlert(opts: {
     priority: opts.priority,
     ...(opts.recipientEmail ? { recipientEmail: opts.recipientEmail.toLowerCase() } : {}),
     recipientRole: opts.recipientRole || UserRole.ADMIN,
+    ...(opts.labId ? { labId: opts.labId } : {}),
     ...(opts.orderId ? { orderId: opts.orderId } : {}),
     channels: opts.queueEmail
       ? [NotificationChannel.IN_APP, NotificationChannel.EMAIL]
@@ -1371,7 +1743,7 @@ export async function saveCommissionSettings(
 ): Promise<void> {
   await setDoc(
     doc(db, 'settings', 'commission'),
-    { ...cfg, updatedBy: adminEmail, updatedAt: new Date().toISOString() },
+    stripUndefinedFields({ ...cfg, updatedBy: adminEmail, updatedAt: new Date().toISOString() }),
     { merge: true }
   );
 }

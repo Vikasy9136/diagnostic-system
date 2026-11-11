@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Image,
   Linking,
   Modal,
   Platform,
@@ -13,12 +14,15 @@ import {
   TextInput,
 } from 'react-native';
 import {
+  calculateHaversineDistanceKm,
   computeDailyVolumeBars,
   type CustodyEvent,
   CustodyEventType,
   formatInr,
   formatOrderStatus,
   isOrderCompleted,
+  type LiveGeoCoordinate,
+  LOCALITY_GPS_PRESETS,
   NotificationCategory,
   NotificationChannel,
   NotificationPriority,
@@ -29,7 +33,11 @@ import {
   type PhlebotomistShiftStatus,
   type PickupOrder,
   type SettlementRecord,
+  type SpecimenItem,
+  TUBE_METADATA,
+  TubeType,
   UserRole,
+  validateTubeBarcodeScan,
 } from '@diagnostic/shared';
 import { signOut } from 'firebase/auth';
 import {
@@ -38,11 +46,12 @@ import {
   doc,
   onSnapshot,
   query,
+  runTransaction,
   updateDoc,
   where,
   type Unsubscribe,
 } from 'firebase/firestore';
-import { ADMIN_LOGIN_EMAIL, auth, db } from './firebase';
+import { ADMIN_LOGIN_EMAIL, auth, db, uploadPhleboSampleFile } from './firebase';
 import {
   DynamicAlertModal,
   type DynamicAlertState,
@@ -133,12 +142,34 @@ export default function App() {
   // Selected trip & workflow form state
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [otpValue, setOtpValue] = useState<string[]>(['', '', '', '', '']);
-  const [scannedBarcode, setScannedBarcode] = useState('');
+  const [specimenDrafts, setSpecimenDrafts] = useState<
+    Record<string, { barcode: string; usedTube: TubeType }>
+  >({});
+  const [samplePhotoUrl, setSamplePhotoUrl] = useState('');
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [cameraModal, setCameraModal] = useState<{
+    mode: 'BARCODE' | 'PHOTO';
+    specimenId?: string;
+    specimen?: SpecimenItem;
+  } | null>(null);
+  const [cameraStatusText, setCameraStatusText] = useState('Starting camera...');
   const [pickupTempInput, setPickupTempInput] = useState('4.2');
   const [dropTempInput, setDropTempInput] = useState('4.2');
-  const [showManualEntry, setShowManualEntry] = useState(false);
   const [submittingAction, setSubmittingAction] = useState(false);
   const [lastReceipt, setLastReceipt] = useState<CompletedReceipt | null>(null);
+
+  // Live Rider GPS + Rapido-Style Broadcast Popup State
+  const [riderLocation, setRiderLocation] = useState<LiveGeoCoordinate>({
+    latitude: LOCALITY_GPS_PRESETS[0].latitude,
+    longitude: LOCALITY_GPS_PRESETS[0].longitude,
+    updatedAt: new Date().toISOString(),
+  });
+  const [gpsSourceLabel, setGpsSourceLabel] = useState('Default Zone');
+  const [showLocationPickerModal, setShowLocationPickerModal] = useState(false);
+  const [manualLatInput, setManualLatInput] = useState(String(LOCALITY_GPS_PRESETS[0].latitude));
+  const [manualLngInput, setManualLngInput] = useState(String(LOCALITY_GPS_PRESETS[0].longitude));
+  const [dismissedBroadcastIds, setDismissedBroadcastIds] = useState<string[]>([]);
+  const [radiusOnlyFilter, setRadiusOnlyFilter] = useState(false);
 
   // History filter state
   const [bookingHistoryFilter, setBookingHistoryFilter] = useState<
@@ -404,6 +435,259 @@ export default function App() {
     [orders, selectedOrderId]
   );
 
+  // Seed initial GPS coordinates from profile once when loaded
+  useEffect(() => {
+    if (
+      typeof myPhleboProfile?.latitude === 'number' &&
+      typeof myPhleboProfile?.longitude === 'number' &&
+      gpsSourceLabel === 'Default Zone'
+    ) {
+      setRiderLocation({
+        latitude: myPhleboProfile.latitude,
+        longitude: myPhleboProfile.longitude,
+        updatedAt: myPhleboProfile.updatedAt || new Date().toISOString(),
+      });
+      setGpsSourceLabel(myPhleboProfile.currentLocation || 'Assigned Zone');
+    }
+  }, [myPhleboProfile?.latitude, myPhleboProfile?.longitude, myPhleboProfile?.currentLocation, myPhleboProfile?.updatedAt, gpsSourceLabel]);
+
+  // Real-time browser GPS watch while On Duty
+  useEffect(() => {
+    if (!session || !isOnline || Platform.OS !== 'web') return;
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        setRiderLocation({
+          latitude: Number(pos.coords.latitude.toFixed(5)),
+          longitude: Number(pos.coords.longitude.toFixed(5)),
+          speedKmph:
+            typeof pos.coords.speed === 'number' && pos.coords.speed >= 0
+              ? Math.round(pos.coords.speed * 3.6)
+              : undefined,
+          accuracyMeters: Math.round(pos.coords.accuracy || 0),
+          updatedAt: new Date().toISOString(),
+        });
+        setGpsSourceLabel('GPS Live');
+      },
+      () => {
+        // Keep manual / profile coordinates gracefully if GPS denied
+      },
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 }
+    );
+
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, [session, isOnline]);
+
+  // Periodically sync rider live GPS to phlebotomists/{id} and active assigned orders
+  const activeOrderIdsKey = activeAssignedOrders.map((o) => o.id).join(',');
+  useEffect(() => {
+    if (!session?.firebaseUser || !effectivePhleboId || !isOnline) return;
+
+    const pushGpsUpdate = async () => {
+      const now = new Date().toISOString();
+      try {
+        await updateDoc(doc(db, 'phlebotomists', effectivePhleboId), {
+          latitude: riderLocation.latitude,
+          longitude: riderLocation.longitude,
+          updatedAt: now,
+        });
+      } catch {
+        // Ignore if doc doesn't exist yet
+      }
+
+      const activeIds = activeOrderIdsKey ? activeOrderIdsKey.split(',').filter(Boolean) : [];
+      for (const orderId of activeIds) {
+        try {
+          await updateDoc(doc(db, 'orders', orderId), {
+            phleboLiveLocation: {
+              latitude: riderLocation.latitude,
+              longitude: riderLocation.longitude,
+              updatedAt: now,
+            },
+            updatedAt: now,
+          });
+        } catch {
+          // Best-effort live telemetry
+        }
+      }
+    };
+
+    void pushGpsUpdate();
+    const timer = setInterval(() => {
+      void pushGpsUpdate();
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [
+    session?.firebaseUser,
+    effectivePhleboId,
+    isOnline,
+    riderLocation.latitude,
+    riderLocation.longitude,
+    activeOrderIdsKey,
+  ]);
+
+  // Camera live stream & BarcodeDetector effect when Camera Modal is open (Web)
+  useEffect(() => {
+    if (!cameraModal || Platform.OS !== 'web' || typeof document === 'undefined') return;
+    let cancelled = false;
+    let stream: MediaStream | null = null;
+    let rafTimer: ReturnType<typeof setInterval> | null = null;
+
+    const initCam = async () => {
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          setCameraStatusText('Browser camera unavailable — use Manual Input or Quick Test below.');
+          return;
+        }
+        setCameraStatusText('Requesting camera permission...');
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' },
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+
+        let host = document.getElementById('phlebo-cam-host');
+        if (!host) {
+          await new Promise((r) => setTimeout(r, 80));
+          host = document.getElementById('phlebo-cam-host');
+        }
+        if (!host) return;
+        host.innerHTML = '';
+        const video = document.createElement('video');
+        video.id = 'phlebo-cam-video';
+        video.autoplay = true;
+        video.muted = true;
+        video.playsInline = true;
+        video.srcObject = stream;
+        video.style.width = '100%';
+        video.style.height = '100%';
+        video.style.objectFit = 'cover';
+        host.appendChild(video);
+        await video.play().catch(() => {});
+
+        if (cameraModal.mode === 'PHOTO') {
+          setCameraStatusText('Frame all specimen vials clearly and tap Capture Photo.');
+          return;
+        }
+
+        const BarcodeCtor = (
+          window as unknown as {
+            BarcodeDetector?: new (opts?: { formats?: string[] }) => {
+              detect: (source: HTMLVideoElement) => Promise<Array<{ rawValue?: string }>>;
+            };
+          }
+        ).BarcodeDetector;
+
+        if (!BarcodeCtor) {
+          setCameraStatusText('Live camera active. Enter barcode below if auto-scan is unsupported.');
+          return;
+        }
+
+        const detector = new BarcodeCtor({
+          formats: ['code_128', 'code_39', 'ean_13', 'qr_code', 'codabar'],
+        });
+        setCameraStatusText('Point camera at specimen tube barcode...');
+
+        rafTimer = setInterval(() => {
+          void (async () => {
+            try {
+              if (cancelled || video.readyState < 2) return;
+              const found = await detector.detect(video);
+              const val = found?.[0]?.rawValue?.trim();
+              if (val && cameraModal.specimenId) {
+                const targetId = cameraModal.specimenId;
+                setSpecimenDrafts((prev) => ({
+                  ...prev,
+                  [targetId]: {
+                    barcode: val,
+                    usedTube:
+                      prev[targetId]?.usedTube ||
+                      cameraModal.specimen?.tubeType ||
+                      TubeType.SERUM_RED_GOLD,
+                  },
+                }));
+                setCameraModal(null);
+              }
+            } catch {
+              // Frame decode skip
+            }
+          })();
+        }, 450);
+      } catch {
+        if (!cancelled) {
+          setCameraStatusText('Camera permission blocked — upload file or type barcode below.');
+        }
+      }
+    };
+
+    void initCam();
+
+    return () => {
+      cancelled = true;
+      if (rafTimer) clearInterval(rafTimer);
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop());
+      }
+      const host = document.getElementById('phlebo-cam-host');
+      if (host) host.innerHTML = '';
+    };
+  }, [cameraModal]);
+
+  // Open pool orders annotated with live Haversine distance from rider & 1-5km broadcast match
+  const openPoolWithDistance = useMemo(() => {
+    return openPoolOrders
+      .map((order) => {
+        const distFromRiderKm = calculateHaversineDistanceKm(
+          riderLocation.latitude,
+          riderLocation.longitude,
+          order.pickupLocation?.latitude ?? LOCALITY_GPS_PRESETS[0].latitude,
+          order.pickupLocation?.longitude ?? LOCALITY_GPS_PRESETS[0].longitude
+        );
+        const maxRadiusKm = order.broadcastRadiusKm || 5;
+        return {
+          order,
+          distFromRiderKm,
+          inBroadcastRadius: distFromRiderKm <= maxRadiusKm,
+          maxRadiusKm,
+        };
+      })
+      .sort((a, b) => a.distFromRiderKm - b.distFromRiderKm);
+  }, [openPoolOrders, riderLocation.latitude, riderLocation.longitude]);
+
+  const activeBroadcastMatch = useMemo(() => {
+    if (
+      !session ||
+      !isOnline ||
+      !effectivePhleboId ||
+      bottomTab !== 'home' ||
+      currentScreen !== 'BOOKING_REQUESTS' ||
+      selectedOrderId ||
+      submittingAction
+    ) {
+      return null;
+    }
+    return (
+      openPoolWithDistance.find(
+        (x) => x.inBroadcastRadius && !dismissedBroadcastIds.includes(x.order.id)
+      ) || null
+    );
+  }, [
+    session,
+    isOnline,
+    effectivePhleboId,
+    bottomTab,
+    currentScreen,
+    selectedOrderId,
+    submittingAction,
+    openPoolWithDistance,
+    dismissedBroadcastIds,
+  ]);
+
   // Merge live settlements & payouts with handled orders for accurate earnings computation
   const earningRows = useMemo(() => {
     const stlMap = new Map(settlements.map((s) => [s.orderId, s]));
@@ -496,9 +780,170 @@ export default function App() {
     setOtpValue(updated);
   };
 
+  function openDirectionsMap(destLat?: number, destLng?: number, fallbackAddr?: string) {
+    const hasDestCoords =
+      typeof destLat === 'number' &&
+      typeof destLng === 'number' &&
+      Number.isFinite(destLat) &&
+      Number.isFinite(destLng) &&
+      destLat !== 0 &&
+      destLng !== 0;
+    const destination = hasDestCoords
+      ? `${destLat},${destLng}`
+      : encodeURIComponent(fallbackAddr || 'Mumbai');
+    const origin = `${riderLocation.latitude},${riderLocation.longitude}`;
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=driving`;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.open(url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    void Linking.openURL(url);
+  }
+
+  async function applyRiderLocation(lat: number, lng: number, label: string) {
+    const now = new Date().toISOString();
+    const cleanLat = Number(lat.toFixed(5));
+    const cleanLng = Number(lng.toFixed(5));
+    setRiderLocation({
+      latitude: cleanLat,
+      longitude: cleanLng,
+      updatedAt: now,
+    });
+    setGpsSourceLabel(label);
+    setManualLatInput(String(cleanLat));
+    setManualLngInput(String(cleanLng));
+    setShowLocationPickerModal(false);
+
+    if (effectivePhleboId) {
+      try {
+        await updateDoc(doc(db, 'phlebotomists', effectivePhleboId), {
+          latitude: cleanLat,
+          longitude: cleanLng,
+          currentLocation: label,
+          updatedAt: now,
+        });
+      } catch {
+        // Best-effort zone sync
+      }
+    }
+  }
+
+  function updateSpecimenDraft(
+    specimenId: string,
+    patch: Partial<{ barcode: string; usedTube: TubeType }>
+  ) {
+    setSpecimenDrafts((prev) => {
+      const curr = prev[specimenId] || { barcode: '', usedTube: TubeType.SERUM_RED_GOLD };
+      return {
+        ...prev,
+        [specimenId]: {
+          barcode: patch.barcode !== undefined ? patch.barcode : curr.barcode,
+          usedTube: patch.usedTube !== undefined ? patch.usedTube : curr.usedTube,
+        },
+      };
+    });
+  }
+
+  function handleUploadSamplePhotoFromFile(orderId: string) {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') {
+      showDynamicAlert({
+        variant: 'info',
+        title: 'Upload From Device',
+        message: 'Choose a photo using the camera button on mobile web or paste a proof image.',
+      });
+      return;
+    }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.setAttribute('capture', 'environment');
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      void (async () => {
+        setUploadingPhoto(true);
+        try {
+          const url = await uploadPhleboSampleFile(
+            `samples/${orderId}/photo-${Date.now()}-${file.name}`,
+            file
+          );
+          setSamplePhotoUrl(url);
+          showDynamicAlert({
+            variant: 'success',
+            title: 'Sample Photo Uploaded',
+            message: 'Specimen tube collection photo saved and linked to this order.',
+          });
+        } catch (err) {
+          showDynamicAlert({
+            variant: 'error',
+            title: 'Photo Upload Failed',
+            message: (err as Error).message || 'Could not upload sample photo.',
+          });
+        } finally {
+          setUploadingPhoto(false);
+        }
+      })();
+    };
+    input.click();
+  }
+
+  function handleCaptureSnapshotFromCam(orderId: string) {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const video = document.getElementById('phlebo-cam-video') as HTMLVideoElement | null;
+    if (!video || video.videoWidth === 0) {
+      handleUploadSamplePhotoFromFile(orderId);
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return;
+        void (async () => {
+          setUploadingPhoto(true);
+          try {
+            const url = await uploadPhleboSampleFile(
+              `samples/${orderId}/snap-${Date.now()}.jpg`,
+              blob
+            );
+            setSamplePhotoUrl(url);
+            setCameraModal(null);
+            showDynamicAlert({
+              variant: 'success',
+              title: 'Camera Photo Saved',
+              message: 'Sample collection proof image captured and uploaded.',
+            });
+          } catch (err) {
+            showDynamicAlert({
+              variant: 'error',
+              title: 'Upload Failed',
+              message: (err as Error).message || 'Could not upload camera photo.',
+            });
+          } finally {
+            setUploadingPhoto(false);
+          }
+        })();
+      },
+      'image/jpeg',
+      0.86
+    );
+  }
+
   function openOrderWorkflow(order: PickupOrder) {
     setSelectedOrderId(order.id);
-    setScannedBarcode(order.specimens[0]?.barcode || '');
+    const nextDrafts: Record<string, { barcode: string; usedTube: TubeType }> = {};
+    for (const spec of order.specimens || []) {
+      nextDrafts[spec.id] = {
+        barcode: spec.scannedBarcode || '',
+        usedTube: spec.scannedTubeType || spec.tubeType || TubeType.SERUM_RED_GOLD,
+      };
+    }
+    setSpecimenDrafts(nextDrafts);
+    setSamplePhotoUrl(order.sampleCollectionPhotoUrl || '');
     setPickupTempInput(String(myPhleboProfile?.chillerTempCelsius ?? 4.2));
     setDropTempInput(
       String(order.arrivalTemperatureCelsius ?? myPhleboProfile?.chillerTempCelsius ?? 4.2)
@@ -537,25 +982,44 @@ export default function App() {
         operatorId: session.firebaseUser.uid,
         operatorName: phleboName,
         operatorRole: UserRole.PHLEBOTOMIST,
-        notes: `Claimed from open pool by ${phleboName} (${effectivePhleboId})`,
+        notes: `Accepted live broadcast by ${phleboName} (${effectivePhleboId})`,
       };
 
-      await updateDoc(doc(db, 'orders', order.id), {
-        phlebotomistId: effectivePhleboId,
-        phlebotomistName: phleboName,
-        status: OrderStatus.ASSIGNED_TO_PHLEBO,
-        custodyHistory: [...(order.custodyHistory || []), evt],
-        updatedAt: now,
+      // Atomic Firestore Transaction prevents race conditions across concurrent riders!
+      await runTransaction(db, async (tx) => {
+        const orderRef = doc(db, 'orders', order.id);
+        const snap = await tx.get(orderRef);
+        if (!snap.exists()) {
+          throw new Error('This pickup booking no longer exists.');
+        }
+        const latest = snap.data() as PickupOrder;
+        if (latest.status !== OrderStatus.READY_FOR_PICKUP || Boolean(latest.phlebotomistId)) {
+          throw new Error('Already accepted by another nearby phlebotomist!');
+        }
+        tx.update(orderRef, {
+          phlebotomistId: effectivePhleboId,
+          phlebotomistName: phleboName,
+          status: OrderStatus.ASSIGNED_TO_PHLEBO,
+          phleboLiveLocation: {
+            latitude: riderLocation.latitude,
+            longitude: riderLocation.longitude,
+            updatedAt: now,
+          },
+          custodyHistory: [...(latest.custodyHistory || []), evt],
+          updatedAt: now,
+        });
       });
 
       await addDoc(collection(db, 'custody_events'), evt);
 
+      // Notify both Small Lab and Target Reference Lab in real time
       await addDoc(collection(db, 'notifications'), {
-        title: `Pickup Assigned: ${order.orderNumber}`,
-        message: `${phleboName} (${effectivePhleboId}) accepted sample collection from ${order.smallLabName}.`,
+        title: `Rider Assigned: ${order.orderNumber}`,
+        message: `${phleboName} (${effectivePhleboId}) accepted pickup at ${order.smallLabName} — live GPS enabled.`,
         category: NotificationCategory.PICKUP_ASSIGNED,
-        priority: NotificationPriority.NORMAL,
+        priority: NotificationPriority.HIGH,
         recipientRole: UserRole.SMALL_LAB,
+        labId: order.smallLabId,
         orderId: order.id,
         channels: [NotificationChannel.IN_APP],
         read: false,
@@ -563,6 +1027,23 @@ export default function App() {
         pushSent: false,
         createdAt: now,
       });
+
+      if (order.dropType !== 'SELF_DROP' && order.dropType !== 'CUSTOM_ADDRESS' && order.targetLabId) {
+        await addDoc(collection(db, 'notifications'), {
+          title: `Courier En Route for Collection: ${order.orderNumber}`,
+          message: `${phleboName} (${effectivePhleboId}) claimed pickup from ${order.smallLabName} -> ${order.targetLabName}.`,
+          category: NotificationCategory.PICKUP_ASSIGNED,
+          priority: NotificationPriority.NORMAL,
+          recipientRole: UserRole.LARGE_LAB,
+          labId: order.targetLabId,
+          orderId: order.id,
+          channels: [NotificationChannel.IN_APP],
+          read: false,
+          emailSent: false,
+          pushSent: false,
+          createdAt: now,
+        });
+      }
 
       openOrderWorkflow({
         ...order,
@@ -573,7 +1054,7 @@ export default function App() {
     } catch (err) {
       showDynamicAlert({
         variant: 'error',
-        title: 'Claim Failed',
+        title: 'Broadcast Already Claimed',
         message: (err as Error).message || 'Could not claim this booking right now. Please try again.',
       });
     } finally {
@@ -613,6 +1094,9 @@ export default function App() {
               updatedAt: now,
             });
             await addDoc(collection(db, 'custody_events'), evt);
+            setDismissedBroadcastIds((prev) =>
+              prev.includes(order.id) ? prev : [...prev, order.id]
+            );
             if (selectedOrderId === order.id) {
               setSelectedOrderId(null);
               setCurrentScreen('BOOKING_REQUESTS');
@@ -636,17 +1120,61 @@ export default function App() {
 
   async function handleConfirmCollection(order: PickupOrder) {
     if (!session?.firebaseUser) return;
-    const cleanBarcode = scannedBarcode.trim();
     const numericTemp = Number.parseFloat(pickupTempInput);
 
-    if (!cleanBarcode) {
+    // Build sibling specimens state for complete duplicate / tube mismatch checks
+    const siblingList = order.specimens.map((s) => {
+      const draft = specimenDrafts[s.id];
+      return {
+        ...s,
+        scannedBarcode: draft?.barcode?.trim() || '',
+        scannedTubeType: draft?.usedTube || s.tubeType,
+      };
+    });
+
+    const verifiedSpecimens: SpecimenItem[] = [];
+    for (const s of order.specimens) {
+      const draft = specimenDrafts[s.id] || {
+        barcode: s.scannedBarcode || '',
+        usedTube: s.tubeType,
+      };
+      const check = validateTubeBarcodeScan({
+        scannedBarcode: draft.barcode,
+        expectedSpecimen: s,
+        selectedTubeUsed: draft.usedTube,
+        siblingSpecimens: siblingList,
+      });
+
+      if (!check.valid) {
+        showDynamicAlert({
+          variant: check.status === 'MISMATCH' ? 'error' : 'warning',
+          title:
+            check.status === 'MISMATCH'
+              ? `Wrong Tube / Barcode for ${s.testCode}`
+              : `Scan Barcode for ${s.testCode}`,
+          message: check.message,
+        });
+        return;
+      }
+
+      verifiedSpecimens.push({
+        ...s,
+        scannedBarcode: draft.barcode.trim(),
+        scannedTubeType: check.detectedTube,
+        validationStatus: 'VERIFIED',
+        collectedAt: new Date().toISOString(),
+      });
+    }
+
+    if (!samplePhotoUrl.trim()) {
       showDynamicAlert({
         variant: 'warning',
-        title: 'Specimen Barcode Required',
-        message: 'Scan or enter the specimen tube barcode before marking pickup complete.',
+        title: 'Sample Photo Required',
+        message: 'Capture or upload a clear photo of all collected specimen tubes before confirming pickup.',
       });
       return;
     }
+
     if (Number.isNaN(numericTemp)) {
       showDynamicAlert({
         variant: 'warning',
@@ -659,6 +1187,9 @@ export default function App() {
     setSubmittingAction(true);
     try {
       const now = new Date().toISOString();
+      const barcodeSummary = verifiedSpecimens
+        .map((s) => `${s.testCode}:${s.scannedBarcode}`)
+        .join(', ');
       const evt: CustodyEvent = {
         id: `EVT-${Date.now()}`,
         orderId: order.id,
@@ -668,11 +1199,18 @@ export default function App() {
         operatorName: phleboName,
         operatorRole: UserRole.PHLEBOTOMIST,
         temperatureCelsius: numericTemp,
-        notes: `Barcode ${cleanBarcode} scanned at ${numericTemp}°C by ${phleboName}`,
+        notes: `All ${verifiedSpecimens.length} tubes barcode-verified (${barcodeSummary}) + photo uploaded at ${numericTemp}°C by ${phleboName}`,
       };
 
       await updateDoc(doc(db, 'orders', order.id), {
         status: OrderStatus.PICKED_UP,
+        specimens: verifiedSpecimens,
+        sampleCollectionPhotoUrl: samplePhotoUrl.trim(),
+        phleboLiveLocation: {
+          latitude: riderLocation.latitude,
+          longitude: riderLocation.longitude,
+          updatedAt: now,
+        },
         actualPickupAt: now,
         arrivalTemperatureCelsius: numericTemp,
         custodyHistory: [...(order.custodyHistory || []), evt],
@@ -681,11 +1219,12 @@ export default function App() {
       await addDoc(collection(db, 'custody_events'), evt);
 
       await addDoc(collection(db, 'notifications'), {
-        title: `Sample Collected: ${order.orderNumber}`,
-        message: `${phleboName} collected barcode ${cleanBarcode} (${numericTemp}°C) en route to ${order.targetLabName}.`,
+        title: `Sample Collected & Photo Proof: ${order.orderNumber}`,
+        message: `${phleboName} verified ${verifiedSpecimens.length} tube barcode(s) (${numericTemp}°C) en route to ${order.targetLabName}.`,
         category: NotificationCategory.SAMPLE_COLLECTED,
         priority: NotificationPriority.NORMAL,
         recipientRole: UserRole.SMALL_LAB,
+        labId: order.smallLabId,
         orderId: order.id,
         channels: [NotificationChannel.IN_APP],
         read: false,
@@ -693,6 +1232,23 @@ export default function App() {
         pushSent: false,
         createdAt: now,
       });
+
+      if (order.dropType !== 'SELF_DROP' && order.dropType !== 'CUSTOM_ADDRESS' && order.targetLabId) {
+        await addDoc(collection(db, 'notifications'), {
+          title: `Samples Picked Up En Route: ${order.orderNumber}`,
+          message: `${phleboName} picked up ${verifiedSpecimens.length} barcode-verified specimen(s) (${numericTemp}°C) heading to ${order.targetLabName}.`,
+          category: NotificationCategory.SAMPLE_COLLECTED,
+          priority: NotificationPriority.NORMAL,
+          recipientRole: UserRole.LARGE_LAB,
+          labId: order.targetLabId,
+          orderId: order.id,
+          channels: [NotificationChannel.IN_APP],
+          read: false,
+          emailSent: false,
+          pushSent: false,
+          createdAt: now,
+        });
+      }
 
       if (numericTemp < 2 || numericTemp > 8) {
         await addDoc(collection(db, 'notifications'), {
@@ -739,9 +1295,9 @@ export default function App() {
 
       showDynamicAlert({
         variant: numericTemp < 2 || numericTemp > 8 ? 'warning' : 'success',
-        title: 'Barcode Verified & Collected',
-        message: `Specimen ${cleanBarcode} marked Picked Up at ${numericTemp}°C.`,
-        detail: `Proceed to ${order.targetLabName} for 5-digit Handover OTP.`,
+        title: 'Tubes Verified & Photo Uploaded',
+        message: `${verifiedSpecimens.length} tube(s) verified & marked Picked Up at ${numericTemp}°C.`,
+        detail: `Navigate to ${order.targetLabName} for 5-digit Handover OTP.`,
       });
     } catch (err) {
       showDynamicAlert({
@@ -810,19 +1366,37 @@ export default function App() {
       });
       await addDoc(collection(db, 'custody_events'), evt);
 
-      await addDoc(collection(db, 'notifications'), {
-        title: `Specimen Arrived: ${order.orderNumber}`,
-        message: `${phleboName} delivered ${order.specimens.map((s) => s.testCode).join(', ')} at ${numericTemp}°C. Ready for QC.`,
-        category: NotificationCategory.SAMPLE_COLLECTED,
-        priority: NotificationPriority.HIGH,
-        recipientRole: UserRole.LARGE_LAB,
-        orderId: order.id,
-        channels: [NotificationChannel.IN_APP],
-        read: false,
-        emailSent: false,
-        pushSent: false,
-        createdAt: now,
-      });
+      if (order.dropType === 'SELF_DROP' || order.dropType === 'CUSTOM_ADDRESS') {
+        await addDoc(collection(db, 'notifications'), {
+          title: `Sample Dropped: ${order.orderNumber}`,
+          message: `${phleboName} delivered ${order.specimens.map((s) => s.testCode).join(', ')} to ${order.targetLabName} at ${numericTemp}°C. Ready to mark received & process.`,
+          category: NotificationCategory.SAMPLE_COLLECTED,
+          priority: NotificationPriority.HIGH,
+          recipientRole: UserRole.SMALL_LAB,
+          labId: order.smallLabId,
+          orderId: order.id,
+          channels: [NotificationChannel.IN_APP],
+          read: false,
+          emailSent: false,
+          pushSent: false,
+          createdAt: now,
+        });
+      } else {
+        await addDoc(collection(db, 'notifications'), {
+          title: `Specimen Arrived: ${order.orderNumber}`,
+          message: `${phleboName} delivered ${order.specimens.map((s) => s.testCode).join(', ')} at ${numericTemp}°C to ${order.targetLabName}. Ready for QC.`,
+          category: NotificationCategory.SAMPLE_COLLECTED,
+          priority: NotificationPriority.HIGH,
+          recipientRole: UserRole.LARGE_LAB,
+          labId: order.targetLabId,
+          orderId: order.id,
+          channels: [NotificationChannel.IN_APP],
+          read: false,
+          emailSent: false,
+          pushSent: false,
+          createdAt: now,
+        });
+      }
 
       setLastReceipt({
         orderNumber: order.orderNumber,
@@ -1145,12 +1719,21 @@ export default function App() {
    * 1. SCREEN 1: BOOKING REQUESTS (LIVE POOL / ACTIVE / COMPLETED)
    * ========================================================================= */
   const renderBookingRequestsScreen = () => {
-    const displayedOrders =
+    const poolEntries = openPoolWithDistance.filter(
+      (x) => !radiusOnlyFilter || x.inBroadcastRadius
+    );
+    const inRadiusCount = openPoolWithDistance.filter((x) => x.inBroadcastRadius).length;
+    const displayedEntries =
       requestTab === 'new'
-        ? openPoolOrders
-        : requestTab === 'active'
-        ? activeAssignedOrders
-        : completedAssignedOrders;
+        ? poolEntries
+        : (requestTab === 'active' ? activeAssignedOrders : completedAssignedOrders).map(
+            (order) => ({
+              order,
+              distFromRiderKm: undefined as number | undefined,
+              inBroadcastRadius: false,
+              maxRadiusKm: order.broadcastRadiusKm || 5,
+            })
+          );
 
     return (
       <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
@@ -1215,6 +1798,30 @@ export default function App() {
         </View>
 
         <View style={styles.bodyContainer}>
+          <View style={styles.gpsTelemetryBar}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.gpsTelemetryTitle}>
+                📍 {gpsSourceLabel} ({riderLocation.latitude.toFixed(4)},{' '}
+                {riderLocation.longitude.toFixed(4)})
+              </Text>
+              <Text style={styles.gpsTelemetrySub}>
+                {isOnline
+                  ? `Live 1–5 km broadcast radar active • ${inRadiusCount} nearby open request(s)`
+                  : 'Switch On Duty to receive live nearby pickup popups'}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.gpsPickerBtn}
+              onPress={() => {
+                setManualLatInput(String(riderLocation.latitude));
+                setManualLngInput(String(riderLocation.longitude));
+                setShowLocationPickerModal(true);
+              }}
+            >
+              <Text style={styles.gpsPickerBtnText}>Set Zone / GPS</Text>
+            </TouchableOpacity>
+          </View>
+
           {!effectivePhleboId ? (
             <View style={styles.warningBox}>
               <Text style={styles.warningBoxText}>
@@ -1266,11 +1873,44 @@ export default function App() {
             </TouchableOpacity>
           </View>
 
-          {displayedOrders.length === 0 ? (
+          {requestTab === 'new' ? (
+            <View style={styles.radiusFilterRow}>
+              <TouchableOpacity
+                style={[styles.radiusFilterChip, !radiusOnlyFilter && styles.radiusFilterChipActive]}
+                onPress={() => setRadiusOnlyFilter(false)}
+              >
+                <Text
+                  style={[
+                    styles.radiusFilterText,
+                    !radiusOnlyFilter && styles.radiusFilterTextActive,
+                  ]}
+                >
+                  All Open Pool ({openPoolWithDistance.length})
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.radiusFilterChip, radiusOnlyFilter && styles.radiusFilterChipActive]}
+                onPress={() => setRadiusOnlyFilter(true)}
+              >
+                <Text
+                  style={[
+                    styles.radiusFilterText,
+                    radiusOnlyFilter && styles.radiusFilterTextActive,
+                  ]}
+                >
+                  🔥 Within 1–5 km Radar ({inRadiusCount})
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
+          {displayedEntries.length === 0 ? (
             <View style={styles.emptyBox}>
               <Text style={styles.emptyTitle}>
                 {requestTab === 'new'
-                  ? 'No Unassigned Pool Bookings'
+                  ? radiusOnlyFilter
+                    ? 'No Open Bookings Within Broadcast Radius'
+                    : 'No Unassigned Pool Bookings'
                   : requestTab === 'active'
                   ? 'No Active Trips Right Now'
                   : 'No Completed Deliveries Yet'}
@@ -1280,24 +1920,67 @@ export default function App() {
               </Text>
             </View>
           ) : (
-            displayedOrders.map((order) => {
+            displayedEntries.map(({ order, distFromRiderKm, inBroadcastRadius, maxRadiusKm }) => {
               const isOpenPool = requestTab === 'new';
               const isInTransit =
                 order.status === OrderStatus.PICKED_UP ||
                 order.status === OrderStatus.IN_TRANSIT;
               const isPaidOrder = order.paymentStatus === 'PAID';
               const collectableInr = order.totalAmountInr || order.courierFeeInr || 0;
+              const specimens = order.specimens || [];
+              const dropBadge =
+                order.dropType === 'SELF_DROP'
+                  ? 'Return to Small Lab'
+                  : order.dropType === 'CUSTOM_ADDRESS'
+                  ? 'Custom Drop'
+                  : 'Reference Hub';
+
               return (
                 <View key={order.id} style={styles.bookingCard}>
                   <View style={styles.bookingCardTop}>
-                    <View>
+                    <View style={{ flex: 1, paddingRight: 8 }}>
                       <Text style={styles.bookingTitle}>
                         {isOpenPool ? 'Open Pickup Request' : formatOrderStatus(order.status)}
                       </Text>
                       <Text style={styles.bookingId}>
                         ID: {order.orderNumber} • {order.patient.pseudonym}
                       </Text>
+
+                      <View style={styles.badgeWrapRow}>
+                        {isOpenPool && distFromRiderKm !== undefined ? (
+                          <View
+                            style={[
+                              styles.distanceBadge,
+                              inBroadcastRadius && styles.distanceBadgeHot,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.distanceBadgeText,
+                                inBroadcastRadius && styles.distanceBadgeTextHot,
+                              ]}
+                            >
+                              {inBroadcastRadius
+                                ? `🔥 LIVE IN ${maxRadiusKm} KM (${distFromRiderKm} km)`
+                                : `${distFromRiderKm} km from you`}
+                            </Text>
+                          </View>
+                        ) : null}
+
+                        {typeof order.distanceKm === 'number' && order.distanceKm > 0 ? (
+                          <View style={styles.distanceBadge}>
+                            <Text style={styles.distanceBadgeText}>
+                              Route {order.distanceKm} km
+                            </Text>
+                          </View>
+                        ) : null}
+
+                        <View style={styles.distanceBadge}>
+                          <Text style={styles.distanceBadgeText}>{dropBadge}</Text>
+                        </View>
+                      </View>
                     </View>
+
                     <View style={{ alignItems: 'flex-end' }}>
                       <View style={{ flexDirection: 'row', gap: 6, marginBottom: 4 }}>
                         <View
@@ -1352,9 +2035,22 @@ export default function App() {
                     </View>
                   </View>
 
-                  <Text style={styles.testsPreview}>
-                    Specimens: {order.specimens.map((s) => `${s.testCode} (${s.barcode})`).join(', ')}
-                  </Text>
+                  <View style={styles.tubePillRow}>
+                    {specimens.map((s) => {
+                      const meta = TUBE_METADATA[s.tubeType] || TUBE_METADATA[TubeType.SERUM_RED_GOLD];
+                      return (
+                        <View
+                          key={s.id}
+                          style={[styles.specimenTagPill, { backgroundColor: meta.bgHex }]}
+                        >
+                          <View style={[styles.tubeColorDot, { backgroundColor: meta.colorHex }]} />
+                          <Text style={[styles.specimenTagText, { color: meta.colorHex }]}>
+                            {s.testCode} • {meta.shortTag}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
 
                   {isOpenPool ? (
                     <View style={styles.actionsRow}>
@@ -1428,6 +2124,7 @@ export default function App() {
     if (!selectedOrder) {
       return renderBookingRequestsScreen();
     }
+    const specimens = selectedOrder.specimens || [];
     return (
       <ScrollView style={styles.scrollArea}>
         <View style={styles.navBarHeader}>
@@ -1485,24 +2182,67 @@ export default function App() {
             <View style={styles.timelineItem}>
               <View style={[styles.dotMarker, { backgroundColor: COLORS.successGreen }]} />
               <View style={{ marginLeft: 10, flex: 1 }}>
-                <Text style={styles.timelineLabel}>Drop Reference Hub</Text>
+                <Text style={styles.timelineLabel}>
+                  {selectedOrder.dropType === 'SELF_DROP'
+                    ? 'Return to Small Lab'
+                    : selectedOrder.dropType === 'CUSTOM_ADDRESS'
+                    ? 'Custom Drop Address'
+                    : 'Drop Reference Hub'}
+                </Text>
                 <Text style={styles.timelineTitle}>{selectedOrder.targetLabName}</Text>
                 <Text style={styles.timelineSub}>{selectedOrder.deliveryLocation.address}</Text>
               </View>
             </View>
+
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+              <TouchableOpacity
+                style={styles.navMapButton}
+                onPress={() =>
+                  openDirectionsMap(
+                    selectedOrder.pickupLocation?.latitude,
+                    selectedOrder.pickupLocation?.longitude,
+                    selectedOrder.pickupLocation?.address
+                  )
+                }
+              >
+                <Text style={styles.navMapButtonText}>
+                  🗺️ Navigate to Pickup Lab (Google Maps)
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           <View style={styles.infoCard}>
-            <Text style={styles.infoCardLabel}>Required Diagnostic Specimens</Text>
-            <Text style={styles.infoCardValue}>
-              {selectedOrder.specimens
-                .map((s) => `${s.testCode} (${formatLabel(s.tubeType)}) [${s.barcode}]`)
-                .join('\n')}
+            <Text style={styles.infoCardLabel}>
+              Required Diagnostic Specimens ({specimens.length})
             </Text>
+            <View style={{ gap: 8, marginTop: 4 }}>
+              {specimens.map((s) => {
+                const meta = TUBE_METADATA[s.tubeType] || TUBE_METADATA[TubeType.SERUM_RED_GOLD];
+                return (
+                  <View key={s.id} style={styles.detailSpecRow}>
+                    <View style={[styles.tubeColorDot, { backgroundColor: meta.colorHex }]} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.detailSpecTitle}>
+                        {s.testCode} — {s.testName}
+                      </Text>
+                      <Text style={styles.detailSpecSub}>
+                        {meta.label} • Expected Tag: {s.barcode}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
             <View style={{ height: 1, backgroundColor: COLORS.borderLight, marginVertical: 12 }} />
-            <Text style={styles.infoCardLabel}>Courier Fee • Priority</Text>
+            <Text style={styles.infoCardLabel}>Courier Fee • Route Distance • Priority</Text>
             <Text style={[styles.infoCardValue, { color: COLORS.primaryTeal }]}>
-              {formatInr(selectedOrder.courierFeeInr || 0)} • {formatLabel(selectedOrder.priority)}
+              {formatInr(selectedOrder.courierFeeInr || 0)}
+              {typeof selectedOrder.distanceKm === 'number' && selectedOrder.distanceKm > 0
+                ? ` • ${selectedOrder.distanceKm} km`
+                : ''}
+              {' • '}
+              {formatLabel(selectedOrder.priority)}
             </Text>
             <View style={{ height: 1, backgroundColor: COLORS.borderLight, marginVertical: 12 }} />
             <Text style={styles.infoCardLabel}>Booking Payment Collection</Text>
@@ -1558,7 +2298,7 @@ export default function App() {
             style={styles.ctaButton}
             onPress={() => setCurrentScreen('COLLECT_SAMPLE')}
           >
-            <Text style={styles.ctaButtonText}>Proceed to Barcode Scan &amp; Collect</Text>
+            <Text style={styles.ctaButtonText}>Proceed to Barcode Scan &amp; Photo ✓</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -1566,48 +2306,299 @@ export default function App() {
   };
 
   /* =========================================================================
-   * 3. SCREEN 3: SAMPLE COLLECTION & BARCODE ENTRY
+   * 3. SCREEN 3: SAMPLE COLLECTION, TUBE VALIDATION & COLLECTION PHOTO PROOF
    * ========================================================================= */
   const renderCollectSampleScreen = () => {
     if (!selectedOrder) {
       return renderBookingRequestsScreen();
     }
+
+    const specimens = selectedOrder.specimens || [];
+    const siblingSpecimens = specimens.map((s) => {
+      const draft = specimenDrafts[s.id];
+      return {
+        ...s,
+        scannedBarcode: draft?.barcode?.trim() || '',
+        scannedTubeType: draft?.usedTube || s.tubeType,
+      };
+    });
+
+    const verifiedCount = specimens.filter((s) => {
+      const draft = specimenDrafts[s.id] || {
+        barcode: s.scannedBarcode || '',
+        usedTube: s.scannedTubeType || s.tubeType || TubeType.SERUM_RED_GOLD,
+      };
+      return validateTubeBarcodeScan({
+        scannedBarcode: draft.barcode,
+        expectedSpecimen: s,
+        selectedTubeUsed: draft.usedTube,
+        siblingSpecimens,
+      }).valid;
+    }).length;
+
     return (
-      <ScrollView style={styles.scrollArea}>
+      <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
         <View style={styles.navBarHeader}>
           <TouchableOpacity onPress={() => setCurrentScreen('BOOKING_DETAILS')}>
             <Text style={styles.navBarBackArrow}>←</Text>
           </TouchableOpacity>
           <View style={{ flex: 1, alignItems: 'center' }}>
-            <Text style={styles.navBarTitle}>Collect Sample</Text>
-            <Text style={styles.navBarSubtitle}>{selectedOrder.orderNumber}</Text>
+            <Text style={styles.navBarTitle}>Collect Sample &amp; Verify</Text>
+            <Text style={styles.navBarSubtitle}>
+              {selectedOrder.orderNumber} • {verifiedCount}/{specimens.length} Tubes Verified
+            </Text>
           </View>
           <View style={{ width: 24 }} />
         </View>
 
-        <View style={[styles.bodyContainer, { alignItems: 'center' }]}>
-          <View style={styles.vialGraphicFrame}>
-            <Text style={{ fontSize: 44, marginBottom: 8 }}>🧪</Text>
-            <View style={styles.barcodeReticle} />
-            <Text style={styles.scannedBarcodePill}>
-              {scannedBarcode || selectedOrder.specimens[0]?.barcode || 'No Barcode'}
+        <View style={styles.bodyContainer}>
+          <View style={styles.verifyHintCard}>
+            <Text style={styles.verifyHintTitle}>
+              🧪 Per-Tube Barcode &amp; Vacutainer Validation
+            </Text>
+            <Text style={styles.verifyHintText}>
+              Scan each specimen tube barcode and confirm the physical tube cap color used. Any
+              wrong tube or duplicate barcode conflict is flagged immediately.
             </Text>
           </View>
 
-          <Text style={styles.collectTitle}>Verify Specimen Barcode &amp; Temp</Text>
-          <Text style={styles.collectSubtitle}>
-            Confirm vial barcode from {selectedOrder.smallLabName} and log chiller box reading.
-          </Text>
+          {specimens.map((spec, idx) => {
+            const draft = specimenDrafts[spec.id] || {
+              barcode: spec.scannedBarcode || '',
+              usedTube: spec.scannedTubeType || spec.tubeType || TubeType.SERUM_RED_GOLD,
+            };
+            const validation = validateTubeBarcodeScan({
+              scannedBarcode: draft.barcode,
+              expectedSpecimen: spec,
+              selectedTubeUsed: draft.usedTube,
+              siblingSpecimens,
+            });
+            const expectedMeta =
+              TUBE_METADATA[validation.expectedTube] || TUBE_METADATA[TubeType.SERUM_RED_GOLD];
 
-          <View style={{ width: '100%', marginBottom: 14 }}>
-            <Text style={styles.inputLabelSm}>Specimen Tube Barcode</Text>
-            <TextInput
-              style={styles.fieldInput}
-              value={scannedBarcode}
-              onChangeText={setScannedBarcode}
-              placeholder={selectedOrder.specimens[0]?.barcode || 'Enter vial barcode'}
-              editable={showManualEntry || !selectedOrder.specimens[0]?.barcode}
-            />
+            const cardBorderColor =
+              validation.status === 'VERIFIED'
+                ? '#16A34A'
+                : validation.status === 'MISMATCH'
+                ? '#DC2626'
+                : COLORS.borderLight;
+
+            const statusBg =
+              validation.status === 'VERIFIED'
+                ? '#DCFCE7'
+                : validation.status === 'MISMATCH'
+                ? '#FEE2E2'
+                : '#FEF3C7';
+            const statusColor =
+              validation.status === 'VERIFIED'
+                ? '#15803D'
+                : validation.status === 'MISMATCH'
+                ? '#B91C1C'
+                : '#B45309';
+
+            return (
+              <View
+                key={spec.id}
+                style={[styles.specimenVerifyCard, { borderColor: cardBorderColor }]}
+              >
+                <View style={styles.specimenCardTopRow}>
+                  <View style={{ flex: 1, paddingRight: 8 }}>
+                    <Text style={styles.specimenCardTitle}>
+                      #{idx + 1} {spec.testCode} — {spec.testName}
+                    </Text>
+                    <Text style={styles.specimenCardSub}>
+                      Expected: {expectedMeta.label} • Tag: {spec.barcode}
+                    </Text>
+                  </View>
+                  <View style={[styles.pickupTimeBadge, { backgroundColor: statusBg, marginBottom: 0 }]}>
+                    <Text style={[styles.pickupTimeText, { color: statusColor }]}>
+                      {validation.status === 'VERIFIED'
+                        ? '✓ VERIFIED'
+                        : validation.status === 'MISMATCH'
+                        ? '⚠ MISMATCH'
+                        : '⏳ PENDING'}
+                    </Text>
+                  </View>
+                </View>
+
+                <View
+                  style={[
+                    styles.validationBanner,
+                    {
+                      backgroundColor:
+                        validation.status === 'VERIFIED'
+                          ? '#F0FDF4'
+                          : validation.status === 'MISMATCH'
+                          ? '#FEF2F2'
+                          : '#F8FAFC',
+                      borderColor:
+                        validation.status === 'VERIFIED'
+                          ? '#BBF7D0'
+                          : validation.status === 'MISMATCH'
+                          ? '#FECACA'
+                          : COLORS.borderLight,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.validationBannerText,
+                      {
+                        color:
+                          validation.status === 'VERIFIED'
+                            ? '#166534'
+                            : validation.status === 'MISMATCH'
+                            ? '#991B1B'
+                            : COLORS.textSecondary,
+                      },
+                    ]}
+                  >
+                    {validation.message}
+                  </Text>
+                </View>
+
+                <Text style={styles.inputLabelSm}>Scanned Barcode</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={draft.barcode}
+                  onChangeText={(txt) => updateSpecimenDraft(spec.id, { barcode: txt })}
+                  placeholder={`Scan or enter ${spec.barcode}`}
+                  autoCapitalize="characters"
+                />
+
+                <View style={styles.scanActionRow}>
+                  <TouchableOpacity
+                    style={styles.scanCamButton}
+                    onPress={() =>
+                      setCameraModal({
+                        mode: 'BARCODE',
+                        specimenId: spec.id,
+                        specimen: spec,
+                      })
+                    }
+                  >
+                    <Text style={styles.scanCamButtonText}>📷 Scan Camera</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.matchTagChip}
+                    onPress={() =>
+                      updateSpecimenDraft(spec.id, {
+                        barcode: spec.barcode,
+                        usedTube: spec.tubeType || TubeType.SERUM_RED_GOLD,
+                      })
+                    }
+                  >
+                    <Text style={styles.matchTagChipText}>Match Barcode ({spec.barcode})</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={[styles.inputLabelSm, { marginTop: 12 }]}>
+                  Physical Vacutainer / Cap Used
+                </Text>
+                <View style={styles.tubeChipsWrap}>
+                  {(Object.values(TubeType) as TubeType[]).map((t) => {
+                    const meta = TUBE_METADATA[t];
+                    const selected = draft.usedTube === t;
+                    return (
+                      <TouchableOpacity
+                        key={t}
+                        style={[
+                          styles.tubeChip,
+                          selected && {
+                            backgroundColor: meta.bgHex,
+                            borderColor: meta.colorHex,
+                            borderWidth: 1.5,
+                          },
+                        ]}
+                        onPress={() => updateSpecimenDraft(spec.id, { usedTube: t })}
+                      >
+                        <View style={[styles.tubeColorDot, { backgroundColor: meta.colorHex }]} />
+                        <Text
+                          style={[
+                            styles.tubeChipText,
+                            selected && { color: meta.colorHex, fontWeight: '700' },
+                          ]}
+                        >
+                          {meta.shortTag} ({meta.capColorName.replace(' Cap', '')})
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            );
+          })}
+
+          <View style={styles.photoProofCard}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={styles.specimenCardTitle}>📸 Collected Sample Photo Proof</Text>
+              <View
+                style={[
+                  styles.pickupTimeBadge,
+                  {
+                    marginBottom: 0,
+                    backgroundColor: samplePhotoUrl ? '#DCFCE7' : '#FFEDD5',
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.pickupTimeText,
+                    { color: samplePhotoUrl ? '#15803D' : '#C2410C' },
+                  ]}
+                >
+                  {samplePhotoUrl ? '✓ Uploaded' : 'Mandatory'}
+                </Text>
+              </View>
+            </View>
+            <Text style={[styles.specimenCardSub, { marginTop: 4, marginBottom: 12 }]}>
+              Take or upload a clear photo of all labeled tubes collected at {selectedOrder.smallLabName}.
+            </Text>
+
+            {samplePhotoUrl ? (
+              <View style={{ marginBottom: 12 }}>
+                <Image
+                  source={{ uri: samplePhotoUrl }}
+                  style={styles.samplePhotoPreview}
+                  resizeMode="cover"
+                />
+                <TouchableOpacity
+                  style={{ marginTop: 6, alignSelf: 'flex-end' }}
+                  onPress={() => setSamplePhotoUrl('')}
+                >
+                  <Text style={{ color: COLORS.errorRed, fontSize: 12, fontWeight: '600' }}>
+                    Remove Photo
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
+            <View style={styles.actionsRow}>
+              <TouchableOpacity
+                style={[styles.scanCamButton, { flex: 1 }, uploadingPhoto && { opacity: 0.65 }]}
+                disabled={uploadingPhoto}
+                onPress={() => {
+                  if (Platform.OS === 'web') {
+                    setCameraModal({ mode: 'PHOTO' });
+                  } else {
+                    handleUploadSamplePhotoFromFile(selectedOrder.id);
+                  }
+                }}
+              >
+                <Text style={styles.scanCamButtonText}>
+                  {uploadingPhoto ? 'Uploading...' : '📷 Camera Photo'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.btnSecondary, uploadingPhoto && { opacity: 0.65 }]}
+                disabled={uploadingPhoto}
+                onPress={() => handleUploadSamplePhotoFromFile(selectedOrder.id)}
+              >
+                <Text style={styles.btnSecondaryText}>📁 Upload Photo File</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           <View style={{ width: '100%', marginBottom: 20 }}>
@@ -1622,21 +2613,14 @@ export default function App() {
           </View>
 
           <TouchableOpacity
-            style={[styles.ctaButton, submittingAction && { opacity: 0.65 }]}
-            disabled={submittingAction}
+            style={[styles.ctaButton, (submittingAction || uploadingPhoto) && { opacity: 0.65 }]}
+            disabled={submittingAction || uploadingPhoto}
             onPress={() => void handleConfirmCollection(selectedOrder)}
           >
             <Text style={styles.ctaButtonText}>
-              {submittingAction ? 'Saving Update...' : 'Confirm Pickup & Log Custody ✓'}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={{ marginTop: 14 }}
-            onPress={() => setShowManualEntry(!showManualEntry)}
-          >
-            <Text style={{ color: COLORS.primaryTeal, fontWeight: '600', fontSize: 14 }}>
-              {showManualEntry ? 'Lock Expected Specimen Barcode' : 'Override Barcode Manually'}
+              {submittingAction
+                ? 'Saving Verified Specimens...'
+                : `Confirm Pickup (${verifiedCount}/${specimens.length}) & Log Custody ✓`}
             </Text>
           </TouchableOpacity>
         </View>
@@ -1651,6 +2635,10 @@ export default function App() {
     if (!selectedOrder) {
       return renderBookingRequestsScreen();
     }
+    const verifiedSpecCount = (selectedOrder.specimens || []).filter(
+      (s) => s.validationStatus === 'VERIFIED'
+    ).length;
+
     return (
       <ScrollView style={styles.scrollArea}>
         <View style={styles.navBarHeader}>
@@ -1668,12 +2656,49 @@ export default function App() {
           <View style={styles.dropLabCard}>
             <Text style={{ fontSize: 36, marginBottom: 8 }}>🏢</Text>
             <Text style={styles.dropLabTitle}>{selectedOrder.targetLabName}</Text>
-            <Text style={styles.dropLabSub}>{selectedOrder.deliveryLocation.address}</Text>
+            <Text style={[styles.dropLabSub, { textAlign: 'center' }]}>
+              {selectedOrder.deliveryLocation.address}
+            </Text>
+
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10, justifyContent: 'center' }}>
+              <View style={[styles.distanceBadge, { backgroundColor: '#EFF6FF' }]}>
+                <Text style={[styles.distanceBadgeText, { color: '#1D4ED8' }]}>
+                  {selectedOrder.dropType === 'SELF_DROP'
+                    ? 'Self-Drop to Small Lab'
+                    : selectedOrder.dropType === 'CUSTOM_ADDRESS'
+                    ? 'Custom Drop Address'
+                    : 'Large Lab Reference Hub'}
+                </Text>
+              </View>
+              {selectedOrder.sampleCollectionPhotoUrl ? (
+                <View style={[styles.distanceBadge, { backgroundColor: '#DCFCE7' }]}>
+                  <Text style={[styles.distanceBadgeText, { color: '#15803D' }]}>
+                    ✓ Photo &amp; {verifiedSpecCount}/{(selectedOrder.specimens || []).length} Tubes Verified
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+
+            <TouchableOpacity
+              style={[styles.navMapButton, { marginTop: 12, width: '100%' }]}
+              onPress={() =>
+                openDirectionsMap(
+                  selectedOrder.deliveryLocation?.latitude,
+                  selectedOrder.deliveryLocation?.longitude,
+                  selectedOrder.deliveryLocation?.address
+                )
+              }
+            >
+              <Text style={styles.navMapButtonText}>
+                🗺️ Navigate to Drop Center (Google Maps)
+              </Text>
+            </TouchableOpacity>
+
             <View
               style={[
                 styles.pickupTimeBadge,
                 {
-                  marginTop: 10,
+                  marginTop: 12,
                   marginBottom: 0,
                   backgroundColor: selectedOrder.paymentStatus === 'PAID' ? '#DCFCE7' : '#FFEDD5',
                 },
@@ -2484,6 +3509,323 @@ export default function App() {
             </View>
           </View>
         </View>
+      </Modal>
+
+      {/* Rapido-Style 1–5 KM Live Broadcast Dispatch Modal */}
+      <Modal
+        visible={Boolean(activeBroadcastMatch)}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          if (activeBroadcastMatch) {
+            setDismissedBroadcastIds((prev) =>
+              prev.includes(activeBroadcastMatch.order.id)
+                ? prev
+                : [...prev, activeBroadcastMatch.order.id]
+            );
+          }
+        }}
+      >
+        {activeBroadcastMatch ? (
+          <View style={styles.modalBackdrop}>
+            <View style={styles.broadcastCard}>
+              <View style={styles.broadcastAlertBadge}>
+                <Text style={styles.broadcastAlertBadgeText}>
+                  ⚡ LIVE BROADCAST • {activeBroadcastMatch.distFromRiderKm} km away (within{' '}
+                  {activeBroadcastMatch.maxRadiusKm} km)
+                </Text>
+              </View>
+
+              <Text style={styles.broadcastTitle}>
+                Pickup Request • {activeBroadcastMatch.order.orderNumber}
+              </Text>
+              <Text style={styles.broadcastFeeHero}>
+                Earn {formatInr(activeBroadcastMatch.order.courierFeeInr || 0)} •{' '}
+                {formatLabel(activeBroadcastMatch.order.priority)}
+              </Text>
+
+              <View style={styles.routeContainer}>
+                <View style={styles.routeRow}>
+                  <View style={[styles.dotMarker, { backgroundColor: COLORS.primaryTeal }]} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.routePlaceTitle}>
+                      {activeBroadcastMatch.order.smallLabName}
+                    </Text>
+                    <Text style={styles.routePlaceSubtitle}>
+                      {activeBroadcastMatch.order.pickupLocation.address}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.routeConnectingLine} />
+
+                <View style={styles.routeRow}>
+                  <View style={[styles.dotMarker, { backgroundColor: COLORS.errorRed }]} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.routePlaceTitle}>
+                      {activeBroadcastMatch.order.targetLabName}
+                    </Text>
+                    <Text style={styles.routePlaceSubtitle}>
+                      {activeBroadcastMatch.order.deliveryLocation.address}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              <Text style={styles.broadcastSpecsLine}>
+                {(activeBroadcastMatch.order.specimens || []).length} Tube(s):{' '}
+                {(activeBroadcastMatch.order.specimens || [])
+                  .map(
+                    (s) =>
+                      `${s.testCode} (${(TUBE_METADATA[s.tubeType] || TUBE_METADATA[TubeType.SERUM_RED_GOLD]).shortTag})`
+                  )
+                  .join(', ')}
+                {typeof activeBroadcastMatch.order.distanceKm === 'number' &&
+                activeBroadcastMatch.order.distanceKm > 0
+                  ? ` • Route ${activeBroadcastMatch.order.distanceKm} km`
+                  : ''}
+              </Text>
+
+              <View style={[styles.actionsRow, { marginTop: 16 }]}>
+                <TouchableOpacity
+                  style={styles.btnSecondary}
+                  disabled={submittingAction}
+                  onPress={() =>
+                    setDismissedBroadcastIds((prev) =>
+                      prev.includes(activeBroadcastMatch.order.id)
+                        ? prev
+                        : [...prev, activeBroadcastMatch.order.id]
+                    )
+                  }
+                >
+                  <Text style={styles.btnSecondaryText}>Pass</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.btnPrimary, { flex: 2, backgroundColor: '#16A34A' }]}
+                  disabled={submittingAction}
+                  onPress={() => void handleAcceptPoolOrder(activeBroadcastMatch.order)}
+                >
+                  <Text style={styles.btnPrimaryText}>
+                    {submittingAction ? 'Claiming...' : '⚡ ACCEPT PICKUP NOW'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        ) : null}
+      </Modal>
+
+      {/* GPS & Locality Zone Picker Modal */}
+      <Modal
+        visible={showLocationPickerModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowLocationPickerModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalCardTitle}>📍 Set Live Rider GPS Location</Text>
+            <Text style={styles.modalCardSub}>
+              Updates 1–5 km broadcast distance checks and Google Maps route origin immediately.
+            </Text>
+
+            <TouchableOpacity
+              style={[styles.scanCamButton, { marginTop: 12, paddingVertical: 11 }]}
+              onPress={() => {
+                if (
+                  Platform.OS !== 'web' ||
+                  typeof navigator === 'undefined' ||
+                  !navigator.geolocation
+                ) {
+                  showDynamicAlert({
+                    variant: 'info',
+                    title: 'Device GPS Unavailable',
+                    message: 'Select a city locality hub or enter coordinates below.',
+                  });
+                  return;
+                }
+                navigator.geolocation.getCurrentPosition(
+                  (pos) => {
+                    void applyRiderLocation(
+                      pos.coords.latitude,
+                      pos.coords.longitude,
+                      'Device Live GPS'
+                    );
+                  },
+                  (err) => {
+                    showDynamicAlert({
+                      variant: 'warning',
+                      title: 'GPS Permission Declined',
+                      message: err.message || 'Select a preset hub below instead.',
+                    });
+                  },
+                  { enableHighAccuracy: true, timeout: 8000 }
+                );
+              }}
+            >
+              <Text style={styles.scanCamButtonText}>🛰️ Use Device Live GPS</Text>
+            </TouchableOpacity>
+
+            <Text style={[styles.inputLabelSm, { marginTop: 14 }]}>Quick Locality Presets</Text>
+            <ScrollView style={{ maxHeight: 170 }} showsVerticalScrollIndicator={false}>
+              <View style={{ gap: 6 }}>
+                {LOCALITY_GPS_PRESETS.map((preset) => (
+                  <TouchableOpacity
+                    key={preset.label}
+                    style={styles.presetLocationRow}
+                    onPress={() =>
+                      void applyRiderLocation(preset.latitude, preset.longitude, preset.label)
+                    }
+                  >
+                    <Text style={styles.presetLocationName}>{preset.label}</Text>
+                    <Text style={styles.presetLocationCoords}>
+                      {preset.latitude.toFixed(4)}, {preset.longitude.toFixed(4)}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.inputLabelSm}>Latitude</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={manualLatInput}
+                  onChangeText={setManualLatInput}
+                  keyboardType="numeric"
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.inputLabelSm}>Longitude</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={manualLngInput}
+                  onChangeText={setManualLngInput}
+                  keyboardType="numeric"
+                />
+              </View>
+            </View>
+
+            <View style={[styles.actionsRow, { marginTop: 14 }]}>
+              <TouchableOpacity
+                style={styles.btnSecondary}
+                onPress={() => setShowLocationPickerModal(false)}
+              >
+                <Text style={styles.btnSecondaryText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.btnPrimary}
+                onPress={() => {
+                  const lat = Number.parseFloat(manualLatInput);
+                  const lng = Number.parseFloat(manualLngInput);
+                  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+                    showDynamicAlert({
+                      variant: 'warning',
+                      title: 'Invalid Coordinates',
+                      message: 'Enter valid numeric latitude and longitude values.',
+                    });
+                    return;
+                  }
+                  void applyRiderLocation(lat, lng, 'Custom Coordinates');
+                }}
+              >
+                <Text style={styles.btnPrimaryText}>Save Coordinates</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Camera Barcode Scanner & Sample Collection Photo Proof Modal */}
+      <Modal
+        visible={Boolean(cameraModal)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCameraModal(null)}
+      >
+        {cameraModal ? (
+          <View style={styles.modalBackdrop}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalCardTitle}>
+                {cameraModal.mode === 'PHOTO'
+                  ? '📸 Capture Sample Collection Photo'
+                  : `📷 Scan Barcode — ${cameraModal.specimen?.testCode || ''}`}
+              </Text>
+              <Text style={styles.modalCardSub}>{cameraStatusText}</Text>
+
+              <View nativeID="phlebo-cam-host" style={styles.cameraViewport} />
+
+              {cameraModal.mode === 'PHOTO' ? (
+                <View style={{ gap: 10, marginTop: 14 }}>
+                  <TouchableOpacity
+                    style={[styles.ctaButton, uploadingPhoto && { opacity: 0.65 }]}
+                    disabled={uploadingPhoto}
+                    onPress={() => {
+                      if (selectedOrder) {
+                        handleCaptureSnapshotFromCam(selectedOrder.id);
+                      }
+                    }}
+                  >
+                    <Text style={styles.ctaButtonText}>
+                      {uploadingPhoto ? 'Uploading Photo...' : '📸 Capture Photo & Upload'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.btnSecondary}
+                    onPress={() => {
+                      const oid = selectedOrder?.id;
+                      setCameraModal(null);
+                      if (oid) handleUploadSamplePhotoFromFile(oid);
+                    }}
+                  >
+                    <Text style={styles.btnSecondaryText}>📁 Choose Photo File Instead</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : cameraModal.specimenId && cameraModal.specimen ? (
+                <View style={{ marginTop: 12 }}>
+                  <Text style={styles.inputLabelSm}>
+                    {(TUBE_METADATA[cameraModal.specimen.tubeType] || TUBE_METADATA[TubeType.SERUM_RED_GOLD]).label}
+                  </Text>
+                  <TextInput
+                    style={styles.fieldInput}
+                    value={specimenDrafts[cameraModal.specimenId]?.barcode || ''}
+                    onChangeText={(txt) =>
+                      updateSpecimenDraft(cameraModal.specimenId!, { barcode: txt })
+                    }
+                    placeholder={`Expected: ${cameraModal.specimen.barcode}`}
+                    autoCapitalize="characters"
+                  />
+                  <TouchableOpacity
+                    style={[styles.ctaButton, { marginTop: 10 }]}
+                    onPress={() => {
+                      updateSpecimenDraft(cameraModal.specimenId!, {
+                        barcode: cameraModal.specimen!.barcode,
+                        usedTube: cameraModal.specimen!.tubeType || TubeType.SERUM_RED_GOLD,
+                      });
+                      setCameraModal(null);
+                    }}
+                  >
+                    <Text style={styles.ctaButtonText}>
+                      ✓ Match Expected Barcode ({cameraModal.specimen.barcode})
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+
+              <TouchableOpacity
+                style={[styles.btnSecondary, { flex: 0, marginTop: 12, paddingVertical: 11 }]}
+                onPress={() => setCameraModal(null)}
+              >
+                <Text style={[styles.btnSecondaryText, { color: COLORS.textSecondary }]}>
+                  Close Camera
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
       </Modal>
 
       {!session ? (
@@ -3369,5 +4711,358 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     marginTop: 18,
     marginBottom: 10,
+  },
+  gpsTelemetryBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    backgroundColor: '#F0FDFA',
+    borderWidth: 1,
+    borderColor: '#99F6E4',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+  },
+  gpsTelemetryTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.primaryDark,
+  },
+  gpsTelemetrySub: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  gpsPickerBtn: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: COLORS.primaryTeal,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  gpsPickerBtnText: {
+    color: COLORS.primaryDark,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  radiusFilterRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 14,
+  },
+  radiusFilterChip: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  radiusFilterChipActive: {
+    backgroundColor: '#CCFBF1',
+    borderColor: COLORS.primaryTeal,
+  },
+  radiusFilterText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+  },
+  radiusFilterTextActive: {
+    color: COLORS.primaryDark,
+    fontWeight: '700',
+  },
+  badgeWrapRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 6,
+  },
+  distanceBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  distanceBadgeHot: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  distanceBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+  },
+  distanceBadgeTextHot: {
+    color: '#B45309',
+    fontWeight: '700',
+  },
+  tubePillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 12,
+  },
+  specimenTagPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  specimenTagText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  tubeColorDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  navMapButton: {
+    flex: 1,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+  },
+  navMapButtonText: {
+    color: '#1D4ED8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  detailSpecRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 4,
+  },
+  detailSpecTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  detailSpecSub: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    marginTop: 1,
+  },
+  verifyHintCard: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+  },
+  verifyHintTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E3A8A',
+  },
+  verifyHintText: {
+    fontSize: 12,
+    color: '#1E40AF',
+    marginTop: 4,
+    lineHeight: 17,
+  },
+  specimenVerifyCard: {
+    backgroundColor: COLORS.surfaceCard,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    padding: 14,
+    marginBottom: 14,
+  },
+  specimenCardTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+  },
+  specimenCardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  specimenCardSub: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  validationBanner: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 10,
+  },
+  validationBannerText: {
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 16,
+  },
+  scanActionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  scanCamButton: {
+    backgroundColor: COLORS.primaryDark,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scanCamButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  matchTagChip: {
+    flex: 1,
+    backgroundColor: '#F0FDFA',
+    borderWidth: 1,
+    borderColor: '#99F6E4',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  matchTagChipText: {
+    color: COLORS.primaryDark,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  tubeChipsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  tubeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+  },
+  tubeChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+  },
+  photoProofCard: {
+    backgroundColor: COLORS.surfaceCard,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    padding: 14,
+    marginBottom: 14,
+  },
+  samplePhotoPreview: {
+    width: '100%',
+    height: 190,
+    borderRadius: 10,
+    backgroundColor: '#E2E8F0',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.62)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+  },
+  modalCardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  modalCardSub: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginTop: 4,
+    lineHeight: 17,
+  },
+  broadcastCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 2,
+    borderColor: '#16A34A',
+  },
+  broadcastAlertBadge: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignSelf: 'flex-start',
+    marginBottom: 10,
+  },
+  broadcastAlertBadgeText: {
+    color: '#B45309',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  broadcastTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  broadcastFeeHero: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: COLORS.primaryTeal,
+    marginTop: 4,
+  },
+  broadcastSpecsLine: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginTop: 4,
+  },
+  presetLocationRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  presetLocationName: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  presetLocationCoords: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+  },
+  cameraViewport: {
+    width: '100%',
+    height: 220,
+    backgroundColor: '#0F172A',
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginTop: 12,
   },
 });

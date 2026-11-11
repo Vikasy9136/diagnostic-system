@@ -12,9 +12,24 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   [UserRole.PHLEBOTOMIST]: 'Field Phlebotomist',
 };
 
+export type AdminTeamRole =
+  | 'SUPER_ADMIN'
+  | 'FINANCE_B2B'
+  | 'OPS_DISPATCH'
+  | 'CATALOG_LABS';
+
+export const ADMIN_SUB_ROLE_LABELS: Record<AdminTeamRole, string> = {
+  SUPER_ADMIN: 'Super Admin (Full Control)',
+  FINANCE_B2B: 'Finance & B2B Margin Team',
+  OPS_DISPATCH: 'Operations & Courier Dispatch',
+  CATALOG_LABS: 'Lab Onboarding & Catalog Team',
+};
+
 export interface UserCustomClaims {
   role: UserRole;
+  adminSubRole?: AdminTeamRole;
   labId?: string;
+  parentLabId?: string;
   phlebotomistId?: string;
 }
 
@@ -24,7 +39,9 @@ export interface UserProfile {
   displayName: string;
   phoneNumber?: string;
   role: UserRole;
+  adminSubRole?: AdminTeamRole;
   labId?: string;
+  parentLabId?: string;
   phlebotomistId?: string;
   isActive: boolean;
   fcmTokens?: string[];
@@ -37,8 +54,10 @@ export interface CreateManagedUserPayload {
   email: string;
   displayName: string;
   role: UserRole;
+  adminSubRole?: AdminTeamRole;
   phoneNumber?: string;
   labId?: string;
+  parentLabId?: string;
   phlebotomistId?: string;
   password?: string;
   isActive?: boolean;
