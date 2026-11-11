@@ -22,6 +22,7 @@ import {
   findProvisionedUserByEmail,
   listProvisionedUsers,
   requestEmailOtp,
+  requestPasswordReset,
   updateManagedUserStatus,
   verifyAndSyncSessionRole,
   verifyEmailOtp,
@@ -224,6 +225,36 @@ export function createCloudApiApp(): Application {
         success: true,
         data: result,
         message: 'OTP verified successfully',
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.post('/api/v1/auth/forgot-password', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { email, origin } = req.body || {};
+      const clientType = resolveClientPlatform(req);
+      if (!email || typeof email !== 'string' || !email.trim().includes('@')) {
+        return next(new AppError('Please enter a valid registered email address.', 400, 'BAD_REQUEST'));
+      }
+      const headerOrigin =
+        typeof req.headers['x-forwarded-origin'] === 'string'
+          ? req.headers['x-forwarded-origin']
+          : typeof req.headers.origin === 'string'
+          ? req.headers.origin
+          : undefined;
+
+      const result = await requestPasswordReset(
+        email,
+        typeof origin === 'string' ? origin : headerOrigin,
+        clientType
+      );
+      return res.json({
+        success: true,
+        data: result,
+        message: `Password reset link sent to ${email.trim().toLowerCase()}`,
         timestamp: new Date().toISOString(),
       });
     } catch (err) {
@@ -452,6 +483,15 @@ export function createCloudApiApp(): Application {
           recipientEmail: ADMIN_EMAIL,
           recipientRole: UserRole.ADMIN,
           orderId: orderNumber,
+          templateType:
+            newOrder.priority === OrderPriority.STAT_CRITICAL
+              ? 'EMERGENCY_ALERT'
+              : 'OPERATIONAL_NOTIFICATION',
+          metadata: {
+            orderNumber,
+            smallLabName: newOrder.smallLabName,
+            targetLabName: newOrder.targetLabName,
+          },
           channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL, NotificationChannel.PUSH_FCM],
         });
 
@@ -626,6 +666,10 @@ export function createCloudApiApp(): Application {
           orderId,
           labId,
           channels,
+          templateType,
+          actionUrl,
+          actionLabel,
+          metadata,
         } = req.body || {};
         if (!title || !message) {
           return next(new AppError('Missing required fields: title and message', 400, 'BAD_REQUEST'));
@@ -641,13 +685,52 @@ export function createCloudApiApp(): Application {
           orderId,
           labId,
           channels,
+          templateType,
+          actionUrl,
+          actionLabel,
+          metadata,
         });
         return res.status(201).json({
           success: true,
           data: result,
           message: result.emailSent
             ? `Notification persisted and email delivered to ${result.recipientEmail}`
-            : 'In-app & Firestore notification recorded',
+            : 'In-app & notification record saved',
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        return next(err);
+      }
+    }
+  );
+
+  app.post(
+    '/api/v1/notifications/test-email',
+    requireAuth,
+    requireRoles(UserRole.ADMIN),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const targetEmail = (req.body?.recipientEmail as string) || ADMIN_EMAIL;
+        const result = await sendPlatformNotification({
+          title: 'LabSetu Live Alert & Email Check',
+          message: `This test confirms that instant operational alerts, notifications, and email delivery to ${targetEmail} are working properly.`,
+          category: NotificationCategory.SYSTEM_ALERT,
+          priority: NotificationPriority.NORMAL,
+          recipientEmail: targetEmail,
+          recipientRole: UserRole.ADMIN,
+          templateType: 'OPERATIONAL_NOTIFICATION',
+          channels: [
+            NotificationChannel.IN_APP,
+            NotificationChannel.EMAIL,
+            NotificationChannel.PUSH_FCM,
+          ],
+        });
+        return res.status(201).json({
+          success: true,
+          data: result,
+          message: result.emailSent
+            ? `Test email delivered to ${targetEmail}`
+            : `Notification saved; email delivery to ${targetEmail} queued.`,
           timestamp: new Date().toISOString(),
         });
       } catch (err) {

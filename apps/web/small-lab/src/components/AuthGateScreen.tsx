@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type FormEvent } from 'react';
+import { useState, useEffect, useMemo, useRef, type FormEvent } from 'react';
 import {
   LABSETU_THEME,
   ROLE_LABELS,
@@ -11,7 +11,8 @@ import {
   signInWithPopup,
   signInWithRedirect,
   signInWithCustomToken,
-  sendPasswordResetEmail,
+  verifyPasswordResetCode,
+  confirmPasswordReset,
   signOut,
   getIdTokenResult,
   type User,
@@ -50,6 +51,8 @@ interface AuthGateScreenProps {
 }
 
 type AuthTabMode = 'google' | 'password' | 'otp';
+type AuthViewMode = 'login' | 'forgot-password' | 'reset-password';
+type ResetStage = 'verifying' | 'ready' | 'submitting' | 'success' | 'invalid';
 
 function isWebRole(role: UserRole): boolean {
   return (
@@ -59,6 +62,37 @@ function isWebRole(role: UserRole): boolean {
   );
 }
 
+function isKnownRole(val: string | null | undefined): val is UserRole {
+  return (
+    val === UserRole.ADMIN ||
+    val === UserRole.SMALL_LAB ||
+    val === UserRole.LARGE_LAB ||
+    val === UserRole.PHLEBOTOMIST
+  );
+}
+
+function parseInitialAuthState(): {
+  view: AuthViewMode;
+  oobCode: string;
+  emailHint: string;
+  roleHint: string | null;
+} {
+  const path = window.location.pathname.toLowerCase();
+  const params = new URLSearchParams(window.location.search);
+  const oobCode = params.get('oobCode')?.trim() || '';
+  const hasResetParams = Boolean(oobCode) || params.get('mode') === 'resetPassword';
+  const emailHint = params.get('email')?.trim().toLowerCase() || '';
+  const roleHint = params.get('role');
+
+  if (path.startsWith('/reset-password') || hasResetParams) {
+    return { view: 'reset-password', oobCode, emailHint, roleHint };
+  }
+  if (path.startsWith('/forgot-password')) {
+    return { view: 'forgot-password', oobCode: '', emailHint, roleHint };
+  }
+  return { view: 'login', oobCode: '', emailHint: '', roleHint };
+}
+
 export function AuthGateScreen({
   requiredRole,
   portalTitle,
@@ -66,7 +100,11 @@ export function AuthGateScreen({
   onShowAlert,
   onAuthenticated,
 }: AuthGateScreenProps) {
-  const [authLoading, setAuthLoading] = useState(true);
+  const initialRoute = useMemo(() => parseInitialAuthState(), []);
+  const [authView, setAuthView] = useState<AuthViewMode>(initialRoute.view);
+  const authViewRef = useRef<AuthViewMode>(initialRoute.view);
+
+  const [authLoading, setAuthLoading] = useState(initialRoute.view === 'login');
   const [authTab, setAuthTab] = useState<AuthTabMode>('password');
   const [loginEmail, setLoginEmail] = useState(
     requiredRole === UserRole.ADMIN ? ADMIN_LOGIN_EMAIL : ''
@@ -81,6 +119,29 @@ export function AuthGateScreen({
   const [otpCode, setOtpCode] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [otpCooldown, setOtpCooldown] = useState(0);
+
+  // Forgot password state
+  const [forgotEmail, setForgotEmail] = useState(
+    initialRoute.emailHint || (requiredRole === UserRole.ADMIN ? ADMIN_LOGIN_EMAIL : '')
+  );
+  const [forgotCooldown, setForgotCooldown] = useState(0);
+  const [forgotSent, setForgotSent] = useState<{
+    email: string;
+    role: UserRole;
+    roleLabel: string;
+  } | null>(null);
+
+  // Reset password state
+  const [resetStage, setResetStage] = useState<ResetStage>('verifying');
+  const [resetEmail, setResetEmail] = useState(initialRoute.emailHint);
+  const [resetRole, setResetRole] = useState<UserRole>(
+    isKnownRole(initialRoute.roleHint) ? initialRoute.roleHint : requiredRole
+  );
+  const [resetErrorReason, setResetErrorReason] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
 
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
@@ -100,6 +161,115 @@ export function AuthGateScreen({
     }, 1000);
     return () => clearInterval(timer);
   }, [otpCooldown]);
+
+  useEffect(() => {
+    if (forgotCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setForgotCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [forgotCooldown]);
+
+  useEffect(() => {
+    if (authView !== 'reset-password') return;
+    let cancelled = false;
+
+    async function validateResetCode() {
+      if (!initialRoute.oobCode) {
+        if (!cancelled) {
+          setResetErrorReason(
+            'This password reset link is missing a valid security code. Please request a new reset link.'
+          );
+          setResetStage('invalid');
+        }
+        return;
+      }
+
+      setResetStage('verifying');
+      try {
+        const accountEmail = await verifyPasswordResetCode(auth, initialRoute.oobCode);
+        const normalized = accountEmail.trim().toLowerCase();
+        if (cancelled) return;
+        setResetEmail(normalized);
+
+        if (!isKnownRole(initialRoute.roleHint)) {
+          try {
+            const roleRes = await fetch(
+              `${API_BASE_URL}/auth/role-check?email=${encodeURIComponent(normalized)}`
+            );
+            const roleJson = await roleRes.json().catch(() => null);
+            if (!cancelled && isKnownRole(roleJson?.data?.role)) {
+              setResetRole(roleJson.data.role);
+            }
+          } catch {
+            // Optional hint lookup; keep fallback role
+          }
+        }
+
+        if (!cancelled) {
+          setResetStage('ready');
+        }
+      } catch (err: unknown) {
+        const fbErr = err as { code?: string };
+        let friendly =
+          'This password reset link is invalid or has already been used. Please request a new link.';
+        if (fbErr.code === 'auth/expired-action-code') {
+          friendly =
+            'This password reset link has expired (links stay valid for 60 minutes). Please request a new reset email.';
+        } else if (fbErr.code === 'auth/user-disabled') {
+          friendly =
+            'This account is currently paused. Please contact your LabSetu Platform Admin before resetting your password.';
+        }
+        if (!cancelled) {
+          setResetErrorReason(friendly);
+          setResetStage('invalid');
+        }
+      }
+    }
+
+    void validateResetCode();
+    return () => {
+      cancelled = true;
+    };
+  }, [authView, initialRoute]);
+
+  const passwordRules = useMemo(() => {
+    const hasLength = newPassword.length >= 8;
+    const hasUpper = /[A-Z]/.test(newPassword);
+    const hasLower = /[a-z]/.test(newPassword);
+    const hasNumber = /\d/.test(newPassword);
+    const matches = newPassword.length > 0 && newPassword === confirmNewPassword;
+    const score = [hasLength, hasUpper && hasLower, hasNumber, newPassword.length >= 12].filter(
+      Boolean
+    ).length;
+
+    let label = 'Too Short';
+    let level: 'weak' | 'fair' | 'good' | 'strong' = 'weak';
+    if (score >= 4) {
+      label = 'Strong';
+      level = 'strong';
+    } else if (score === 3) {
+      label = 'Good';
+      level = 'good';
+    } else if (score === 2) {
+      label = 'Fair';
+      level = 'fair';
+    } else if (newPassword.length > 0) {
+      label = 'Weak';
+      level = 'weak';
+    }
+
+    return {
+      hasLength,
+      hasUpper,
+      hasLower,
+      hasNumber,
+      matches,
+      score: newPassword.length === 0 ? 0 : Math.max(1, score),
+      label,
+      level,
+    };
+  }, [newPassword, confirmNewPassword]);
 
   const resolvePortalUrl = (role: UserRole): string => {
     if (role === UserRole.ADMIN) return PORTAL_URLS.ADMIN;
@@ -357,6 +527,11 @@ export function AuthGateScreen({
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (authViewRef.current !== 'login') {
+        setAuthLoading(false);
+        return;
+      }
+
       if (!user) {
         if (!mismatchTriggeredRef.current) {
           setRoleMismatch(null);
@@ -451,32 +626,171 @@ export function AuthGateScreen({
     }
   }
 
-  async function handlePasswordReset() {
+  function goToForgotView(emailHint?: string) {
+    const clean =
+      (emailHint ?? loginEmail).trim().toLowerCase() ||
+      (requiredRole === UserRole.ADMIN ? ADMIN_LOGIN_EMAIL : '');
+    setForgotEmail(clean);
+    setForgotSent(null);
     setInlineError(null);
     setInlineSuccess(null);
-    const email = loginEmail.trim();
-    if (!email) {
+    authViewRef.current = 'forgot-password';
+    setAuthView('forgot-password');
+    const sp = new URLSearchParams();
+    sp.set('role', requiredRole);
+    if (clean) sp.set('email', clean);
+    window.history.replaceState({}, '', `/forgot-password?${sp.toString()}`);
+  }
+
+  function goToLoginView() {
+    setInlineError(null);
+    setInlineSuccess(null);
+    setForgotSent(null);
+    authViewRef.current = 'login';
+    setAuthView('login');
+    if (window.location.pathname !== '/' || window.location.search) {
+      window.history.replaceState({}, '', '/');
+    }
+    if (auth.currentUser) {
+      setAuthLoading(true);
+      void verifyFirebaseUserRole(auth.currentUser).finally(() => setAuthLoading(false));
+    }
+  }
+
+  async function handleSendForgotEmail(targetEmail: string) {
+    const normalized = targetEmail.trim().toLowerCase();
+    setInlineError(null);
+    setInlineSuccess(null);
+    if (!normalized || !normalized.includes('@')) {
+      const msg = 'Please enter your registered email address.';
+      setInlineError(msg);
       onShowAlert({
         variant: 'warning',
         title: 'Email Required',
-        message: 'Please enter your registered email address first.',
+        message: msg,
       });
       return;
     }
 
+    setAuthSubmitting(true);
     try {
-      await sendPasswordResetEmail(auth, email);
-      const msg = `We sent a password setup / reset link to ${email}. Please check your inbox and spam folder.`;
-      setInlineSuccess(msg);
+      const res = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Client-Platform': 'web',
+        },
+        body: JSON.stringify({
+          email: normalized,
+          origin: window.location.origin,
+          portalRole: requiredRole,
+          clientType: 'WEB',
+        }),
+      });
+
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        const errCode = json?.error?.code;
+        const errMsg =
+          json?.error?.message ||
+          'We could not send a password reset link right now. Please check your email and try again.';
+        setInlineError(errMsg);
+        onShowAlert({
+          variant: 'error',
+          title:
+            errCode === 'USER_NOT_PROVISIONED'
+              ? 'Email Not Added Yet'
+              : errCode === 'ACCOUNT_SUSPENDED'
+              ? 'Account Paused'
+              : 'Unable to Send Reset Link',
+          message: errMsg,
+        });
+        return;
+      }
+
+      const assignedRole = (json?.data?.role as UserRole) || requiredRole;
+      const roleLabel =
+        (json?.data?.roleLabel as string) || ROLE_LABELS[assignedRole] || 'Partner Account';
+
+      setForgotSent({ email: normalized, role: assignedRole, roleLabel });
+      setForgotCooldown(60);
       onShowAlert({
         variant: 'success',
-        title: 'Password Link Sent',
+        title: 'Password Reset Email Sent',
+        message: `We emailed a secure reset link to ${normalized}. Open the link in your inbox to choose a new password.`,
+      });
+    } catch {
+      const msg =
+        'Unable to reach the password recovery service right now. Please check your internet connection and try again.';
+      setInlineError(msg);
+      onShowAlert({
+        variant: 'warning',
+        title: 'Service Temporarily Unavailable',
         message: msg,
       });
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  async function handleConfirmNewPassword(e: FormEvent) {
+    e.preventDefault();
+    setInlineError(null);
+
+    if (!passwordRules.hasLength) {
+      setInlineError('Your new password must be at least 8 characters long.');
+      return;
+    }
+    if (!passwordRules.hasUpper || !passwordRules.hasLower || !passwordRules.hasNumber) {
+      setInlineError(
+        'Include at least one uppercase letter, one lowercase letter, and one number for account security.'
+      );
+      return;
+    }
+    if (!passwordRules.matches) {
+      setInlineError('New Password and Confirm Password do not match.');
+      return;
+    }
+
+    setResetStage('submitting');
+    try {
+      await confirmPasswordReset(auth, initialRoute.oobCode, newPassword);
+      if (auth.currentUser) {
+        await signOut(auth).catch(() => {});
+      }
+      window.history.replaceState(
+        {},
+        '',
+        `/reset-password?role=${encodeURIComponent(resetRole)}&status=done`
+      );
+      setResetStage('success');
+      onShowAlert({
+        variant: 'success',
+        title: 'Password Updated',
+        message:
+          resetRole === UserRole.PHLEBOTOMIST
+            ? `Password saved for ${resetEmail}. Open the LabSetu Mobile App to sign in.`
+            : `Your password for ${resetEmail} has been updated. You can now sign in.`,
+      });
     } catch (err: unknown) {
-      const msg = (err as Error).message || 'Could not send password reset email.';
+      const fbErr = err as { code?: string };
+      if (
+        fbErr.code === 'auth/expired-action-code' ||
+        fbErr.code === 'auth/invalid-action-code'
+      ) {
+        setResetErrorReason(
+          'This reset link has expired or was already used. Please request a fresh reset link.'
+        );
+        setResetStage('invalid');
+        return;
+      }
+      const msg =
+        fbErr.code === 'auth/weak-password'
+          ? 'Please choose a stronger password with at least 8 characters.'
+          : 'Could not save your new password right now. Please try again.';
       setInlineError(msg);
-      onShowAlert({ variant: 'error', title: 'Unable to Send Reset Link', message: msg });
+      setResetStage('ready');
+      onShowAlert({ variant: 'error', title: 'Update Failed', message: msg });
     }
   }
 
@@ -651,6 +965,462 @@ export function AuthGateScreen({
           <p style={{ fontSize: '0.85rem', color: '#64748B', marginTop: '8px' }}>
             Checking your account access...
           </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (authView === 'forgot-password') {
+    return (
+      <div className="auth-flow-shell">
+        <div className="portal-login-topbar">
+          <a
+            href={PORTAL_URLS.PORTAL}
+            className="btn-hero-secondary"
+            style={{ padding: '8px 16px', fontSize: '0.85rem', textDecoration: 'none' }}
+          >
+            ← LabSetu Main Portal
+          </a>
+
+          <button
+            type="button"
+            className="btn-hero-secondary"
+            style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+            onClick={goToLoginView}
+          >
+            ← Back to Sign In
+          </button>
+        </div>
+
+        <div className="auth-flow-center">
+          <div className="admin-login-card">
+            <div className="admin-login-banner">
+              <div className="brand-logo-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+              </div>
+              <div>
+                <div style={{ fontSize: '1.15rem', fontWeight: 800 }}>
+                  {LABSETU_THEME.brand.name} • Password Recovery
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#7DD3FC' }}>
+                  {portalTitle} • Set or reset your account password
+                </div>
+              </div>
+            </div>
+
+            <div className="admin-login-body">
+              {forgotSent ? (
+                <div>
+                  <div className="reset-status-card sent">
+                    <div className="reset-status-icon sent">✉️</div>
+                    <div style={{ fontSize: '1.08rem', fontWeight: 800, color: '#065F46' }}>
+                      Reset Link Delivered
+                    </div>
+                    <p
+                      style={{
+                        fontSize: '0.84rem',
+                        color: '#334155',
+                        marginTop: '6px',
+                        lineHeight: 1.55,
+                      }}
+                    >
+                      A secure password setup / reset email has been sent to{' '}
+                      <strong>{forgotSent.email}</strong>.
+                    </p>
+                    <div style={{ marginTop: '12px' }}>
+                      <span className="role-assigned-pill">
+                        Registered Role: {forgotSent.roleLabel}
+                      </span>
+                    </div>
+                  </div>
+
+                  {forgotSent.role === UserRole.PHLEBOTOMIST && (
+                    <div className="phlebo-mobile-notice light">
+                      <strong>📱 Field Phlebotomist Note:</strong> Open the reset link from your
+                      email to set your new password, then sign in inside the{' '}
+                      <strong>LabSetu Mobile App</strong>.
+                    </div>
+                  )}
+
+                  <div className="auth-tip-box">
+                    <strong>Didn&apos;t see it yet?</strong> Check your Spam, Promotions, or Updates
+                    folder for an email titled <em>&ldquo;Reset Your LabSetu Password&rdquo;</em>.
+                    Links stay active for 60 minutes.
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '10px', flexDirection: 'column' }}>
+                    <button
+                      type="button"
+                      className="btn-primary btn-full"
+                      style={{ justifyContent: 'center' }}
+                      disabled={forgotCooldown > 0 || authSubmitting}
+                      onClick={() => void handleSendForgotEmail(forgotSent.email)}
+                    >
+                      {authSubmitting
+                        ? 'Sending Again...'
+                        : forgotCooldown > 0
+                        ? `Resend Reset Link in ${forgotCooldown}s`
+                        : 'Resend Reset Link'}
+                    </button>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
+                      <button
+                        type="button"
+                        className="btn-link-muted"
+                        onClick={() => {
+                          setForgotSent(null);
+                          setInlineError(null);
+                        }}
+                      >
+                        Try Different Email
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-link-muted"
+                        onClick={goToLoginView}
+                      >
+                        Back to Sign In →
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void handleSendForgotEmail(forgotEmail);
+                  }}
+                >
+                  <div className="step-indicator-pill">
+                    <span>🔑 Step 1 of 2</span>
+                    <span>•</span>
+                    <span>Request Reset Email</span>
+                  </div>
+
+                  <p className="admin-login-subtitle" style={{ marginBottom: '16px' }}>
+                    Enter the email address added by your LabSetu Admin. We will send you a secure,
+                    single-use link to set a new password.
+                  </p>
+
+                  {inlineError && <div className="admin-auth-alert error">{inlineError}</div>}
+
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="portal-forgot-email">
+                      Registered Email Address
+                    </label>
+                    <input
+                      id="portal-forgot-email"
+                      type="email"
+                      className="form-input"
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      placeholder="name@company.com"
+                      autoComplete="email"
+                      required
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="btn-primary btn-full"
+                    style={{ justifyContent: 'center' }}
+                    disabled={authSubmitting}
+                  >
+                    {authSubmitting ? 'Sending Secure Link...' : 'Send Password Reset Link →'}
+                  </button>
+
+                  <div
+                    style={{
+                      marginTop: '16px',
+                      paddingTop: '14px',
+                      borderTop: '1px solid #E2E8F0',
+                      textAlign: 'center',
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="btn-link-muted"
+                      onClick={goToLoginView}
+                    >
+                      Remembered your password? Back to Sign In
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (authView === 'reset-password') {
+    const isPhleboReset = resetRole === UserRole.PHLEBOTOMIST;
+    const resetRoleLabel = ROLE_LABELS[resetRole] || portalTitle;
+    return (
+      <div className="auth-flow-shell">
+        <div className="portal-login-topbar">
+          <a
+            href={PORTAL_URLS.PORTAL}
+            className="btn-hero-secondary"
+            style={{ padding: '8px 16px', fontSize: '0.85rem', textDecoration: 'none' }}
+          >
+            ← LabSetu Main Portal
+          </a>
+
+          {!isPhleboReset && (
+            <button
+              type="button"
+              className="btn-hero-secondary"
+              style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+              onClick={goToLoginView}
+            >
+              Go to Sign In
+            </button>
+          )}
+        </div>
+
+        <div className="auth-flow-center">
+          <div className="admin-login-card">
+            <div className="admin-login-banner">
+              <div className="brand-logo-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                </svg>
+              </div>
+              <div>
+                <div style={{ fontSize: '1.15rem', fontWeight: 800 }}>
+                  {LABSETU_THEME.brand.name} • Create New Password
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#7DD3FC' }}>
+                  Complete your password setup securely
+                </div>
+              </div>
+            </div>
+
+            <div className="admin-login-body">
+              {resetStage === 'verifying' && (
+                <div className="reset-status-card">
+                  <div className="reset-status-icon loading">⏳</div>
+                  <div style={{ fontSize: '1rem', fontWeight: 700, color: '#0F172A' }}>
+                    Checking Your Security Link...
+                  </div>
+                  <p style={{ fontSize: '0.83rem', color: '#64748B', marginTop: '6px' }}>
+                    Please wait a moment while we verify your reset link.
+                  </p>
+                </div>
+              )}
+
+              {resetStage === 'invalid' && (
+                <div>
+                  <div className="reset-status-card error">
+                    <div className="reset-status-icon error">⚠️</div>
+                    <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#B91C1C' }}>
+                      Reset Link Expired or Invalid
+                    </div>
+                    <p
+                      style={{
+                        fontSize: '0.84rem',
+                        color: '#334155',
+                        marginTop: '8px',
+                        lineHeight: 1.55,
+                      }}
+                    >
+                      {resetErrorReason}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="btn-primary btn-full"
+                    style={{ justifyContent: 'center' }}
+                    onClick={() => goToForgotView(resetEmail)}
+                  >
+                    Request a New Reset Link →
+                  </button>
+
+                  {!isPhleboReset && (
+                    <div style={{ textAlign: 'center', marginTop: '14px' }}>
+                      <button
+                        type="button"
+                        className="btn-link-muted"
+                        onClick={goToLoginView}
+                      >
+                        ← Return to Sign In
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {resetStage === 'success' && (
+                <div>
+                  <div className="reset-status-card sent">
+                    <div className="reset-status-icon success">✓</div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#065F46' }}>
+                      Password Updated Successfully
+                    </div>
+                    <p
+                      style={{
+                        fontSize: '0.84rem',
+                        color: '#334155',
+                        marginTop: '6px',
+                        lineHeight: 1.55,
+                      }}
+                    >
+                      Your new password for <strong>{resetEmail}</strong> is active right away.
+                    </p>
+                    <div style={{ marginTop: '10px' }}>
+                      <span className="role-assigned-pill">{resetRoleLabel}</span>
+                    </div>
+                  </div>
+
+                  {isPhleboReset ? (
+                    <div className="phlebo-mobile-notice light" style={{ marginBottom: '0' }}>
+                      <strong>📱 Open LabSetu Mobile App:</strong> Field Phlebotomist dashboards
+                      are only accessible on the mobile app. Open the LabSetu Mobile App on your
+                      phone and sign in using <strong>{resetEmail}</strong> and your new password.
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn-primary btn-full"
+                      style={{ justifyContent: 'center' }}
+                      onClick={goToLoginView}
+                    >
+                      Sign In to {portalTitle} →
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {(resetStage === 'ready' || resetStage === 'submitting') && (
+                <form onSubmit={(e) => void handleConfirmNewPassword(e)}>
+                  <div className="step-indicator-pill">
+                    <span>🔐 Step 2 of 2</span>
+                    <span>•</span>
+                    <span>Choose New Password</span>
+                  </div>
+
+                  <div
+                    className="role-requirement-banner"
+                    style={{ width: '100%', justifyContent: 'space-between' }}
+                  >
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      Account: <strong>{resetEmail}</strong>
+                    </span>
+                    <span className="role-assigned-pill">{resetRoleLabel}</span>
+                  </div>
+
+                  {inlineError && <div className="admin-auth-alert error">{inlineError}</div>}
+
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="portal-reset-new-pw">
+                      New Password
+                    </label>
+                    <div className="admin-password-wrap">
+                      <input
+                        id="portal-reset-new-pw"
+                        type={showNewPassword ? 'text' : 'password'}
+                        className="form-input"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="Create a strong password"
+                        style={{ paddingRight: '58px' }}
+                        autoComplete="new-password"
+                        required
+                      />
+                      <button
+                        type="button"
+                        className="admin-password-toggle"
+                        onClick={() => setShowNewPassword(!showNewPassword)}
+                      >
+                        {showNewPassword ? 'Hide' : 'Show'}
+                      </button>
+                    </div>
+
+                    <div className="password-strength-meter">
+                      <div className="password-strength-header">
+                        <span>Password Strength</span>
+                        <span>{passwordRules.label}</span>
+                      </div>
+                      <div className="password-strength-bars">
+                        {[1, 2, 3, 4].map((slot) => (
+                          <div
+                            key={slot}
+                            className={`password-strength-bar ${
+                              passwordRules.score >= slot ? `active ${passwordRules.level}` : ''
+                            }`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="portal-reset-confirm-pw">
+                      Confirm New Password
+                    </label>
+                    <div className="admin-password-wrap">
+                      <input
+                        id="portal-reset-confirm-pw"
+                        type={showConfirmNewPassword ? 'text' : 'password'}
+                        className="form-input"
+                        value={confirmNewPassword}
+                        onChange={(e) => setConfirmNewPassword(e.target.value)}
+                        placeholder="Re-enter your new password"
+                        style={{ paddingRight: '58px' }}
+                        autoComplete="new-password"
+                        required
+                      />
+                      <button
+                        type="button"
+                        className="admin-password-toggle"
+                        onClick={() => setShowConfirmNewPassword(!showConfirmNewPassword)}
+                      >
+                        {showConfirmNewPassword ? 'Hide' : 'Show'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <ul className="password-requirements-list">
+                    <li className={`password-req-item ${passwordRules.hasLength ? 'met' : ''}`}>
+                      <span className="req-dot">{passwordRules.hasLength ? '✓' : '•'}</span>
+                      <span>At least 8 characters</span>
+                    </li>
+                    <li className={`password-req-item ${passwordRules.hasUpper ? 'met' : ''}`}>
+                      <span className="req-dot">{passwordRules.hasUpper ? '✓' : '•'}</span>
+                      <span>One uppercase letter (A-Z)</span>
+                    </li>
+                    <li className={`password-req-item ${passwordRules.hasLower ? 'met' : ''}`}>
+                      <span className="req-dot">{passwordRules.hasLower ? '✓' : '•'}</span>
+                      <span>One lowercase letter (a-z)</span>
+                    </li>
+                    <li className={`password-req-item ${passwordRules.hasNumber ? 'met' : ''}`}>
+                      <span className="req-dot">{passwordRules.hasNumber ? '✓' : '•'}</span>
+                      <span>One number (0-9)</span>
+                    </li>
+                    <li className={`password-req-item ${passwordRules.matches ? 'met' : ''}`}>
+                      <span className="req-dot">{passwordRules.matches ? '✓' : '•'}</span>
+                      <span>Passwords match</span>
+                    </li>
+                  </ul>
+
+                  <button
+                    type="submit"
+                    className="btn-primary btn-full"
+                    style={{ justifyContent: 'center' }}
+                    disabled={resetStage === 'submitting'}
+                  >
+                    {resetStage === 'submitting' ? 'Saving Password...' : 'Save New Password'}
+                  </button>
+                </form>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -884,7 +1654,7 @@ export function AuthGateScreen({
                 <button
                   type="button"
                   className="btn-link-muted"
-                  onClick={() => void handlePasswordReset()}
+                  onClick={() => goToForgotView(loginEmail.trim())}
                 >
                   Forgot / Set Password
                 </button>

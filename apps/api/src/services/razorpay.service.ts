@@ -276,14 +276,25 @@ export async function verifyPayment(params: VerifyPaymentParams) {
         },
         { merge: true }
       );
+      const gross = Number(existing.grossAmountInr || 0);
+      const orderNum = String(existing.orderNumber || matchedOrderId || orderId);
       await sendPlatformNotification({
-        title: `Payment Received: ${String(existing.orderNumber || matchedOrderId || orderId)}`,
+        title: `Payment Received: ${orderNum} (₹${gross.toLocaleString('en-IN')})`,
         message: `Online payment (${paymentId}) confirmed for ${String(existing.smallLabName || 'Collection Lab')}.`,
         category: NotificationCategory.PAYMENT_RECEIVED,
         priority: NotificationPriority.NORMAL,
         recipientEmail: config.admin.email,
         recipientRole: UserRole.ADMIN,
         orderId: matchedOrderId || undefined,
+        templateType: 'PAYMENT_RECEIPT',
+        metadata: {
+          orderNumber: orderNum,
+          amountInr: gross,
+          referenceId: paymentId,
+          paymentMethod: resolvedMethod || 'ONLINE',
+          smallLabName: existing.smallLabName ? String(existing.smallLabName) : undefined,
+          targetLabName: existing.targetLabName ? String(existing.targetLabName) : undefined,
+        },
         channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
       });
     }
@@ -429,7 +440,34 @@ export async function checkPaymentLink(linkId: string, bookingId?: string, settl
       await db.collection('orders').doc(resolvedBookingId).set(paidPatch, { merge: true });
     }
     if (resolvedSettlementId) {
-      await db.collection('settlements').doc(resolvedSettlementId).set(paidPatch, { merge: true });
+      const stlRef = db.collection('settlements').doc(resolvedSettlementId);
+      const stlSnap = await stlRef.get();
+      const existing = (stlSnap.data() as Record<string, unknown> | undefined) || {};
+      const wasAlreadyPaid = existing.paymentStatus === 'PAID';
+      await stlRef.set(paidPatch, { merge: true });
+      if (stlSnap.exists && !wasAlreadyPaid) {
+        const orderNum = String(existing.orderNumber || resolvedBookingId || link.id);
+        const gross = Number(existing.grossAmountInr || Math.round((Number(link.amount) || 0) / 100));
+        await sendPlatformNotification({
+          title: `Payment Link Confirmed: ${orderNum} (₹${gross.toLocaleString('en-IN')})`,
+          message: `Payment link (${paymentId}) settled via ${method} for ${existing.smallLabName || 'Collection Lab'}.`,
+          category: NotificationCategory.PAYMENT_RECEIVED,
+          priority: NotificationPriority.NORMAL,
+          recipientEmail: config.admin.email,
+          recipientRole: UserRole.ADMIN,
+          orderId: resolvedBookingId || orderNum,
+          templateType: 'PAYMENT_RECEIPT',
+          metadata: {
+            orderNumber: orderNum,
+            amountInr: gross,
+            referenceId: paymentId,
+            paymentMethod: method,
+            smallLabName: existing.smallLabName ? String(existing.smallLabName) : undefined,
+            targetLabName: existing.targetLabName ? String(existing.targetLabName) : undefined,
+          },
+          channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+        });
+      }
     }
   }
 
@@ -489,9 +527,12 @@ export async function releasePayout(input: {
   ) {
     const targetLabId = String(stl.targetLabId || '');
     const targetLabName = String(stl.targetLabName || 'Partner Reference Lab');
+    const labSnap = targetLabId ? await db.collection('labs').doc(targetLabId).get() : null;
+    const labData = (labSnap?.data() as Record<string, unknown> | undefined) || {};
     const refId = input.referenceId?.trim() || `LABPAY-${Date.now().toString().slice(-6)}`;
     const mode = input.mode || 'NEFT';
     const payoutId = `POUT-LAB-${Date.now().toString().slice(-6)}`;
+    const destSummary = 'Verified Partner Account';
     const payoutDoc = {
       id: payoutId,
       settlementId: input.settlementId,
@@ -503,7 +544,7 @@ export async function releasePayout(input: {
       amountInr: labPayoutInr,
       mode,
       referenceId: refId,
-      destinationSummary: 'Verified Partner Account',
+      destinationSummary: destSummary,
       status: 'PROCESSED',
       processedByEmail: input.adminEmail,
       createdAt: now,
@@ -513,6 +554,28 @@ export async function releasePayout(input: {
     nextLabStatus = 'PAID';
     labRef = refId;
     labPaidAt = now;
+
+    await sendPlatformNotification({
+      title: `Payout Released: ₹${labPayoutInr.toLocaleString('en-IN')} (${orderNumber})`,
+      message: `Reference Hub payout for ${orderNumber} sent via ${mode} to ${destSummary}. Reference: ${refId}.`,
+      category: NotificationCategory.PAYOUT_SETTLED,
+      priority: NotificationPriority.NORMAL,
+      recipientEmail: labData.email ? String(labData.email) : undefined,
+      recipientRole: UserRole.LARGE_LAB,
+      labId: targetLabId || undefined,
+      orderId: String(stl.orderId || orderNumber),
+      templateType: 'PAYMENT_RECEIPT',
+      metadata: {
+        orderNumber,
+        amountInr: labPayoutInr,
+        referenceId: refId,
+        paymentMethod: mode,
+        targetLabName,
+        recipientName: targetLabName,
+        destinationSummary: destSummary,
+      },
+      channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+    });
   }
 
   if (
@@ -525,9 +588,12 @@ export async function releasePayout(input: {
     if (!phleboId) {
       throw new AppError('Assign a Field Phlebotomist before releasing courier payout.', 400, 'PHLEBOTOMIST_NOT_ASSIGNED');
     }
+    const phSnap = await db.collection('phlebotomists').doc(phleboId).get();
+    const phData = (phSnap.data() as Record<string, unknown> | undefined) || {};
     const refId = input.referenceId?.trim() || `CURPAY-${Date.now().toString().slice(-6)}`;
     const mode = input.mode || 'UPI';
     const payoutId = `POUT-CUR-${Date.now().toString().slice(-6)}`;
+    const destSummary = 'Courier Payout Account';
     const payoutDoc = {
       id: payoutId,
       settlementId: input.settlementId,
@@ -539,7 +605,7 @@ export async function releasePayout(input: {
       amountInr: phleboPayoutInr,
       mode,
       referenceId: refId,
-      destinationSummary: 'Courier Payout Account',
+      destinationSummary: destSummary,
       status: 'PROCESSED',
       processedByEmail: input.adminEmail,
       createdAt: now,
@@ -549,6 +615,27 @@ export async function releasePayout(input: {
     nextPhleboStatus = 'PAID';
     phleboRef = refId;
     phleboPaidAt = now;
+
+    await sendPlatformNotification({
+      title: `Courier Payout Sent: ₹${phleboPayoutInr.toLocaleString('en-IN')} (${orderNumber})`,
+      message: `Your delivery payout for ${orderNumber} was released via ${mode} (${destSummary}). Ref: ${refId}.`,
+      category: NotificationCategory.PAYOUT_SETTLED,
+      priority: NotificationPriority.NORMAL,
+      recipientEmail: phData.email ? String(phData.email) : undefined,
+      recipientRole: UserRole.PHLEBOTOMIST,
+      orderId: String(stl.orderId || orderNumber),
+      templateType: 'PAYMENT_RECEIPT',
+      metadata: {
+        orderNumber,
+        amountInr: phleboPayoutInr,
+        referenceId: refId,
+        paymentMethod: mode,
+        recipientName: phleboName,
+        phleboName,
+        destinationSummary: destSummary,
+      },
+      channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+    });
   }
 
   const allDone =

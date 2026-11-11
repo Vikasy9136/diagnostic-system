@@ -115,6 +115,17 @@ export enum NotificationCategory {
   SYSTEM_ALERT = 'SYSTEM_ALERT',
 }
 
+export type EmailTemplateType =
+  | 'OTP_LOGIN'
+  | 'PASSWORD_RESET'
+  | 'PDF_REPORT'
+  | 'EMERGENCY_ALERT'
+  | 'OPERATIONAL_NOTIFICATION'
+  | 'PAYMENT_RECEIPT'
+  | 'ACCOUNT_WELCOME';
+
+export type EmailMetadataValue = string | number | boolean | undefined;
+
 export interface PlatformNotification {
   id: string;
   title: string;
@@ -145,6 +156,10 @@ export interface SendNotificationPayload {
   orderId?: string;
   labId?: string;
   channels?: NotificationChannel[];
+  templateType?: EmailTemplateType;
+  actionUrl?: string;
+  actionLabel?: string;
+  metadata?: Record<string, EmailMetadataValue>;
 }
 
 export interface EmailDeliverySettings {

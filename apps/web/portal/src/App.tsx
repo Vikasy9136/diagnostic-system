@@ -4,6 +4,8 @@ import { signOut } from 'firebase/auth';
 import { auth } from './firebase';
 import { LandingPage } from './components/LandingPage';
 import { LoginPage, type VerifiedPortalSession } from './components/LoginPage';
+import { ForgotPasswordPage } from './components/ForgotPasswordPage';
+import { ResetPasswordPage } from './components/ResetPasswordPage';
 import {
   DynamicAlertModal,
   INITIAL_DYNAMIC_ALERT,
@@ -14,7 +16,7 @@ import { AdminDashboard } from './dashboards/AdminDashboard';
 import { SmallLabDashboard } from './dashboards/SmallLabDashboard';
 import { LargeLabDashboard } from './dashboards/LargeLabDashboard';
 
-type RouteView = 'landing' | 'login' | 'dashboard';
+type RouteView = 'landing' | 'login' | 'forgot-password' | 'reset-password' | 'dashboard';
 
 const ACTIVE_ROLE_STORAGE_KEY = 'labsetu_active_role';
 
@@ -30,11 +32,13 @@ function parseBrowserRoute(): {
   view: RouteView;
   role: UserRole;
   blockedPhleboParam: boolean;
+  initialEmail: string;
 } {
   const path = window.location.pathname.toLowerCase();
   const params = new URLSearchParams(window.location.search);
   const queryRole = params.get('role');
-  const blockedPhleboParam = queryRole === UserRole.PHLEBOTOMIST;
+  const hasOobCode = params.has('oobCode') || params.get('mode') === 'resetPassword';
+  const initialEmail = params.get('email')?.trim() || '';
   const storedRole = (() => {
     try {
       return window.sessionStorage.getItem(ACTIVE_ROLE_STORAGE_KEY);
@@ -49,19 +53,39 @@ function parseBrowserRoute(): {
     ? storedRole
     : UserRole.SMALL_LAB;
 
+  if (path.startsWith('/reset-password') || hasOobCode) {
+    return {
+      view: 'reset-password',
+      role: resolvedRole,
+      blockedPhleboParam: false,
+      initialEmail,
+    };
+  }
+  if (path.startsWith('/forgot-password')) {
+    return {
+      view: 'forgot-password',
+      role: resolvedRole,
+      blockedPhleboParam: false,
+      initialEmail,
+    };
+  }
+
+  const blockedPhleboParam = queryRole === UserRole.PHLEBOTOMIST;
+
   if (path.startsWith('/dashboard')) {
-    return { view: 'dashboard', role: resolvedRole, blockedPhleboParam };
+    return { view: 'dashboard', role: resolvedRole, blockedPhleboParam, initialEmail };
   }
   if (path.startsWith('/login')) {
-    return { view: 'login', role: resolvedRole, blockedPhleboParam };
+    return { view: 'login', role: resolvedRole, blockedPhleboParam, initialEmail };
   }
-  return { view: 'landing', role: resolvedRole, blockedPhleboParam };
+  return { view: 'landing', role: resolvedRole, blockedPhleboParam, initialEmail };
 }
 
 export function App() {
   const initialRoute = parseBrowserRoute();
   const [routeView, setRouteView] = useState<RouteView>(initialRoute.view);
   const [selectedRole, setSelectedRole] = useState<UserRole>(initialRoute.role);
+  const [forgotEmailHint, setForgotEmailHint] = useState<string>(initialRoute.initialEmail);
   const [session, setSession] = useState<VerifiedPortalSession | null>(null);
   const [alertState, setAlertState] = useState<DynamicAlertState>(INITIAL_DYNAMIC_ALERT);
 
@@ -113,6 +137,9 @@ export function App() {
     const parsed = parseBrowserRoute();
     setRouteView(parsed.view);
     setSelectedRole(parsed.role);
+    if (parsed.initialEmail) {
+      setForgotEmailHint(parsed.initialEmail);
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
@@ -121,6 +148,7 @@ export function App() {
       const parsed = parseBrowserRoute();
       setRouteView(parsed.view);
       setSelectedRole(parsed.role);
+      setForgotEmailHint(parsed.initialEmail);
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
@@ -137,11 +165,26 @@ export function App() {
         });
         return;
       }
+      if (!auth.currentUser) {
+        setSession(null);
+      }
       const targetRole = role && isValidWebRole(role) ? role : selectedRole;
       setSelectedRole(targetRole);
       navigate(`/login?role=${targetRole}`);
     },
     [navigate, selectedRole, showAlert]
+  );
+
+  const handleGoToForgotPassword = useCallback(
+    (email?: string) => {
+      const cleanEmail = email?.trim() || '';
+      setForgotEmailHint(cleanEmail);
+      const query = new URLSearchParams();
+      query.set('role', selectedRole);
+      if (cleanEmail) query.set('email', cleanEmail);
+      navigate(`/forgot-password?${query.toString()}`);
+    },
+    [navigate, selectedRole]
   );
 
   const handleSelectRoleOnLogin = useCallback(
@@ -223,6 +266,7 @@ export function App() {
           selectedRole={selectedRole}
           onSelectRole={handleSelectRoleOnLogin}
           onBackToLanding={() => navigate('/')}
+          onForgotPassword={handleGoToForgotPassword}
           onShowAlert={showAlert}
           onAuthenticated={handleAuthenticated}
         />
@@ -265,11 +309,31 @@ export function App() {
 
       {routeView === 'landing' && <LandingPage onGoToLogin={handleGoToLogin} />}
 
+      {routeView === 'forgot-password' && (
+        <ForgotPasswordPage
+          initialEmail={forgotEmailHint}
+          selectedRole={selectedRole}
+          onBackToLogin={() => handleGoToLogin(selectedRole)}
+          onBackToLanding={() => navigate('/')}
+          onShowAlert={showAlert}
+        />
+      )}
+
+      {routeView === 'reset-password' && (
+        <ResetPasswordPage
+          onGoToLogin={handleGoToLogin}
+          onGoToForgotPassword={handleGoToForgotPassword}
+          onBackToLanding={() => navigate('/')}
+          onShowAlert={showAlert}
+        />
+      )}
+
       {routeView === 'login' && !session && (
         <LoginPage
           selectedRole={selectedRole}
           onSelectRole={handleSelectRoleOnLogin}
           onBackToLanding={() => navigate('/')}
+          onForgotPassword={handleGoToForgotPassword}
           onShowAlert={showAlert}
           onAuthenticated={handleAuthenticated}
         />

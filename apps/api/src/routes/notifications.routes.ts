@@ -99,8 +99,22 @@ notificationsRouter.post(
   requireAuth,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { title, message, category, priority, recipientEmail, recipientUid, recipientRole, orderId, labId, channels } =
-        req.body || {};
+      const {
+        title,
+        message,
+        category,
+        priority,
+        recipientEmail,
+        recipientUid,
+        recipientRole,
+        orderId,
+        labId,
+        channels,
+        templateType,
+        actionUrl,
+        actionLabel,
+        metadata,
+      } = req.body || {};
 
       if (!title || !message) {
         return next(new AppError('Missing required fields: title and message', 400, 'BAD_REQUEST'));
@@ -117,6 +131,10 @@ notificationsRouter.post(
         orderId,
         labId,
         channels,
+        templateType,
+        actionUrl,
+        actionLabel,
+        metadata,
       });
 
       const response: ApiResponse<PlatformNotification> = {

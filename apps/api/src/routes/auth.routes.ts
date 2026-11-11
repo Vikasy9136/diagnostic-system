@@ -5,6 +5,7 @@ import { AuthenticatedRequest, requireAuth } from '../middleware/auth';
 import {
   findProvisionedUserByEmail,
   requestEmailOtp,
+  requestPasswordReset,
   verifyAndSyncSessionRole,
   verifyEmailOtp,
 } from '../services/user-directory.service';
@@ -70,6 +71,42 @@ authRouter.post('/otp/verify', async (req: Request, res: Response, next: NextFun
       success: true,
       data: result,
       message: 'OTP verified successfully',
+      timestamp: new Date().toISOString(),
+    };
+    return res.json(response);
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/**
+ * POST /api/v1/auth/forgot-password
+ * Issues a custom branded password reset link routed to /reset-password
+ */
+authRouter.post('/forgot-password', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { email, origin } = req.body || {};
+    const clientType = resolveClientPlatform(req);
+    if (!email || typeof email !== 'string' || !email.trim().includes('@')) {
+      return next(new AppError('Please enter a valid registered email address.', 400, 'BAD_REQUEST'));
+    }
+
+    const headerOrigin =
+      typeof req.headers['x-forwarded-origin'] === 'string'
+        ? req.headers['x-forwarded-origin']
+        : typeof req.headers.origin === 'string'
+        ? req.headers.origin
+        : undefined;
+
+    const result = await requestPasswordReset(
+      email,
+      typeof origin === 'string' ? origin : headerOrigin,
+      clientType
+    );
+    const response: ApiResponse<typeof result> = {
+      success: true,
+      data: result,
+      message: `Password reset link sent to ${email.trim().toLowerCase()}`,
       timestamp: new Date().toISOString(),
     };
     return res.json(response);

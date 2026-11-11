@@ -54,6 +54,9 @@ export async function forwardToCloudApiIfLocalMock(
     if (req.headers['x-client-platform']) {
       forwardHeaders['X-Client-Platform'] = String(req.headers['x-client-platform']);
     }
+    if (req.headers.origin) {
+      forwardHeaders['X-Forwarded-Origin'] = String(req.headers.origin);
+    }
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 20000);

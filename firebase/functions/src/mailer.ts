@@ -8,7 +8,8 @@ import {
   type SendNotificationPayload,
   UserRole,
 } from './types';
-import { ADMIN_EMAIL, db, messaging, PROJECT_ID, SMTP_CONFIG } from './firebaseAdmin';
+import { ADMIN_EMAIL, db, messaging, SMTP_CONFIG } from './firebaseAdmin';
+import { renderQueuedMailDocument, resolveNotificationEmailTemplate } from './emailTemplates';
 
 export function createMailTransporter(): Transporter | null {
   if (!SMTP_CONFIG.user || !SMTP_CONFIG.pass) {
@@ -26,41 +27,6 @@ export function createMailTransporter(): Transporter | null {
       pass: SMTP_CONFIG.pass,
     },
   });
-}
-
-function buildLabSetuEmailHtml(payload: SendNotificationPayload, createdAt: string): string {
-  const priorityColor =
-    payload.priority === NotificationPriority.CRITICAL
-      ? '#DC2626'
-      : payload.priority === NotificationPriority.HIGH
-      ? '#F59E0B'
-      : '#0D9488';
-
-  return `
-    <div style="font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #E2E8F0; border-radius: 12px; overflow: hidden; background: #FFFFFF;">
-      <div style="background: #062226; padding: 20px 24px; color: #FFFFFF;">
-        <div style="font-size: 18px; font-weight: 700; letter-spacing: -0.02em;">LabSetu Diagnostics Network</div>
-        <div style="font-size: 12px; color: #7DD3FC; margin-top: 4px;">Automated Sample Logistics &amp; Cold-Chain Alert</div>
-      </div>
-      <div style="padding: 24px; color: #0F172A;">
-        <span style="display: inline-block; padding: 4px 10px; border-radius: 999px; background: ${priorityColor}15; color: ${priorityColor}; font-size: 12px; font-weight: 700; margin-bottom: 12px;">
-          ${payload.category || NotificationCategory.SYSTEM_ALERT} • ${payload.priority || NotificationPriority.NORMAL}
-        </span>
-        <h2 style="margin: 0 0 10px 0; font-size: 18px; color: #0F172A;">${payload.title}</h2>
-        <p style="margin: 0 0 18px 0; font-size: 14px; line-height: 1.6; color: #334155;">${payload.message}</p>
-        ${
-          payload.orderId
-            ? `<div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 12px 14px; font-size: 13px; color: #475569; margin-bottom: 16px;">
-                <strong>Order / Reference ID:</strong> ${payload.orderId}
-               </div>`
-            : ''
-        }
-        <div style="font-size: 12px; color: #64748B; border-top: 1px solid #E2E8F0; padding-top: 14px;">
-          Sent at ${new Date(createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST • LabSetu Diagnostics Network
-        </div>
-      </div>
-    </div>
-  `;
 }
 
 export async function getNotificationSettings(): Promise<EmailDeliverySettings> {
@@ -158,7 +124,7 @@ export async function sendPlatformNotification(
   let pushSent = false;
 
   if (channels.includes(NotificationChannel.EMAIL) && recipientEmail) {
-    const htmlBody = buildLabSetuEmailHtml(payload, createdAt);
+    const rendered = resolveNotificationEmailTemplate(payload, createdAt);
     const transporter = createMailTransporter();
 
     if (transporter) {
@@ -166,9 +132,9 @@ export async function sendPlatformNotification(
         await transporter.sendMail({
           from: SMTP_CONFIG.from,
           to: recipientEmail,
-          subject: `[LabSetu] ${payload.title}`,
-          text: `${payload.title}\n\n${payload.message}`,
-          html: htmlBody,
+          subject: rendered.subject,
+          text: rendered.text,
+          html: rendered.html,
         });
         emailSent = true;
         emailStatus = `SENT_SMTP_TO_${recipientEmail}`;
@@ -181,10 +147,13 @@ export async function sendPlatformNotification(
 
     await db.collection('mail').add({
       to: [recipientEmail],
+      templateType: rendered.templateType,
+      category: payload.category || NotificationCategory.SYSTEM_ALERT,
+      priority: payload.priority || NotificationPriority.NORMAL,
       message: {
-        subject: `[LabSetu] ${payload.title}`,
-        text: payload.message,
-        html: htmlBody,
+        subject: rendered.subject,
+        text: rendered.text,
+        html: rendered.html,
       },
       deliveryState: emailSent ? 'DELIVERED_BY_CLOUD_FUNCTION' : 'QUEUED',
       createdAt,
@@ -275,15 +244,17 @@ export async function processQueuedMailDocument(
     html?: string;
   };
 
-  if (recipients.length === 0 || !message.subject) {
+  if (recipients.length === 0 || (!message.subject && !message.text)) {
     return;
   }
 
+  const rendered = renderQueuedMailDocument(data);
   const transporter = createMailTransporter();
   if (!transporter) {
     await db.collection('mail').doc(mailId).set(
       {
         deliveryState: 'QUEUED_NO_SMTP_PASS',
+        ...(rendered.resolvedTemplate ? { resolvedTemplate: rendered.resolvedTemplate } : {}),
         checkedAt: new Date().toISOString(),
       },
       { merge: true }
@@ -295,14 +266,15 @@ export async function processQueuedMailDocument(
     await transporter.sendMail({
       from: SMTP_CONFIG.from,
       to: recipients.join(', '),
-      subject: message.subject,
-      text: message.text || '',
-      html: message.html || undefined,
+      subject: rendered.subject,
+      text: rendered.text,
+      html: rendered.html || undefined,
     });
 
     await db.collection('mail').doc(mailId).set(
       {
         deliveryState: 'DELIVERED_BY_CLOUD_FUNCTION',
+        ...(rendered.resolvedTemplate ? { resolvedTemplate: rendered.resolvedTemplate } : {}),
         deliveredAt: new Date().toISOString(),
       },
       { merge: true }

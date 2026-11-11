@@ -11,7 +11,6 @@ import {
   signInWithPopup,
   signInWithRedirect,
   signInWithCustomToken,
-  sendPasswordResetEmail,
   signOut,
   getIdTokenResult,
   type User,
@@ -38,6 +37,7 @@ interface LoginPageProps {
   selectedRole: UserRole;
   onSelectRole: (role: UserRole) => void;
   onBackToLanding: () => void;
+  onForgotPassword: (email?: string) => void;
   onShowAlert: (opts: {
     variant: DynamicAlertVariant;
     title: string;
@@ -64,6 +64,7 @@ export function LoginPage({
   selectedRole,
   onSelectRole,
   onBackToLanding,
+  onForgotPassword,
   onShowAlert,
   onAuthenticated,
 }: LoginPageProps) {
@@ -449,35 +450,6 @@ export function LoginPage({
       onShowAlert({ variant: 'error', title: 'Sign In Unsuccessful', message: msg });
     } finally {
       setSubmitting(false);
-    }
-  }
-
-  async function handlePasswordReset() {
-    setInlineError(null);
-    setInlineSuccess(null);
-    const email = loginEmail.trim();
-    if (!email) {
-      onShowAlert({
-        variant: 'warning',
-        title: 'Email Required',
-        message: 'Please enter your registered email address first.',
-      });
-      return;
-    }
-
-    try {
-      await sendPasswordResetEmail(auth, email);
-      const msg = `We sent a password setup / reset link to ${email}. Please check your inbox and spam folder.`;
-      setInlineSuccess(msg);
-      onShowAlert({
-        variant: 'success',
-        title: 'Password Link Sent',
-        message: msg,
-      });
-    } catch (err: unknown) {
-      const msg = (err as Error).message || 'Could not send password reset email.';
-      setInlineError(msg);
-      onShowAlert({ variant: 'error', title: 'Unable to Send Reset Link', message: msg });
     }
   }
 
@@ -882,7 +854,7 @@ export function LoginPage({
                   <button
                     type="button"
                     className="btn-link-muted"
-                    onClick={() => void handlePasswordReset()}
+                    onClick={() => onForgotPassword(loginEmail.trim())}
                   >
                     Forgot / Set Password
                   </button>

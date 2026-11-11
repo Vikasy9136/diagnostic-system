@@ -10,6 +10,7 @@ import {
 } from '@diagnostic/shared';
 import { initializeFirebase } from '../config/firebase';
 import { config } from '../config/env';
+import { resolveNotificationEmailTemplate } from './emailTemplates.service';
 
 // Local volatile notification store used only until Admin SDK serviceAccountKey.json is attached
 const DEV_NOTIFICATIONS: PlatformNotification[] = [];
@@ -40,41 +41,6 @@ function createMailTransporter(): Transporter | null {
       pass: config.smtp.pass,
     },
   });
-}
-
-function buildLabSetuEmailHtml(payload: SendNotificationPayload, createdAt: string): string {
-  const priorityColor =
-    payload.priority === NotificationPriority.CRITICAL
-      ? '#DC2626'
-      : payload.priority === NotificationPriority.HIGH
-      ? '#F59E0B'
-      : '#0D9488';
-
-  return `
-    <div style="font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #E2E8F0; border-radius: 12px; overflow: hidden; background: #FFFFFF;">
-      <div style="background: #062226; padding: 20px 24px; color: #FFFFFF;">
-        <div style="font-size: 18px; font-weight: 700; letter-spacing: -0.02em;">LabSetu Diagnostics Network</div>
-        <div style="font-size: 12px; color: #7DD3FC; margin-top: 4px;">Automated Platform &amp; Cold-Chain Notification</div>
-      </div>
-      <div style="padding: 24px; color: #0F172A;">
-        <span style="display: inline-block; padding: 4px 10px; border-radius: 999px; background: ${priorityColor}15; color: ${priorityColor}; font-size: 12px; font-weight: 700; margin-bottom: 12px;">
-          ${payload.category || NotificationCategory.SYSTEM_ALERT} • ${payload.priority || NotificationPriority.NORMAL}
-        </span>
-        <h2 style="margin: 0 0 10px 0; font-size: 18px; color: #0F172A;">${payload.title}</h2>
-        <p style="margin: 0 0 18px 0; font-size: 14px; line-height: 1.6; color: #334155;">${payload.message}</p>
-        ${
-          payload.orderId
-            ? `<div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 12px 14px; font-size: 13px; color: #475569; margin-bottom: 16px;">
-                <strong>Order / Reference ID:</strong> ${payload.orderId}
-               </div>`
-            : ''
-        }
-        <div style="font-size: 12px; color: #64748B; border-top: 1px solid #E2E8F0; padding-top: 14px;">
-          Sent at ${new Date(createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST • LabSetu Diagnostics Network
-        </div>
-      </div>
-    </div>
-  `;
 }
 
 export async function getNotificationSettings(): Promise<EmailDeliverySettings> {
@@ -190,7 +156,7 @@ export async function sendPlatformNotification(
 
   // 1. Dispatch Email Notification (SMTP Nodemailer + Firestore 'mail' queue record)
   if (channels.includes(NotificationChannel.EMAIL) && recipientEmail) {
-    const htmlBody = buildLabSetuEmailHtml(payload, createdAt);
+    const rendered = resolveNotificationEmailTemplate(payload, createdAt);
     const transporter = createMailTransporter();
 
     if (transporter) {
@@ -198,9 +164,9 @@ export async function sendPlatformNotification(
         await transporter.sendMail({
           from: config.smtp.from,
           to: recipientEmail,
-          subject: `[LabSetu] ${payload.title}`,
-          text: `${payload.title}\n\n${payload.message}`,
-          html: htmlBody,
+          subject: rendered.subject,
+          text: rendered.text,
+          html: rendered.html,
         });
         emailSent = true;
         emailStatus = `SENT_SMTP_TO_${recipientEmail}`;
@@ -210,17 +176,20 @@ export async function sendPlatformNotification(
       }
     } else {
       emailStatus = 'QUEUED_FOR_EMAIL';
-      console.log(`📧 [Email Notification Queued -> ${recipientEmail}] Subject: ${payload.title}`);
+      console.log(`📧 [Email Notification Queued -> ${recipientEmail}] Subject: ${rendered.subject}`);
     }
 
     // Also record in Firestore `mail` collection (Trigger Email Extension compatible)
     if (db && !isMockMode) {
       await db.collection('mail').add({
         to: [recipientEmail],
+        templateType: rendered.templateType,
+        category: payload.category || NotificationCategory.SYSTEM_ALERT,
+        priority: payload.priority || NotificationPriority.NORMAL,
         message: {
-          subject: `[LabSetu] ${payload.title}`,
-          text: payload.message,
-          html: htmlBody,
+          subject: rendered.subject,
+          text: rendered.text,
+          html: rendered.html,
         },
         deliveryState: emailSent ? 'DELIVERED_BY_API_SMTP' : 'QUEUED',
         createdAt,

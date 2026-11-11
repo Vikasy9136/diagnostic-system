@@ -13,6 +13,34 @@ import { initializeFirebase } from '../config/firebase';
 import { config } from '../config/env';
 import { AppError } from '../middleware/errorHandler';
 import { sendPlatformNotification } from './notification.service';
+import { buildOtpEmailTemplate, buildPasswordResetEmailTemplate } from './emailTemplates.service';
+
+const ALLOWED_STATIC_ORIGINS = new Set([
+  'https://labsetu-diagnostics.web.app',
+  'https://labsetu-diagnostics.firebaseapp.com',
+]);
+
+function resolveSafeResetOrigin(requestedOrigin?: string): string {
+  const defaultOrigin = 'https://labsetu-diagnostics.web.app';
+  if (!requestedOrigin || typeof requestedOrigin !== 'string') {
+    return defaultOrigin;
+  }
+  try {
+    const parsed = new URL(requestedOrigin.trim());
+    if (ALLOWED_STATIC_ORIGINS.has(parsed.origin)) {
+      return parsed.origin;
+    }
+    if (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')
+    ) {
+      return parsed.origin;
+    }
+  } catch {
+    // Fall back safely
+  }
+  return defaultOrigin;
+}
 
 interface StoredOtpRecord {
   email: string;
@@ -212,11 +240,11 @@ export async function createOrUpdateManagedUser(
   DEV_USERS_DIRECTORY.set(normalized, profile);
 
   await sendPlatformNotification({
-    title: `Welcome to LabSetu Diagnostics (${ROLE_LABELS[payload.role]})`,
+    title: `Welcome to LabSetu — ${ROLE_LABELS[payload.role]} Account Ready`,
     message: `Hello ${profile.displayName}, your LabSetu Admin has set up your ${ROLE_LABELS[payload.role]} account for ${normalized}. ${
       payload.role === UserRole.PHLEBOTOMIST
-        ? 'Please open the LabSetu Mobile App and sign in using Google Sign-In, Email OTP' +
-          (payload.password ? ', or your password.' : '.')
+        ? 'Please open the LabSetu Mobile App and sign in using Email OTP' +
+          (payload.password ? ' or your password.' : '.')
         : 'You can sign in using Google Sign-In, Email OTP' + (payload.password ? ', or your password.' : '.')
     }`,
     category: NotificationCategory.SYSTEM_ALERT,
@@ -224,6 +252,16 @@ export async function createOrUpdateManagedUser(
     recipientEmail: normalized,
     recipientUid: uid,
     recipientRole: payload.role,
+    ...(profile.labId ? { labId: profile.labId } : {}),
+    templateType: 'ACCOUNT_WELCOME',
+    metadata: {
+      displayName: profile.displayName,
+      email: normalized,
+      roleLabel: ROLE_LABELS[payload.role],
+      ...(profile.labId ? { labId: profile.labId } : {}),
+      ...(profile.phlebotomistId ? { phlebotomistId: profile.phlebotomistId } : {}),
+      hasPassword: Boolean(payload.password),
+    },
     channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
   });
 
@@ -350,30 +388,24 @@ export async function requestEmailOtp(
   }
   DEV_OTP_STORE.set(normalized, record);
 
+  const renderedOtp = buildOtpEmailTemplate({
+    displayName: profile.displayName,
+    email: normalized,
+    role: profile.role,
+    otpCode,
+    expiresMinutes: 10,
+    clientType,
+  });
+
   const transporter = createOtpTransporter();
   if (transporter) {
     try {
       await transporter.sendMail({
         from: config.smtp.from,
         to: normalized,
-        subject: `LabSetu Sign-In OTP: ${otpCode}`,
-        text: `Your LabSetu verification OTP is ${otpCode}. It stays valid for 10 minutes. Please do not share this code with anyone.`,
-        html: `
-          <div style="font-family: Inter, -apple-system, sans-serif; max-width: 520px; margin: 0 auto; border: 1px solid #E2E8F0; border-radius: 12px; overflow: hidden;">
-            <div style="background: #062226; padding: 20px 24px; color: #FFFFFF;">
-              <div style="font-size: 18px; font-weight: 700;">LabSetu Diagnostics Sign-In</div>
-              <div style="font-size: 12px; color: #7DD3FC;">One-Time Email Verification Code</div>
-            </div>
-            <div style="padding: 24px; color: #0F172A;">
-              <p style="margin: 0 0 12px 0; font-size: 14px;">Hello <strong>${profile.displayName}</strong> (${ROLE_LABELS[profile.role]}),</p>
-              <p style="margin: 0 0 18px 0; font-size: 14px; color: #475569;">Use this 6-digit OTP to sign in to your LabSetu account:</p>
-              <div style="background: #F0FDFA; border: 1px dashed #0D9488; border-radius: 10px; padding: 16px; text-align: center; font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #0F766E;">
-                ${otpCode}
-              </div>
-              <p style="margin: 16px 0 0 0; font-size: 12px; color: #64748B;">Valid for 10 minutes. If you did not request this code, please ignore this email.</p>
-            </div>
-          </div>
-        `,
+        subject: renderedOtp.subject,
+        text: renderedOtp.text,
+        html: renderedOtp.html,
       });
       return { sent: true, deliveryMode: 'SMTP', role: profile.role };
     } catch (mailErr) {
@@ -392,6 +424,147 @@ export async function requestEmailOtp(
     503,
     'EMAIL_SERVICE_UNAVAILABLE'
   );
+}
+
+export async function requestPasswordReset(
+  email: string,
+  portalOrigin?: string,
+  _clientType?: 'WEB' | 'MOBILE'
+): Promise<{
+  sent: boolean;
+  deliveryMode: 'SMTP';
+  role: UserRole;
+  roleLabel: string;
+}> {
+  const normalized = normalizeEmail(email);
+  if (!normalized || !normalized.includes('@')) {
+    throw new AppError('Please enter a valid email address.', 400, 'BAD_REQUEST');
+  }
+
+  const profile = await findProvisionedUserByEmail(normalized);
+  if (!profile) {
+    throw new AppError(
+      `No LabSetu account was found for ${normalized}. Please ask your LabSetu Admin (${config.admin.email}) to add your email first.`,
+      403,
+      'USER_NOT_PROVISIONED'
+    );
+  }
+
+  if (!profile.isActive) {
+    throw new AppError(
+      `Your account (${normalized}) is currently paused. Please contact LabSetu Admin (${config.admin.email}).`,
+      403,
+      'ACCOUNT_SUSPENDED'
+    );
+  }
+
+  const { auth, db, isMockMode } = initializeFirebase();
+  if (!auth || !db || isMockMode) {
+    throw new AppError(
+      'Password recovery service requires live account directory connectivity. Please try again shortly or sign in with Google.',
+      503,
+      'PASSWORD_RESET_UNAVAILABLE'
+    );
+  }
+
+  let targetUid = profile.id;
+  try {
+    const fbUser = await auth.getUserByEmail(normalized);
+    targetUid = fbUser.uid;
+  } catch (err: unknown) {
+    const fbErr = err as { code?: string };
+    if (fbErr.code !== 'auth/user-not-found') {
+      throw err;
+    }
+    const created = await auth.createUser({
+      email: normalized,
+      displayName: profile.displayName || normalized.split('@')[0],
+      emailVerified: true,
+      disabled: false,
+    });
+    targetUid = created.uid;
+  }
+
+  await auth.setCustomUserClaims(targetUid, {
+    role: profile.role,
+    ...(profile.labId ? { labId: profile.labId } : {}),
+    ...(profile.phlebotomistId ? { phlebotomistId: profile.phlebotomistId } : {}),
+  });
+
+  const rawResetLink = await auth.generatePasswordResetLink(normalized);
+  const parsedRaw = new URL(rawResetLink);
+  const oobCode = parsedRaw.searchParams.get('oobCode');
+  if (!oobCode) {
+    throw new AppError(
+      'Unable to prepare a secure password reset link right now. Please try again.',
+      500,
+      'RESET_LINK_GENERATION_FAILED'
+    );
+  }
+
+  const safeOrigin = resolveSafeResetOrigin(portalOrigin);
+  const customResetUrl = `${safeOrigin}/reset-password?oobCode=${encodeURIComponent(
+    oobCode
+  )}&email=${encodeURIComponent(normalized)}&role=${encodeURIComponent(profile.role)}`;
+
+  const renderedReset = buildPasswordResetEmailTemplate({
+    displayName: profile.displayName,
+    email: normalized,
+    role: profile.role,
+    resetUrl: customResetUrl,
+    portalOrigin: safeOrigin,
+  });
+
+  const transporter = createOtpTransporter();
+  if (!transporter) {
+    throw new AppError(
+      'Password reset email delivery is not configured yet. Please sign in with Google or contact your LabSetu Admin.',
+      503,
+      'EMAIL_SERVICE_UNAVAILABLE'
+    );
+  }
+
+  try {
+    await transporter.sendMail({
+      from: config.smtp.from,
+      to: normalized,
+      subject: renderedReset.subject,
+      text: renderedReset.text,
+      html: renderedReset.html,
+    });
+  } catch (mailErr) {
+    console.error('Password reset email delivery failed:', mailErr);
+    throw new AppError(
+      'We could not deliver the password reset email right now. Please try again in a moment.',
+      502,
+      'EMAIL_DELIVERY_FAILED'
+    );
+  }
+
+  const now = new Date().toISOString();
+  const redactedUrl = `${safeOrigin}/reset-password?email=${encodeURIComponent(
+    normalized
+  )}&role=${encodeURIComponent(profile.role)}&token=REDACTED`;
+  await db.collection('mail').add({
+    to: [normalized],
+    templateType: 'PASSWORD_RESET',
+    category: NotificationCategory.SYSTEM_ALERT,
+    priority: NotificationPriority.NORMAL,
+    message: {
+      subject: renderedReset.subject,
+      text: `Password reset email delivered to ${normalized} (${ROLE_LABELS[profile.role]}). Audit link token redacted: ${redactedUrl}`,
+    },
+    deliveryState: 'DELIVERED_BY_API_SMTP',
+    deliveredAt: now,
+    createdAt: now,
+  });
+
+  return {
+    sent: true,
+    deliveryMode: 'SMTP',
+    role: profile.role,
+    roleLabel: ROLE_LABELS[profile.role],
+  };
 }
 
 export async function verifyEmailOtp(

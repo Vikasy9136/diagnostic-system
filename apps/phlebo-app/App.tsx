@@ -709,6 +709,28 @@ export default function App() {
           pushSent: false,
           createdAt: now,
         });
+
+        await addDoc(collection(db, 'mail'), {
+          to: [ADMIN_LOGIN_EMAIL],
+          templateType: 'EMERGENCY_ALERT',
+          category: NotificationCategory.TEMPERATURE_ALERT,
+          priority: NotificationPriority.CRITICAL,
+          templateData: {
+            title: `Cold-Chain Excursion Alert — ${order.orderNumber}`,
+            orderId: order.id,
+            orderNumber: order.orderNumber,
+            temperatureCelsius: numericTemp,
+            smallLabName: order.smallLabName,
+            targetLabName: order.targetLabName,
+            phleboName,
+            recipientRole: UserRole.ADMIN,
+          },
+          message: {
+            subject: `[LabSetu ALERT] Cold-Chain Excursion — ${order.orderNumber}`,
+            text: `Specimen temp logged at ${numericTemp}°C (outside 2°C–8°C safe band) by ${phleboName}.`,
+          },
+          createdAt: now,
+        });
       }
 
       setOtpValue(['', '', '', '', '']);
@@ -889,6 +911,16 @@ export default function App() {
 
             await addDoc(collection(db, 'mail'), {
               to: [ADMIN_LOGIN_EMAIL],
+              templateType: 'EMERGENCY_ALERT',
+              category: NotificationCategory.TEMPERATURE_ALERT,
+              priority: NotificationPriority.CRITICAL,
+              templateData: {
+                title: alertTitle,
+                phleboName,
+                phleboEmail,
+                courierId: effectivePhleboId || phleboEmail,
+                recipientRole: UserRole.ADMIN,
+              },
               message: {
                 subject: `[LabSetu SOS] ${alertTitle}`,
                 text: alertMessage,

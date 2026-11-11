@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -22,7 +22,8 @@ import {
   signInWithPopup,
   signInWithRedirect,
   signInWithCustomToken,
-  sendPasswordResetEmail,
+  verifyPasswordResetCode,
+  confirmPasswordReset,
   signOut,
   getIdTokenResult,
   type User,
@@ -56,11 +57,43 @@ interface PhleboAuthGateProps {
 }
 
 type AuthTabMode = 'password' | 'otp';
+type AuthViewMode = 'login' | 'forgot' | 'reset';
+type ResetStage = 'verifying' | 'ready' | 'submitting' | 'success' | 'invalid';
 
 const REQUIRED_ROLE = UserRole.PHLEBOTOMIST;
 
+function parseInitialWebAuthState(): {
+  view: AuthViewMode;
+  oobCode: string;
+  emailHint: string;
+} {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') {
+    return { view: 'login', oobCode: '', emailHint: '' };
+  }
+  const path = window.location.pathname.toLowerCase();
+  const params = new URLSearchParams(window.location.search);
+  const oobCode = params.get('oobCode')?.trim() || '';
+  const hasReset =
+    path.startsWith('/reset-password') ||
+    Boolean(oobCode) ||
+    params.get('mode') === 'resetPassword';
+  const emailHint = params.get('email')?.trim().toLowerCase() || '';
+
+  if (hasReset) {
+    return { view: 'reset', oobCode, emailHint };
+  }
+  if (path.startsWith('/forgot-password')) {
+    return { view: 'forgot', oobCode: '', emailHint };
+  }
+  return { view: 'login', oobCode: '', emailHint: '' };
+}
+
 export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateProps) {
-  const [authLoading, setAuthLoading] = useState(true);
+  const initialRoute = useMemo(() => parseInitialWebAuthState(), []);
+  const [authView, setAuthView] = useState<AuthViewMode>(initialRoute.view);
+  const authViewRef = useRef<AuthViewMode>(initialRoute.view);
+
+  const [authLoading, setAuthLoading] = useState(initialRoute.view === 'login');
   const [authTab, setAuthTab] = useState<AuthTabMode>('password');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -71,6 +104,24 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
   const [otpCode, setOtpCode] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [otpCooldown, setOtpCooldown] = useState(0);
+
+  // Forgot Password state
+  const [forgotEmail, setForgotEmail] = useState(initialRoute.emailHint);
+  const [forgotCooldown, setForgotCooldown] = useState(0);
+  const [forgotSentSummary, setForgotSentSummary] = useState<{
+    email: string;
+    role: UserRole;
+    roleLabel: string;
+  } | null>(null);
+
+  // Reset Password state
+  const [resetStage, setResetStage] = useState<ResetStage>('verifying');
+  const [resetEmail, setResetEmail] = useState(initialRoute.emailHint);
+  const [resetErrorReason, setResetErrorReason] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
 
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
@@ -89,6 +140,98 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
     }, 1000);
     return () => clearInterval(timer);
   }, [otpCooldown]);
+
+  useEffect(() => {
+    if (forgotCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setForgotCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [forgotCooldown]);
+
+  useEffect(() => {
+    if (authView !== 'reset') return;
+    let cancelled = false;
+
+    async function validateCode() {
+      if (!initialRoute.oobCode) {
+        if (!cancelled) {
+          setResetErrorReason(
+            'This password reset link is missing a valid security code. Please request a new reset link.'
+          );
+          setResetStage('invalid');
+        }
+        return;
+      }
+
+      setResetStage('verifying');
+      try {
+        const accountEmail = await verifyPasswordResetCode(auth, initialRoute.oobCode);
+        if (!cancelled) {
+          setResetEmail(accountEmail.trim().toLowerCase());
+          setResetStage('ready');
+        }
+      } catch (err: unknown) {
+        const fbErr = err as { code?: string };
+        let friendly =
+          'This password reset link is invalid or has already been used. Please request a new link.';
+        if (fbErr.code === 'auth/expired-action-code') {
+          friendly =
+            'This password reset link has expired (links stay valid for 60 minutes). Please request a new reset email.';
+        } else if (fbErr.code === 'auth/user-disabled') {
+          friendly =
+            'This account is currently paused. Please contact your LabSetu Platform Admin before resetting your password.';
+        }
+        if (!cancelled) {
+          setResetErrorReason(friendly);
+          setResetStage('invalid');
+        }
+      }
+    }
+
+    void validateCode();
+    return () => {
+      cancelled = true;
+    };
+  }, [authView, initialRoute]);
+
+  const passwordRules = useMemo(() => {
+    const hasLength = newPassword.length >= 8;
+    const hasUpper = /[A-Z]/.test(newPassword);
+    const hasLower = /[a-z]/.test(newPassword);
+    const hasNumber = /\d/.test(newPassword);
+    const matches = newPassword.length > 0 && newPassword === confirmNewPassword;
+    const score = [hasLength, hasUpper && hasLower, hasNumber, newPassword.length >= 12].filter(
+      Boolean
+    ).length;
+
+    let label = 'Too Short';
+    let color = '#EF4444';
+    if (score >= 4) {
+      label = 'Strong';
+      color = '#10B981';
+    } else if (score === 3) {
+      label = 'Good';
+      color = '#0EA5E9';
+    } else if (score === 2) {
+      label = 'Fair';
+      color = '#F59E0B';
+    } else if (newPassword.length > 0) {
+      label = 'Weak';
+      color = '#EF4444';
+    }
+
+    return {
+      hasLength,
+      hasUpper,
+      hasLower,
+      hasNumber,
+      matches,
+      score: newPassword.length === 0 ? 0 : Math.max(1, score),
+      label,
+      color,
+    };
+  }, [newPassword, confirmNewPassword]);
 
   const resolveWebPortalUrl = (role: UserRole): string => {
     if (role === UserRole.ADMIN) return PORTAL_URLS.ADMIN;
@@ -291,6 +434,11 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (authViewRef.current !== 'login') {
+        setAuthLoading(false);
+        return;
+      }
+
       if (!user) {
         if (!mismatchTriggeredRef.current) {
           setRoleMismatch(null);
@@ -399,33 +547,165 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
     }
   }
 
-  async function handlePasswordReset() {
+  function goToForgotView(emailHint?: string) {
+    const clean = (emailHint ?? loginEmail).trim().toLowerCase();
+    setForgotEmail(clean);
+    setForgotSentSummary(null);
     setInlineError(null);
     setInlineSuccess(null);
-    const email = loginEmail.trim();
-    if (!email) {
+    authViewRef.current = 'forgot';
+    setAuthView('forgot');
+  }
+
+  function goToLoginView() {
+    setInlineError(null);
+    setInlineSuccess(null);
+    setForgotSentSummary(null);
+    authViewRef.current = 'login';
+    setAuthView('login');
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.location.pathname !== '/' || window.location.search) {
+        window.history.replaceState({}, '', '/');
+      }
+    }
+    if (auth.currentUser) {
+      setAuthLoading(true);
+      void verifyFirebaseUserRole(auth.currentUser).finally(() => setAuthLoading(false));
+    }
+  }
+
+  async function handleSendForgotEmail(targetEmail?: string) {
+    setInlineError(null);
+    setInlineSuccess(null);
+    const normalized = (targetEmail ?? forgotEmail).trim().toLowerCase();
+    if (!normalized || !normalized.includes('@')) {
+      const msg = 'Enter your registered Field Phlebotomist email address.';
+      setInlineError(msg);
       onShowAlert({
         variant: 'warning',
         title: 'Email Required',
-        message: 'Enter your registered phlebotomist email address first.',
+        message: msg,
       });
       return;
     }
 
+    setAuthSubmitting(true);
     try {
-      await sendPasswordResetEmail(auth, email);
-      const msg = `We sent a password setup / reset link to ${email}. Check your inbox and spam folder.`;
-      setInlineSuccess(msg);
+      const portalOrigin =
+        Platform.OS === 'web' && typeof window !== 'undefined'
+          ? window.location.origin
+          : PORTAL_URLS.PORTAL;
+
+      const res = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Client-Platform': 'mobile',
+        },
+        body: JSON.stringify({
+          email: normalized,
+          origin: portalOrigin,
+          portalRole: REQUIRED_ROLE,
+          clientType: 'MOBILE',
+        }),
+      });
+
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        const errCode = json?.error?.code;
+        const errMsg =
+          json?.error?.message ||
+          'Unable to send a password reset link right now. Please check your email and try again.';
+        setInlineError(errMsg);
+        onShowAlert({
+          variant: 'error',
+          title:
+            errCode === 'USER_NOT_PROVISIONED'
+              ? 'Email Not Added Yet'
+              : errCode === 'ACCOUNT_SUSPENDED'
+                ? 'Account Paused'
+                : 'Unable to Send Reset Link',
+          message: errMsg,
+        });
+        return;
+      }
+
+      const assignedRole = (json?.data?.role as UserRole) || REQUIRED_ROLE;
+      const roleLabel =
+        (json?.data?.roleLabel as string) || ROLE_LABELS[assignedRole] || 'Field Phlebotomist';
+
+      setForgotSentSummary({ email: normalized, role: assignedRole, roleLabel });
+      setForgotCooldown(60);
       onShowAlert({
         variant: 'success',
-        title: 'Password Link Sent',
+        title: 'Password Reset Email Sent',
+        message: `We emailed a secure reset link to ${normalized}. Tap the link in your inbox to set a new password, then return here to sign in.`,
+      });
+    } catch {
+      const msg =
+        'Unable to reach the password recovery service right now. Please check your internet connection or use Email OTP.';
+      setInlineError(msg);
+      onShowAlert({
+        variant: 'warning',
+        title: 'Service Temporarily Unavailable',
         message: msg,
       });
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  async function handleConfirmNewPassword() {
+    setInlineError(null);
+    if (!passwordRules.hasLength) {
+      setInlineError('Your new password must be at least 8 characters long.');
+      return;
+    }
+    if (!passwordRules.hasUpper || !passwordRules.hasLower || !passwordRules.hasNumber) {
+      setInlineError(
+        'Include at least one uppercase letter, one lowercase letter, and one number.'
+      );
+      return;
+    }
+    if (!passwordRules.matches) {
+      setInlineError('New Password and Confirm Password do not match.');
+      return;
+    }
+
+    setResetStage('submitting');
+    try {
+      await confirmPasswordReset(auth, initialRoute.oobCode, newPassword);
+      if (auth.currentUser) {
+        await signOut(auth).catch(() => {});
+      }
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.history.replaceState({}, '', '/reset-password?role=PHLEBOTOMIST&status=done');
+      }
+      setResetStage('success');
+      onShowAlert({
+        variant: 'success',
+        title: 'Password Updated',
+        message: `Your password for ${resetEmail} has been updated. You can sign in now.`,
+      });
     } catch (err: unknown) {
-      const fbErr = err as { code?: string; message?: string };
-      const msg = fbErr.message || 'Unable to send password reset email.';
+      const fbErr = err as { code?: string };
+      if (
+        fbErr.code === 'auth/expired-action-code' ||
+        fbErr.code === 'auth/invalid-action-code'
+      ) {
+        setResetErrorReason(
+          'This reset link has expired or was already used. Please request a fresh reset link.'
+        );
+        setResetStage('invalid');
+        return;
+      }
+      const msg =
+        fbErr.code === 'auth/weak-password'
+          ? 'Please choose a stronger password with at least 8 characters.'
+          : 'Could not save your new password right now. Please try again.';
       setInlineError(msg);
-      onShowAlert({ variant: 'error', title: 'Unable to Send Reset Link', message: msg });
+      setResetStage('ready');
+      onShowAlert({ variant: 'error', title: 'Update Failed', message: msg });
     }
   }
 
@@ -567,6 +847,324 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
           </Text>
         </View>
       </View>
+    );
+  }
+
+  if (authView === 'forgot') {
+    return (
+      <ScrollView
+        contentContainerStyle={styles.scrollContainer}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.authCard}>
+          <View style={styles.banner}>
+            <View style={styles.brandBadge}>
+              <Text style={styles.brandIcon}>🔑</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.bannerTitle}>
+                {LABSETU_THEME.brand.name} • Password Recovery
+              </Text>
+              <Text style={styles.bannerSub}>
+                Reset or set up your Phlebo App password
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.cardBody}>
+            {forgotSentSummary ? (
+              <View>
+                <View style={styles.statusBoxSent}>
+                  <Text style={styles.statusEmoji}>✉️</Text>
+                  <Text style={styles.statusTitleSuccess}>Reset Link Sent</Text>
+                  <Text style={styles.statusCopy}>
+                    We emailed a secure password reset link to{' '}
+                    <Text style={{ fontWeight: '800', color: '#0F172A' }}>
+                      {forgotSentSummary.email}
+                    </Text>
+                    . Tap the link inside your inbox to set a new password, then return here to sign
+                    in.
+                  </Text>
+                  <View style={styles.rolePill}>
+                    <Text style={styles.rolePillText}>
+                      Registered Role: {forgotSentSummary.roleLabel}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.tipBox}>
+                  <Text style={styles.tipText}>
+                    Didn&apos;t see it? Check Spam or Promotions for an email titled &ldquo;Reset
+                    Your LabSetu Password&rdquo;. Links remain active for 60 minutes.
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  style={[
+                    styles.primaryBtn,
+                    { marginBottom: 10 },
+                    (forgotCooldown > 0 || authSubmitting) && { opacity: 0.6 },
+                  ]}
+                  disabled={forgotCooldown > 0 || authSubmitting}
+                  onPress={() => void handleSendForgotEmail(forgotSentSummary.email)}
+                >
+                  <Text style={styles.primaryBtnText}>
+                    {authSubmitting
+                      ? 'Sending Again...'
+                      : forgotCooldown > 0
+                        ? `Resend Link in ${forgotCooldown}s`
+                        : 'Resend Reset Link'}
+                  </Text>
+                </TouchableOpacity>
+
+                <View style={styles.otpFooterRow}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setForgotSentSummary(null);
+                      setInlineError(null);
+                    }}
+                  >
+                    <Text style={styles.linkMuted}>Try Different Email</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={goToLoginView}>
+                    <Text style={styles.linkMuted}>← Back to Sign In</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <View>
+                <View style={styles.stepPill}>
+                  <Text style={styles.stepPillText}>Step 1 of 2 • Request Reset Link</Text>
+                </View>
+
+                <Text style={styles.helperCopy}>
+                  Enter your Field Phlebotomist email added by Platform Admin ({ADMIN_LOGIN_EMAIL}).
+                  We will send a secure password setup link to your inbox.
+                </Text>
+
+                {inlineError ? (
+                  <View style={styles.errorBanner}>
+                    <Text style={styles.errorBannerText}>{inlineError}</Text>
+                  </View>
+                ) : null}
+
+                <Text style={styles.inputLabel}>Registered Email Address</Text>
+                <TextInput
+                  style={styles.input}
+                  value={forgotEmail}
+                  onChangeText={setForgotEmail}
+                  placeholder="Enter your registered email"
+                  placeholderTextColor="#94A3B8"
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                />
+
+                <TouchableOpacity
+                  style={[
+                    styles.primaryBtn,
+                    { marginBottom: 12 },
+                    authSubmitting && { opacity: 0.65 },
+                  ]}
+                  onPress={() => void handleSendForgotEmail()}
+                  disabled={authSubmitting}
+                >
+                  <Text style={styles.primaryBtnText}>
+                    {authSubmitting ? 'Sending Link...' : 'Send Password Reset Link →'}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.secondaryBtn} onPress={goToLoginView}>
+                  <Text style={styles.secondaryBtnText}>← Back to Sign In</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </ScrollView>
+    );
+  }
+
+  if (authView === 'reset') {
+    return (
+      <ScrollView
+        contentContainerStyle={styles.scrollContainer}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.authCard}>
+          <View style={styles.banner}>
+            <View style={styles.brandBadge}>
+              <Text style={styles.brandIcon}>🔐</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.bannerTitle}>
+                {LABSETU_THEME.brand.name} • Create New Password
+              </Text>
+              <Text style={styles.bannerSub}>Field Phlebotomist Account Recovery</Text>
+            </View>
+          </View>
+
+          <View style={styles.cardBody}>
+            {resetStage === 'verifying' ? (
+              <View style={styles.statusBoxNeutral}>
+                <ActivityIndicator size="small" color="#0D9488" />
+                <Text style={[styles.statusTitleNeutral, { marginTop: 10 }]}>
+                  Checking Your Security Link...
+                </Text>
+                <Text style={styles.statusCopy}>
+                  Please wait while we verify your reset link.
+                </Text>
+              </View>
+            ) : null}
+
+            {resetStage === 'invalid' ? (
+              <View>
+                <View style={styles.statusBoxError}>
+                  <Text style={styles.statusEmoji}>⚠️</Text>
+                  <Text style={styles.statusTitleError}>Reset Link Expired or Invalid</Text>
+                  <Text style={styles.statusCopy}>{resetErrorReason}</Text>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.primaryBtn, { marginBottom: 10 }]}
+                  onPress={() => goToForgotView(resetEmail)}
+                >
+                  <Text style={styles.primaryBtnText}>Request a New Reset Link →</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.secondaryBtn} onPress={goToLoginView}>
+                  <Text style={styles.secondaryBtnText}>← Back to Sign In</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
+            {resetStage === 'success' ? (
+              <View>
+                <View style={styles.statusBoxSent}>
+                  <Text style={styles.statusEmoji}>✓</Text>
+                  <Text style={styles.statusTitleSuccess}>Password Updated Successfully</Text>
+                  <Text style={styles.statusCopy}>
+                    Your new password for{' '}
+                    <Text style={{ fontWeight: '800', color: '#0F172A' }}>{resetEmail}</Text> is
+                    active right away.
+                  </Text>
+                </View>
+
+                <TouchableOpacity style={styles.primaryBtn} onPress={goToLoginView}>
+                  <Text style={styles.primaryBtnText}>Sign In to Phlebo App →</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
+            {resetStage === 'ready' || resetStage === 'submitting' ? (
+              <View>
+                <View style={styles.stepPill}>
+                  <Text style={styles.stepPillText}>Step 2 of 2 • Choose New Password</Text>
+                </View>
+
+                <View style={styles.roleReqBanner}>
+                  <Text style={styles.roleReqLabel}>Account:</Text>
+                  <Text style={styles.roleReqValue} numberOfLines={1}>
+                    {resetEmail}
+                  </Text>
+                </View>
+
+                {inlineError ? (
+                  <View style={styles.errorBanner}>
+                    <Text style={styles.errorBannerText}>{inlineError}</Text>
+                  </View>
+                ) : null}
+
+                <Text style={styles.inputLabel}>New Password</Text>
+                <View style={styles.passwordWrap}>
+                  <TextInput
+                    style={[styles.input, { flex: 1, marginBottom: 0, borderWidth: 0 }]}
+                    value={newPassword}
+                    onChangeText={setNewPassword}
+                    placeholder="Create a strong password"
+                    placeholderTextColor="#94A3B8"
+                    secureTextEntry={!showNewPassword}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowNewPassword(!showNewPassword)}
+                    style={styles.showPassBtn}
+                  >
+                    <Text style={styles.showPassText}>
+                      {showNewPassword ? 'Hide' : 'Show'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.strengthWrap}>
+                  <View style={styles.strengthHeader}>
+                    <Text style={styles.strengthLabel}>Password Strength</Text>
+                    <Text style={[styles.strengthValue, { color: passwordRules.color }]}>
+                      {passwordRules.label}
+                    </Text>
+                  </View>
+                  <View style={styles.strengthBars}>
+                    {[1, 2, 3, 4].map((slot) => (
+                      <View
+                        key={slot}
+                        style={[
+                          styles.strengthSegment,
+                          passwordRules.score >= slot && { backgroundColor: passwordRules.color },
+                        ]}
+                      />
+                    ))}
+                  </View>
+                </View>
+
+                <Text style={styles.inputLabel}>Confirm New Password</Text>
+                <View style={styles.passwordWrap}>
+                  <TextInput
+                    style={[styles.input, { flex: 1, marginBottom: 0, borderWidth: 0 }]}
+                    value={confirmNewPassword}
+                    onChangeText={setConfirmNewPassword}
+                    placeholder="Re-enter your new password"
+                    placeholderTextColor="#94A3B8"
+                    secureTextEntry={!showConfirmNewPassword}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowConfirmNewPassword(!showConfirmNewPassword)}
+                    style={styles.showPassBtn}
+                  >
+                    <Text style={styles.showPassText}>
+                      {showConfirmNewPassword ? 'Hide' : 'Show'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.reqBox}>
+                  {[
+                    { ok: passwordRules.hasLength, text: 'At least 8 characters' },
+                    { ok: passwordRules.hasUpper, text: 'One uppercase letter (A-Z)' },
+                    { ok: passwordRules.hasLower, text: 'One lowercase letter (a-z)' },
+                    { ok: passwordRules.hasNumber, text: 'One number (0-9)' },
+                    { ok: passwordRules.matches, text: 'Passwords match' },
+                  ].map((item) => (
+                    <Text
+                      key={item.text}
+                      style={[styles.reqItem, item.ok && styles.reqItemMet]}
+                    >
+                      {item.ok ? '✓' : '•'} {item.text}
+                    </Text>
+                  ))}
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.primaryBtn, resetStage === 'submitting' && { opacity: 0.65 }]}
+                  disabled={resetStage === 'submitting'}
+                  onPress={() => void handleConfirmNewPassword()}
+                >
+                  <Text style={styles.primaryBtnText}>
+                    {resetStage === 'submitting' ? 'Saving Password...' : 'Save New Password'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+          </View>
+        </View>
+      </ScrollView>
     );
   }
 
@@ -772,7 +1370,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
               </View>
 
               <View style={styles.linkRow}>
-                <TouchableOpacity onPress={() => void handlePasswordReset()}>
+                <TouchableOpacity onPress={() => goToForgotView(loginEmail.trim())}>
                   <Text style={styles.linkMuted}>Forgot / Set Password</Text>
                 </TouchableOpacity>
               </View>
@@ -1182,6 +1780,146 @@ const styles = StyleSheet.create({
   pillRedText: {
     color: '#DC2626',
     fontSize: 11,
+    fontWeight: '700',
+  },
+  stepPill: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    marginBottom: 12,
+  },
+  stepPillText: {
+    color: '#1D4ED8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  rolePill: {
+    marginTop: 10,
+    backgroundColor: '#CCFBF1',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
+  rolePillText: {
+    color: '#0F766E',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  statusBoxSent: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 14,
+    padding: 18,
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  statusBoxError: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 14,
+    padding: 18,
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  statusBoxNeutral: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    padding: 20,
+    alignItems: 'center',
+  },
+  statusEmoji: {
+    fontSize: 28,
+    marginBottom: 8,
+  },
+  statusTitleSuccess: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#065F46',
+    marginBottom: 6,
+  },
+  statusTitleError: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#B91C1C',
+    marginBottom: 6,
+  },
+  statusTitleNeutral: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 4,
+  },
+  statusCopy: {
+    fontSize: 13,
+    color: '#334155',
+    lineHeight: 19,
+    textAlign: 'center',
+  },
+  tipBox: {
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 10,
+    padding: 11,
+    marginBottom: 14,
+  },
+  tipText: {
+    fontSize: 12,
+    color: '#92400E',
+    lineHeight: 17,
+  },
+  strengthWrap: {
+    marginBottom: 12,
+  },
+  strengthHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  strengthLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  strengthValue: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  strengthBars: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  strengthSegment: {
+    flex: 1,
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: '#E2E8F0',
+  },
+  reqBox: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    padding: 12,
+    gap: 6,
+    marginTop: 4,
+    marginBottom: 16,
+  },
+  reqItem: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '500',
+  },
+  reqItemMet: {
+    color: '#047857',
     fontWeight: '700',
   },
 });

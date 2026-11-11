@@ -1897,3 +1897,181 @@ body {
   font-size: 0.83rem;
   color: var(--text-secondary);
 }
+
+/* =============================================================
+ * FORGOT PASSWORD & DYNAMIC RESET PASSWORD FLOW
+ * ============================================================= */
+.auth-flow-shell {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #062226 0%, #0B3137 52%, #0F766E 100%);
+  display: flex;
+  flex-direction: column;
+  padding: 24px;
+}
+
+.auth-flow-center {
+  width: 100%;
+  max-width: 480px;
+  margin: auto;
+}
+
+.step-indicator-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: #EFF6FF;
+  border: 1px solid #BFDBFE;
+  color: #1D4ED8;
+  font-size: 0.76rem;
+  font-weight: 700;
+  margin-bottom: 14px;
+}
+
+.role-assigned-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: #CCFBF1;
+  color: #0F766E;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.password-strength-meter {
+  margin: 8px 0 12px 0;
+}
+
+.password-strength-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.password-strength-bars {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.password-strength-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: #E2E8F0;
+  transition: background-color 0.2s ease;
+}
+
+.password-strength-bar.active.weak { background: #EF4444; }
+.password-strength-bar.active.fair { background: #F59E0B; }
+.password-strength-bar.active.good { background: #0EA5E9; }
+.password-strength-bar.active.strong { background: #10B981; }
+
+.password-requirements-list {
+  list-style: none;
+  background: #F8FAFC;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.password-req-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.79rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.password-req-item.met {
+  color: #047857;
+  font-weight: 600;
+}
+
+.password-req-item .req-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  font-weight: 800;
+  flex-shrink: 0;
+  background: #E2E8F0;
+  color: #64748B;
+}
+
+.password-req-item.met .req-dot {
+  background: #D1FAE5;
+  color: #059669;
+}
+
+.reset-status-card {
+  background: #F8FAFC;
+  border: 1px solid var(--border-light);
+  border-radius: 14px;
+  padding: 20px;
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+.reset-status-card.sent {
+  background: #F0FDF4;
+  border-color: #BBF7D0;
+}
+
+.reset-status-card.error {
+  background: #FEF2F2;
+  border-color: #FECACA;
+}
+
+.reset-status-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  margin: 0 auto 12px auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.45rem;
+}
+
+.reset-status-icon.sent,
+.reset-status-icon.success {
+  background: #D1FAE5;
+  color: #059669;
+}
+
+.reset-status-icon.error {
+  background: #FEE2E2;
+  color: #DC2626;
+}
+
+.reset-status-icon.loading {
+  background: #E0F2FE;
+  color: #0284C7;
+}
+
+.auth-tip-box {
+  background: #FFFBEB;
+  border: 1px solid #FDE68A;
+  border-radius: 10px;
+  padding: 11px 13px;
+  font-size: 0.78rem;
+  color: #92400E;
+  line-height: 1.5;
+  margin-bottom: 14px;
+  text-align: left;
+}

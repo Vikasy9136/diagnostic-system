@@ -146,6 +146,15 @@ ordersRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res: Respo
       recipientEmail: config.admin.email,
       recipientRole: UserRole.ADMIN,
       orderId: orderNumber,
+      templateType:
+        newOrder.priority === OrderPriority.STAT_CRITICAL
+          ? 'EMERGENCY_ALERT'
+          : 'OPERATIONAL_NOTIFICATION',
+      metadata: {
+        orderNumber,
+        smallLabName: newOrder.smallLabName,
+        targetLabName: newOrder.targetLabName,
+      },
       channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL, NotificationChannel.PUSH_FCM],
     });
 

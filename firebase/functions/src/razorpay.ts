@@ -126,8 +126,8 @@ export async function createRazorpayOrder(input: CreateRazorpayOrderInput) {
     input.amount !== undefined && input.amount !== null && input.amount !== ''
       ? Math.round(Number(input.amount))
       : input.amountInr !== undefined && input.amountInr !== null && input.amountInr !== ''
-        ? Math.round(Number(input.amountInr) * 100)
-        : NaN;
+      ? Math.round(Number(input.amountInr) * 100)
+      : NaN;
 
   const bookingId = input.bookingId?.trim();
   const requestedSettlementId = input.settlementId?.trim();
@@ -339,6 +339,15 @@ export async function verifyRazorpayPayment(input: VerifyRazorpayPaymentInput) {
       recipientEmail: ADMIN_EMAIL,
       recipientRole: UserRole.ADMIN,
       orderId: matchedOrderDoc?.id || orderNum,
+      templateType: 'PAYMENT_RECEIPT',
+      metadata: {
+        orderNumber: orderNum,
+        amountInr: gross,
+        referenceId: paymentId,
+        paymentMethod: resolvedMethod || 'ONLINE',
+        smallLabName: existing.smallLabName ? String(existing.smallLabName) : undefined,
+        targetLabName: existing.targetLabName ? String(existing.targetLabName) : undefined,
+      },
       channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
     });
   }
@@ -361,8 +370,8 @@ export async function createRazorpayPaymentLink(input: CreatePaymentLinkInput) {
     input.amount !== undefined && input.amount !== null && input.amount !== ''
       ? Math.round(Number(input.amount))
       : input.amountInr !== undefined && input.amountInr !== null && input.amountInr !== ''
-        ? Math.round(Number(input.amountInr) * 100)
-        : NaN;
+      ? Math.round(Number(input.amountInr) * 100)
+      : NaN;
 
   const bookingId = input.bookingId?.trim();
   const settlementId =
@@ -504,6 +513,7 @@ export async function syncPaymentLinkStatus(
     const stlSnap = await db.collection('settlements').doc(resolvedSettlementId).get();
     if (stlSnap.exists) {
       const existing = stlSnap.data() as Record<string, unknown>;
+      const wasAlreadyPaid = existing.paymentStatus === 'PAID';
       await stlSnap.ref.set(
         {
           ...paidPatch,
@@ -512,6 +522,29 @@ export async function syncPaymentLinkStatus(
         },
         { merge: true }
       );
+      if (!wasAlreadyPaid) {
+        const orderNum = String(existing.orderNumber || resolvedBookingId || link.id);
+        const gross = Number(existing.grossAmountInr || Math.round((Number(link.amount) || 0) / 100));
+        await sendPlatformNotification({
+          title: `Payment Link Confirmed: ${orderNum} (₹${gross.toLocaleString('en-IN')})`,
+          message: `Payment link (${paymentId}) settled via ${method} for ${existing.smallLabName || 'Collection Lab'} -> ${existing.targetLabName || 'Reference Lab'}.`,
+          category: NotificationCategory.PAYMENT_RECEIVED,
+          priority: NotificationPriority.NORMAL,
+          recipientEmail: ADMIN_EMAIL,
+          recipientRole: UserRole.ADMIN,
+          orderId: resolvedBookingId || orderNum,
+          templateType: 'PAYMENT_RECEIPT',
+          metadata: {
+            orderNumber: orderNum,
+            amountInr: gross,
+            referenceId: paymentId,
+            paymentMethod: method,
+            smallLabName: existing.smallLabName ? String(existing.smallLabName) : undefined,
+            targetLabName: existing.targetLabName ? String(existing.targetLabName) : undefined,
+          },
+          channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+        });
+      }
     }
   }
 
@@ -560,14 +593,14 @@ async function tryExecuteRazorpayXPayout(params: {
   const fundBody = params.upiId
     ? { contact_id: contact.id, account_type: 'vpa', vpa: { address: params.upiId } }
     : {
-      contact_id: contact.id,
-      account_type: 'bank_account',
-      bank_account: {
-        name: params.recipientName,
-        ifsc: params.ifscCode,
-        account_number: params.bankAccountNumber,
-      },
-    };
+        contact_id: contact.id,
+        account_type: 'bank_account',
+        bank_account: {
+          name: params.recipientName,
+          ifsc: params.ifscCode,
+          account_number: params.bankAccountNumber,
+        },
+      };
 
   const fundRes = await fetch('https://api.razorpay.com/v1/fund_accounts', {
     method: 'POST',
@@ -646,8 +679,8 @@ export async function releaseSettlementPayout(input: ReleasePayoutInput) {
     const destSummary = payoutProfile.upiId
       ? `UPI: ${payoutProfile.upiId}`
       : payoutProfile.bankAccountLast4
-        ? `Bank ••••${payoutProfile.bankAccountLast4} (${payoutProfile.ifscCode || 'IFSC'})`
-        : 'Verified Partner Account';
+      ? `Bank ••••${payoutProfile.bankAccountLast4} (${payoutProfile.ifscCode || 'IFSC'})`
+      : 'Verified Partner Account';
 
     const refId =
       input.referenceId?.trim() || `LABPAY-${Date.now().toString().slice(-6)}`;
@@ -699,6 +732,16 @@ export async function releaseSettlementPayout(input: ReleasePayoutInput) {
       recipientRole: UserRole.LARGE_LAB,
       labId: targetLabId || undefined,
       orderId: String(stl.orderId || orderNumber),
+      templateType: 'PAYMENT_RECEIPT',
+      metadata: {
+        orderNumber,
+        amountInr: labPayoutInr,
+        referenceId: refId,
+        paymentMethod: payoutMode,
+        targetLabName,
+        recipientName: targetLabName,
+        destinationSummary: destSummary,
+      },
       channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
     });
   }
@@ -736,8 +779,8 @@ export async function releaseSettlementPayout(input: ReleasePayoutInput) {
     const destSummary = payoutProfile.upiId
       ? `UPI: ${payoutProfile.upiId}`
       : payoutProfile.bankAccountLast4
-        ? `Bank ••••${payoutProfile.bankAccountLast4} (${payoutProfile.ifscCode || 'IFSC'})`
-        : 'Courier Payout Account';
+      ? `Bank ••••${payoutProfile.bankAccountLast4} (${payoutProfile.ifscCode || 'IFSC'})`
+      : 'Courier Payout Account';
 
     const refId =
       input.referenceId?.trim() || `CURPAY-${Date.now().toString().slice(-6)}`;
@@ -788,6 +831,16 @@ export async function releaseSettlementPayout(input: ReleasePayoutInput) {
       recipientEmail: phData.email ? String(phData.email) : undefined,
       recipientRole: UserRole.PHLEBOTOMIST,
       orderId: String(stl.orderId || orderNumber),
+      templateType: 'PAYMENT_RECEIPT',
+      metadata: {
+        orderNumber,
+        amountInr: phleboPayoutInr,
+        referenceId: refId,
+        paymentMethod: payoutMode,
+        recipientName: resolvedName,
+        phleboName: resolvedName,
+        destinationSummary: destSummary,
+      },
       channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
     });
   }

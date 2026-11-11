@@ -19,6 +19,8 @@ import {
   type DiagnosticReportRecord,
   type DiagnosticTestItem,
   type EmailDeliverySettings,
+  type EmailMetadataValue,
+  type EmailTemplateType,
   type LabFacility,
   type LabVerificationStatus,
   NotificationCategory,
@@ -627,18 +629,32 @@ export async function provisionRoleUser(
       }
     }
 
-    await addDoc(collection(db, 'mail'), {
-      to: [normalized],
-      message: {
-        subject: `Welcome to LabSetu — ${ROLE_LABELS[profile.role]} Account Ready`,
-        text: `Hello ${profile.displayName}, Admin (${ADMIN_LOGIN_EMAIL}) has created your ${ROLE_LABELS[profile.role]} account for ${normalized}. ${
-          profile.role === UserRole.PHLEBOTOMIST
-            ? 'Please open the LabSetu Mobile App and sign in using Google Sign-In, Email & Password, or Email OTP.'
-            : `Sign in at ${window.location.origin}/login using Google Sign-In, Email & Password, or Email OTP.`
-        }`,
-      },
-      createdAt: now,
-    });
+    if (!apiSynced) {
+      await addDoc(collection(db, 'mail'), {
+        to: [normalized],
+        templateType: 'ACCOUNT_WELCOME' satisfies EmailTemplateType,
+        category: NotificationCategory.SYSTEM_ALERT,
+        priority: NotificationPriority.NORMAL,
+        templateData: {
+          displayName: profile.displayName,
+          email: normalized,
+          role: profile.role,
+          ...(profile.labId ? { labId: profile.labId } : {}),
+          ...(profile.phlebotomistId ? { phlebotomistId: profile.phlebotomistId } : {}),
+          hasPassword: Boolean(payload.password),
+          ...(typeof window !== 'undefined' ? { portalOrigin: window.location.origin } : {}),
+        },
+        message: {
+          subject: `Welcome to LabSetu — ${ROLE_LABELS[profile.role]} Account Ready`,
+          text: `Hello ${profile.displayName}, Admin (${ADMIN_LOGIN_EMAIL}) has created your ${ROLE_LABELS[profile.role]} account for ${normalized}. ${
+            profile.role === UserRole.PHLEBOTOMIST
+              ? 'Please open the LabSetu Mobile App and sign in using Google Sign-In, Email & Password, or Email OTP.'
+              : `Sign in at ${window.location.origin}/login using Google Sign-In, Email & Password, or Email OTP.`
+          }`,
+        },
+        createdAt: now,
+      });
+    }
   }
 
   return { profile, apiSynced };
@@ -960,6 +976,16 @@ export async function createLiveBooking(params: {
     recipientRole: UserRole.ADMIN,
     orderId: orderNumber,
     queueEmail: true,
+    templateType:
+      params.priority === OrderPriority.STAT_CRITICAL
+        ? 'EMERGENCY_ALERT'
+        : 'OPERATIONAL_NOTIFICATION',
+    templateData: {
+      orderNumber,
+      smallLabName: params.smallLab.name,
+      targetLabName: params.targetLab.name,
+      handoverOtp,
+    },
   });
 
   if (params.phlebotomist?.id) {
@@ -1086,6 +1112,14 @@ export async function updateOrderCustodyTransition(params: {
       recipientRole: UserRole.ADMIN,
       orderId: params.order.id,
       queueEmail: true,
+      templateType: 'EMERGENCY_ALERT',
+      templateData: {
+        orderNumber: params.order.orderNumber,
+        temperatureCelsius: params.temperatureCelsius,
+        smallLabName: params.order.smallLabName,
+        targetLabName: params.order.targetLabName,
+        operatorName: params.operatorName,
+      },
     });
   }
 }
@@ -1163,14 +1197,53 @@ export async function publishDiagnosticReport(params: {
   });
   await addDoc(collection(db, 'custody_events'), evt);
 
+  let smallLabRecipientEmail = '';
+  let shouldSendReportEmail = true;
+  try {
+    const [labSnap, notifSnap] = await Promise.all([
+      getDoc(doc(db, 'labs', params.order.smallLabId)),
+      getDoc(doc(db, 'settings', 'notifications')),
+    ]);
+    if (labSnap.exists()) {
+      const labData = labSnap.data() as Partial<LabFacility>;
+      if (labData.email) {
+        smallLabRecipientEmail = labData.email.trim().toLowerCase();
+      }
+    }
+    if (notifSnap.exists()) {
+      const notifSettings = notifSnap.data() as Partial<EmailDeliverySettings>;
+      if (notifSettings.enableReportReadyEmails === false) {
+        shouldSendReportEmail = false;
+      }
+    }
+  } catch {
+    // Proceed with notification even if optional lookup fails
+  }
+
   await dispatchPlatformAlert({
     title: `Report Ready: ${params.order.orderNumber} (${record.patientName})`,
     message: `${params.order.targetLabName} uploaded verified report ${reportId} signed by ${record.pathologistName}.`,
     category: NotificationCategory.REPORT_UPLOADED,
     priority: NotificationPriority.NORMAL,
+    recipientEmail: smallLabRecipientEmail || ADMIN_LOGIN_EMAIL,
     recipientRole: UserRole.SMALL_LAB,
     orderId: params.order.id,
-    queueEmail: false,
+    queueEmail: shouldSendReportEmail,
+    templateType: 'PDF_REPORT',
+    actionUrl: downloadUrl,
+    actionLabel: 'Download Verified Report PDF →',
+    templateData: {
+      reportId,
+      orderNumber: params.order.orderNumber,
+      patientName: record.patientName,
+      testsSummary: record.testsSummary,
+      smallLabName: params.order.smallLabName,
+      targetLabName: params.order.targetLabName,
+      pathologistName: record.pathologistName,
+      fileName: record.fileName,
+      downloadUrl,
+      ...(turnaroundMinutes ? { turnaroundMinutes: `${turnaroundMinutes} mins` } : {}),
+    },
   });
 
   return record;
@@ -1198,8 +1271,24 @@ export async function dispatchPlatformAlert(opts: {
   recipientRole?: UserRole | 'ALL';
   orderId?: string;
   queueEmail?: boolean;
+  templateType?: EmailTemplateType;
+  actionUrl?: string;
+  actionLabel?: string;
+  templateData?: Record<string, EmailMetadataValue>;
 }): Promise<void> {
   const now = new Date().toISOString();
+  const resolvedTemplateType: EmailTemplateType =
+    opts.templateType ||
+    (opts.category === NotificationCategory.REPORT_UPLOADED
+      ? 'PDF_REPORT'
+      : opts.category === NotificationCategory.TEMPERATURE_ALERT ||
+        opts.priority === NotificationPriority.CRITICAL
+      ? 'EMERGENCY_ALERT'
+      : opts.category === NotificationCategory.PAYMENT_RECEIVED ||
+        opts.category === NotificationCategory.PAYOUT_SETTLED
+      ? 'PAYMENT_RECEIPT'
+      : 'OPERATIONAL_NOTIFICATION');
+
   const payload: Omit<PlatformNotification, 'id'> = {
     title: opts.title,
     message: opts.message,
@@ -1221,10 +1310,34 @@ export async function dispatchPlatformAlert(opts: {
   await addDoc(collection(db, 'notifications'), payload);
 
   if (opts.queueEmail && opts.recipientEmail) {
+    const cleanTemplateData: Record<string, EmailMetadataValue> = {
+      title: opts.title,
+    };
+    for (const [key, val] of Object.entries(opts.templateData || {})) {
+      if (val !== undefined) {
+        cleanTemplateData[key] = val;
+      }
+    }
+    if (opts.orderId) cleanTemplateData.orderId = opts.orderId;
+    if (opts.recipientRole) cleanTemplateData.recipientRole = opts.recipientRole;
+    if (opts.actionUrl) cleanTemplateData.actionUrl = opts.actionUrl;
+    if (opts.actionLabel) cleanTemplateData.actionLabel = opts.actionLabel;
+
+    const subject =
+      resolvedTemplateType === 'EMERGENCY_ALERT'
+        ? `[LabSetu ALERT] ${opts.title}`
+        : resolvedTemplateType === 'PDF_REPORT'
+        ? `[LabSetu Report PDF] ${opts.title}`
+        : `[LabSetu] ${opts.title}`;
+
     await addDoc(collection(db, 'mail'), {
       to: [opts.recipientEmail.toLowerCase()],
+      templateType: resolvedTemplateType,
+      category: opts.category,
+      priority: opts.priority,
+      templateData: cleanTemplateData,
       message: {
-        subject: `[LabSetu] ${opts.title}`,
+        subject,
         text: opts.message,
       },
       createdAt: now,
