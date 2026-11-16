@@ -192,12 +192,19 @@ service cloud.firestore {
     // =========================================================================
     match /phlebotomists/{phleboId} {
       allow read: if isAuthenticated() && isAccountActive();
-      allow create: if isAdmin() || hasAnyPermission(['MANAGE_PHLEBO_NETWORK', 'MANAGE_ONBOARDING', 'MANAGE_VERIFICATION']);
+      allow create: if isAdmin()
+        || hasAnyPermission(['MANAGE_PHLEBO_NETWORK', 'MANAGE_ONBOARDING', 'MANAGE_VERIFICATION'])
+        || (isPhlebotomist() && (phleboId == request.auth.uid || request.resource.data.email == normalizedEmail()));
       allow delete: if isAdmin();
       allow update: if isAdmin()
         || hasAnyPermission(['MANAGE_PHLEBO_NETWORK', 'MANAGE_VERIFICATION', 'MANAGE_BOOKINGS_DISPATCH', 'MANAGE_OPERATIONAL_QUALITY'])
         || (isPhlebotomist()
-          && ((getPhlebotomistId() != null && getPhlebotomistId() == phleboId) || resource.data.email == normalizedEmail()));
+          && (
+            phleboId == request.auth.uid
+            || (getPhlebotomistId() != null && getPhlebotomistId() == phleboId)
+            || resource.data.email == normalizedEmail()
+            || (request.auth.token.email != null && resource.data.email == request.auth.token.email)
+          ));
     }
 
     // =========================================================================

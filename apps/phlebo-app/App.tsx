@@ -65,6 +65,8 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
+  limit,
   onSnapshot,
   query,
   runTransaction,
@@ -309,6 +311,7 @@ function PhleboAppContent() {
     DEFAULT_FLOATING_ICON_SETTINGS
   );
   const [localDutyStatus, setLocalDutyStatus] = useState<PhlebotomistShiftStatus>('ONLINE');
+  const lastUserShiftToggleMsRef = useRef<number>(0);
   const [appState, setAppState] = useState<AppStateStatus>(
     (AppState.currentState as AppStateStatus) || 'active'
   );
@@ -837,15 +840,16 @@ function PhleboAppContent() {
     setPayoutIfsc(pp.ifscCode || '');
   }, [myPhleboProfile?.payoutProfile, phleboName]);
 
-  // Sync optimistic local duty status whenever Firestore fleet profile updates
+  // Sync optimistic local duty status whenever Firestore fleet profile updates (unless user recently toggled)
   useEffect(() => {
     if (myPhleboProfile?.status) {
+      if (Date.now() - lastUserShiftToggleMsRef.current < 8000) return;
       setLocalDutyStatus(myPhleboProfile.status);
       void AsyncStorage.setItem(DUTY_STATUS_STORAGE_KEY, myPhleboProfile.status).catch(() => {});
     }
   }, [myPhleboProfile?.status]);
 
-  const dutyStatus: PhlebotomistShiftStatus = myPhleboProfile?.status || localDutyStatus;
+  const dutyStatus: PhlebotomistShiftStatus = localDutyStatus;
   const isOnline = dutyStatus === 'ONLINE';
 
   const isSuspendedForUnsettledFees = useMemo(() => {
@@ -2909,7 +2913,9 @@ function PhleboAppContent() {
   }
 
   async function handleShiftUpdate(nextStatus: PhlebotomistShiftStatus) {
+    lastUserShiftToggleMsRef.current = Date.now();
     setLocalDutyStatus(nextStatus);
+    setMyPhleboProfile((prev) => (prev ? { ...prev, status: nextStatus } : prev));
     void AsyncStorage.setItem(DUTY_STATUS_STORAGE_KEY, nextStatus).catch(() => {});
 
     if (
@@ -2942,29 +2948,64 @@ function PhleboAppContent() {
       });
     };
 
-    const targetDocId = effectivePhleboId || session?.firebaseUser?.uid || '';
-    if (!targetDocId) {
-      showShiftToast(false);
-      return;
-    }
+    const targetDocId =
+      effectivePhleboId ||
+      myPhleboProfile?.id ||
+      session?.profile?.phlebotomistId ||
+      session?.firebaseUser?.uid ||
+      '';
 
     try {
-      const ref = doc(db, 'phlebotomists', targetDocId);
       const now = new Date().toISOString();
-      try {
-        await updateDoc(ref, {
-          status: nextStatus,
-          updatedAt: now,
-        });
-      } catch (innerErr: unknown) {
-        const code = (innerErr as { code?: string })?.code || '';
-        const msg = (innerErr as { message?: string })?.message || '';
-        if (code === 'not-found' || msg.includes('No document to update')) {
+      let docUpdated = false;
+
+      // 1. Direct update on targetDocId if provided
+      if (targetDocId) {
+        try {
+          const directRef = doc(db, 'phlebotomists', targetDocId);
+          await updateDoc(directRef, {
+            status: nextStatus,
+            latitude: riderLocation.latitude,
+            longitude: riderLocation.longitude,
+            updatedAt: now,
+          });
+          docUpdated = true;
+        } catch {
+          // Fall through to query by email or create
+        }
+      }
+
+      // 2. If direct update failed, locate by phleboEmail
+      if (!docUpdated && phleboEmail) {
+        try {
+          const q = query(
+            collection(db, 'phlebotomists'),
+            where('email', '==', phleboEmail.toLowerCase()),
+            limit(1)
+          );
+          const snap = await getDocs(q);
+          if (!snap.empty) {
+            const foundDoc = snap.docs[0];
+            await updateDoc(foundDoc.ref, {
+              status: nextStatus,
+              latitude: riderLocation.latitude,
+              longitude: riderLocation.longitude,
+              updatedAt: now,
+            });
+            docUpdated = true;
+          }
+        } catch {}
+      }
+
+      // 3. Fallback: create/merge on session.firebaseUser.uid (permitted by firestore rules)
+      if (!docUpdated && session?.firebaseUser?.uid) {
+        try {
+          const fallbackRef = doc(db, 'phlebotomists', session.firebaseUser.uid);
           await setDoc(
-            ref,
+            fallbackRef,
             {
-              id: targetDocId,
-              email: phleboEmail,
+              id: session.firebaseUser.uid,
+              email: phleboEmail ? phleboEmail.toLowerCase() : '',
               name: phleboName || 'Field Phlebotomist',
               status: nextStatus,
               latitude: riderLocation.latitude,
@@ -2973,11 +3014,11 @@ function PhleboAppContent() {
             },
             { merge: true }
           );
-        } else {
-          throw innerErr;
-        }
+          docUpdated = true;
+        } catch {}
       }
-      showShiftToast(true);
+
+      showShiftToast(docUpdated);
     } catch {
       // Keep local duty toggle working seamlessly even if courier Firestore doc is not provisioned yet
       showShiftToast(false);
