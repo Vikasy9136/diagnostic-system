@@ -4,6 +4,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   query,
   setDoc,
@@ -19,15 +20,21 @@ import {
   type CreateManagedUserPayload,
   type CustodyEvent,
   CustodyEventType,
+  deepCleanFirestorePayload,
+  DEFAULT_COMMISSION_CONFIG as SHARED_DEFAULT_COMMISSION_CONFIG,
+  DEFAULT_STARTER_SERVICE_ZONES,
   type DiagnosticReportRecord,
   type DiagnosticTestItem,
   type DropDestinationType,
   type EmailDeliverySettings,
   type EmailMetadataValue,
   type EmailTemplateType,
+  evaluatePointServiceCoverage,
+  generateRoleAssignedId,
   type LabCenterType,
   type LabFacility,
   type LabVerificationStatus,
+  normalizeIdentifierCode,
   NotificationCategory,
   NotificationChannel,
   NotificationPriority,
@@ -36,12 +43,14 @@ import {
   type PatientRecord,
   type PayoutProfile,
   type PayoutRecord,
+  type PermissionCode,
   type PhlebotomistProfile,
   type PhlebotomistShiftStatus,
   type PickupOrder,
   type PlatformNotification,
   type PlatformSlaConfig,
   ROLE_LABELS,
+  type ServiceZoneRecord,
   type SettlementRecord,
   SpecimenQualityStatus,
   type UserProfile,
@@ -64,26 +73,12 @@ export const DEFAULT_PLATFORM_SLA: PlatformSlaConfig = {
 };
 
 export const DEFAULT_COMMISSION_CONFIG: CommissionConfig = {
-  commissionPct: 15,
-  defaultMarginMode: 'PCT_OF_GROSS',
-  courierBaseFeeInr: 180,
-  includedBaseKm: 5,
-  perKmFeeInr: 18,
-  customDropBaseFeeInr: 200,
-  statSurchargeInr: 150,
-  defaultBroadcastRadiusKm: 5,
-  largeLabAgreements: {},
+  ...SHARED_DEFAULT_COMMISSION_CONFIG,
   updatedAt: new Date().toISOString(),
 };
 
-function stripUndefinedFields<T extends object>(obj: T): T {
-  const clean: Record<string, unknown> = {};
-  for (const [key, val] of Object.entries(obj)) {
-    if (val !== undefined) {
-      clean[key] = val;
-    }
-  }
-  return clean as T;
+function stripUndefinedFields<T>(val: T): T {
+  return deepCleanFirestorePayload(val);
 }
 
 export const DEFAULT_EMAIL_SETTINGS: EmailDeliverySettings = {
@@ -128,10 +123,11 @@ export async function ensureRootAdminInitialized(
     { merge: true }
   );
 
-  const [platSnap, commSnap, notifSnap] = await Promise.all([
+  const [platSnap, commSnap, notifSnap, zonesSnap] = await Promise.all([
     getDoc(doc(db, 'settings', 'platform')),
     getDoc(doc(db, 'settings', 'commission')),
     getDoc(doc(db, 'settings', 'notifications')),
+    getDocs(collection(db, 'service_zones')),
   ]);
 
   if (!platSnap.exists()) {
@@ -154,6 +150,300 @@ export async function ensureRootAdminInitialized(
       updatedAt: now,
     });
   }
+  if (zonesSnap.empty) {
+    for (const zone of DEFAULT_STARTER_SERVICE_ZONES) {
+      await setDoc(doc(db, 'service_zones', zone.id), zone, { merge: true });
+    }
+  }
+}
+
+// =========================================================================
+// IDENTIFIER / ASSIGNED-ID AUTHENTICATION API HELPERS (ZERO EMAIL LEAKAGE)
+// =========================================================================
+
+const CLOUD_AUTH_API_BASE =
+  'https://us-central1-labsetu-diagnostics.cloudfunctions.net/api/api/v1';
+
+export class AuthApiRequestError extends Error {
+  status: number;
+  code?: string;
+  details?: Record<string, unknown>;
+
+  constructor(
+    message: string,
+    status: number,
+    code?: string,
+    details?: Record<string, unknown>
+  ) {
+    super(message);
+    this.name = 'AuthApiRequestError';
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+}
+
+async function callPublicAuthEndpoint<T>(
+  path: string,
+  options: RequestInit = {}
+): Promise<{ success: boolean; data: T; message?: string }> {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const primaryUrl = `${API_BASE_URL.replace(/\/+$/, '')}${normalizedPath}`;
+  const isLocalHost =
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'X-Client-Platform': 'web',
+    ...((options.headers as Record<string, string>) || {}),
+  };
+
+  let res: Response;
+  let json: {
+    success?: boolean;
+    data?: T;
+    message?: string;
+    error?: { code?: string; message?: string; details?: Record<string, unknown> };
+  } | null = null;
+
+  try {
+    res = await fetch(primaryUrl, { ...options, headers });
+    json = await res.json().catch(() => null);
+    if (isLocalHost && res.status >= 502 && !json) {
+      res = await fetch(`${CLOUD_AUTH_API_BASE}${normalizedPath}`, { ...options, headers });
+      json = await res.json().catch(() => null);
+    }
+  } catch {
+    res = await fetch(`${CLOUD_AUTH_API_BASE}${normalizedPath}`, { ...options, headers });
+    json = await res.json().catch(() => null);
+  }
+
+  if (!res.ok) {
+    throw new AuthApiRequestError(
+      json?.error?.message || json?.message || `Sign-in service returned ${res.status}.`,
+      res.status,
+      json?.error?.code,
+      json?.error?.details
+    );
+  }
+
+  if (!json?.data) {
+    throw new AuthApiRequestError('Unexpected empty response from authentication service.', 500);
+  }
+
+  return { success: true, data: json.data, message: json.message };
+}
+
+export async function loginWithIdentifierApi(params: {
+  identifier: string;
+  password: string;
+  portalRole?: UserRole;
+  clientType?: 'WEB' | 'MOBILE';
+}): Promise<{ customToken: string | null; devSessionToken?: string; userProfile: UserProfile }> {
+  const res = await callPublicAuthEndpoint<{
+    customToken: string | null;
+    devSessionToken?: string;
+    userProfile: UserProfile;
+  }>('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({
+      identifier: params.identifier.trim(),
+      password: params.password,
+      ...(params.portalRole ? { portalRole: params.portalRole } : {}),
+      clientType: params.clientType || 'WEB',
+    }),
+  });
+  return res.data;
+}
+
+export async function sendOtpApi(params: {
+  identifier: string;
+  portalRole?: UserRole;
+  clientType?: 'WEB' | 'MOBILE';
+}): Promise<{
+  sent: boolean;
+  deliveryMode: 'SMTP' | 'QUEUED_NO_SMTP';
+  role: UserRole;
+  maskedEmail: string;
+}> {
+  const res = await callPublicAuthEndpoint<{
+    sent: boolean;
+    deliveryMode: 'SMTP' | 'QUEUED_NO_SMTP';
+    role: UserRole;
+    maskedEmail: string;
+  }>('/auth/otp/send', {
+    method: 'POST',
+    body: JSON.stringify({
+      identifier: params.identifier.trim(),
+      ...(params.portalRole ? { portalRole: params.portalRole } : {}),
+      clientType: params.clientType || 'WEB',
+    }),
+  });
+  return res.data;
+}
+
+export async function verifyOtpApi(params: {
+  identifier: string;
+  otp: string;
+  portalRole?: UserRole;
+  clientType?: 'WEB' | 'MOBILE';
+}): Promise<{ customToken: string | null; devSessionToken?: string; userProfile: UserProfile }> {
+  const res = await callPublicAuthEndpoint<{
+    customToken: string | null;
+    devSessionToken?: string;
+    userProfile: UserProfile;
+  }>('/auth/otp/verify', {
+    method: 'POST',
+    body: JSON.stringify({
+      identifier: params.identifier.trim(),
+      otp: params.otp.trim(),
+      ...(params.portalRole ? { portalRole: params.portalRole } : {}),
+      clientType: params.clientType || 'WEB',
+    }),
+  });
+  return res.data;
+}
+
+export async function forgotPasswordApi(params: {
+  identifier: string;
+  origin?: string;
+  portalRole?: UserRole;
+  clientType?: 'WEB' | 'MOBILE';
+}): Promise<{
+  sent: boolean;
+  deliveryMode: 'SMTP';
+  role: UserRole;
+  roleLabel: string;
+  maskedEmail: string;
+}> {
+  const res = await callPublicAuthEndpoint<{
+    sent: boolean;
+    deliveryMode: 'SMTP';
+    role: UserRole;
+    roleLabel: string;
+    maskedEmail: string;
+  }>('/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({
+      identifier: params.identifier.trim(),
+      origin: params.origin || (typeof window !== 'undefined' ? window.location.origin : ''),
+      ...(params.portalRole ? { portalRole: params.portalRole } : {}),
+      clientType: params.clientType || 'WEB',
+    }),
+  });
+  return res.data;
+}
+
+export async function roleCheckApi(identifier: string): Promise<{
+  provisioned: boolean;
+  role: UserRole | null;
+  isActive: boolean;
+  maskedEmail: string | null;
+}> {
+  const res = await callPublicAuthEndpoint<{
+    provisioned: boolean;
+    role: UserRole | null;
+    isActive: boolean;
+    maskedEmail: string | null;
+  }>(`/auth/role-check?identifier=${encodeURIComponent(identifier.trim())}`, {
+    method: 'GET',
+  });
+  return res.data;
+}
+
+// =========================================================================
+// OPERATIONAL SERVICE ZONES (PHASED AREA EXPANSION)
+// =========================================================================
+
+export function subscribeServiceZones(
+  onData: (zones: ServiceZoneRecord[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  return onSnapshot(
+    collection(db, 'service_zones'),
+    (snap) => {
+      if (snap.empty) {
+        onData([...DEFAULT_STARTER_SERVICE_ZONES]);
+        return;
+      }
+      const list = snap.docs
+        .map((d) => ({ id: d.id, ...(d.data() as Omit<ServiceZoneRecord, 'id'>) }))
+        .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+      onData(list);
+    },
+    (err) => onError?.(err)
+  );
+}
+
+export async function saveServiceZone(
+  zone: Omit<ServiceZoneRecord, 'createdAt' | 'updatedAt'> & { createdAt?: string },
+  actorEmail?: string
+): Promise<ServiceZoneRecord> {
+  const now = new Date().toISOString();
+  const cleanCode = normalizeIdentifierCode(
+    zone.zoneCode ||
+      `ZONE-${String(zone.city || 'IND').slice(0, 3)}-${String(zone.name || 'NEW')
+        .replace(/[^a-zA-Z0-9]+/g, '-')
+        .slice(0, 14)}`
+  );
+  const id = normalizeIdentifierCode(zone.id || cleanCode) || `ZONE-${Date.now()}`;
+  const full = stripUndefinedFields<ServiceZoneRecord>({
+    ...zone,
+    id,
+    zoneCode: cleanCode,
+    pincodes: Array.from(
+      new Set(
+        (zone.pincodes || [])
+          .map((p) => String(p || '').replace(/\D/g, '').slice(0, 6))
+          .filter((p) => p.length === 6)
+      )
+    ),
+    radiusKm: Math.round(Math.min(100, Math.max(0.5, Number(zone.radiusKm || 5))) * 10) / 10,
+    isActive: zone.isActive !== false && zone.launchPhase !== 'PAUSED',
+    updatedBy: actorEmail || zone.updatedBy || ADMIN_LOGIN_EMAIL,
+    createdBy: zone.createdBy || actorEmail || ADMIN_LOGIN_EMAIL,
+    createdAt: zone.createdAt || now,
+    updatedAt: now,
+  });
+  await setDoc(doc(db, 'service_zones', id), full, { merge: true });
+  return full;
+}
+
+export async function toggleServiceZoneActive(
+  zone: ServiceZoneRecord,
+  isActive: boolean,
+  actorEmail?: string
+): Promise<void> {
+  const now = new Date().toISOString();
+  await setDoc(
+    doc(db, 'service_zones', zone.id),
+    {
+      isActive,
+      launchPhase: isActive
+        ? zone.launchPhase === 'PAUSED'
+          ? 'EXPANSION'
+          : zone.launchPhase
+        : 'PAUSED',
+      updatedBy: actorEmail || ADMIN_LOGIN_EMAIL,
+      updatedAt: now,
+    },
+    { merge: true }
+  );
+}
+
+export async function deleteServiceZone(zoneId: string): Promise<void> {
+  await deleteDoc(doc(db, 'service_zones', zoneId));
+}
+
+export function computeNextAssignedIdForRole(params: {
+  role: UserRole;
+  centerType?: LabCenterType | string;
+  isEmployee?: boolean;
+  existingCodes?: string[];
+  preferredCode?: string;
+}): string {
+  return generateRoleAssignedId(params);
 }
 
 export function subscribeUserDirectory(
@@ -681,21 +971,33 @@ export function subscribeSettings(
   onCommission: (cfg: CommissionConfig) => void,
   onEmail: (cfg: EmailDeliverySettings) => void
 ): Unsubscribe {
-  const u1 = onSnapshot(doc(db, 'settings', 'platform'), (snap) => {
-    if (snap.exists()) {
-      onSla({ ...DEFAULT_PLATFORM_SLA, ...(snap.data() as Partial<PlatformSlaConfig>) });
-    }
-  });
-  const u2 = onSnapshot(doc(db, 'settings', 'commission'), (snap) => {
-    if (snap.exists()) {
-      onCommission({ ...DEFAULT_COMMISSION_CONFIG, ...(snap.data() as Partial<CommissionConfig>) });
-    }
-  });
-  const u3 = onSnapshot(doc(db, 'settings', 'notifications'), (snap) => {
-    if (snap.exists()) {
-      onEmail({ ...DEFAULT_EMAIL_SETTINGS, ...(snap.data() as Partial<EmailDeliverySettings>) });
-    }
-  });
+  const u1 = onSnapshot(
+    doc(db, 'settings', 'platform'),
+    (snap) => {
+      if (snap.exists()) {
+        onSla({ ...DEFAULT_PLATFORM_SLA, ...(snap.data() as Partial<PlatformSlaConfig>) });
+      }
+    },
+    (err) => console.warn('Platform settings sync skipped:', err.message)
+  );
+  const u2 = onSnapshot(
+    doc(db, 'settings', 'commission'),
+    (snap) => {
+      if (snap.exists()) {
+        onCommission({ ...DEFAULT_COMMISSION_CONFIG, ...(snap.data() as Partial<CommissionConfig>) });
+      }
+    },
+    (err) => console.warn('Commission settings sync skipped:', err.message)
+  );
+  const u3 = onSnapshot(
+    doc(db, 'settings', 'notifications'),
+    (snap) => {
+      if (snap.exists()) {
+        onEmail({ ...DEFAULT_EMAIL_SETTINGS, ...(snap.data() as Partial<EmailDeliverySettings>) });
+      }
+    },
+    (err) => console.warn('Notification settings sync skipped:', err.message)
+  );
 
   return () => {
     u1();
@@ -714,6 +1016,7 @@ export async function provisionRoleUser(
   extra?: {
     createFacilityRecord?: boolean;
     city?: string;
+    state?: string;
     address?: string;
     pincode?: string;
     latitude?: number;
@@ -723,16 +1026,43 @@ export async function provisionRoleUser(
     parentLabName?: string;
     nablNumber?: string;
     vehicleInfo?: string;
+    existingCodes?: string[];
   }
 ): Promise<{ profile: UserProfile; apiSynced: boolean }> {
   const normalized = payload.email.trim().toLowerCase();
   const now = new Date().toISOString();
 
+  const resolvedAdminSubRole: AdminTeamRole | undefined =
+    payload.role === UserRole.ADMIN
+      ? payload.adminSubRole || (payload.isSuperAdmin ? 'SUPER_ADMIN' : 'DEPARTMENT_EMPLOYEE')
+      : undefined;
+
+  const isEmpAdmin =
+    payload.role === UserRole.ADMIN &&
+    resolvedAdminSubRole === 'DEPARTMENT_EMPLOYEE' &&
+    !payload.isSuperAdmin;
+
+  const sequentialFallbackCode = generateRoleAssignedId({
+    role: payload.role,
+    centerType:
+      extra?.centerType || (payload.parentLabId?.trim() ? 'COLLECTION_CENTER' : undefined),
+    isEmployee: isEmpAdmin,
+    existingCodes: extra?.existingCodes || [],
+    preferredCode:
+      payload.userCode?.trim() ||
+      payload.labId?.trim() ||
+      payload.phlebotomistId?.trim() ||
+      payload.employeeId?.trim() ||
+      undefined,
+  });
+
+  const manualLabId =
+    payload.role === UserRole.SMALL_LAB || payload.role === UserRole.LARGE_LAB
+      ? payload.labId?.trim()
+      : undefined;
   const resolvedLabId =
-    payload.role === UserRole.SMALL_LAB
-      ? payload.labId?.trim() || `LAB-SM-${Date.now().toString().slice(-4)}`
-      : payload.role === UserRole.LARGE_LAB
-      ? payload.labId?.trim() || `LAB-LG-${Date.now().toString().slice(-4)}`
+    payload.role === UserRole.SMALL_LAB || payload.role === UserRole.LARGE_LAB
+      ? manualLabId || sequentialFallbackCode
       : undefined;
 
   const resolvedParentLabId =
@@ -740,62 +1070,168 @@ export async function provisionRoleUser(
       ? payload.parentLabId.trim()
       : undefined;
 
-  const resolvedAdminSubRole: AdminTeamRole | undefined =
-    payload.role === UserRole.ADMIN ? payload.adminSubRole || 'SUPER_ADMIN' : undefined;
-
+  const manualPhleboId =
+    payload.role === UserRole.PHLEBOTOMIST ? payload.phlebotomistId?.trim() : undefined;
   const resolvedPhleboId =
     payload.role === UserRole.PHLEBOTOMIST
-      ? payload.phlebotomistId?.trim() || `PHL-${Date.now().toString().slice(-4)}`
+      ? manualPhleboId || sequentialFallbackCode
       : undefined;
 
-  const enrichedPayload: CreateManagedUserPayload = {
+  const apiPayload: CreateManagedUserPayload = {
     ...payload,
     email: normalized,
     ...(resolvedAdminSubRole ? { adminSubRole: resolvedAdminSubRole } : {}),
-    ...(resolvedLabId ? { labId: resolvedLabId } : {}),
+    ...(manualLabId ? { labId: manualLabId } : {}),
     ...(resolvedParentLabId ? { parentLabId: resolvedParentLabId } : {}),
-    ...(resolvedPhleboId ? { phlebotomistId: resolvedPhleboId } : {}),
+    ...(manualPhleboId ? { phlebotomistId: manualPhleboId } : {}),
   };
 
   let createdProfile: UserProfile | null = null;
   let apiSynced = false;
+  let explicitHttpError: string | null = null;
 
-  try {
-    const res = await fetch(`${API_BASE_URL}/users`, {
+  const CLOUD_FALLBACK_API =
+    'https://us-central1-labsetu-diagnostics.cloudfunctions.net/api/api/v1';
+
+  const requestHeaders = {
+    'Content-Type': 'application/json',
+    'X-Client-Platform': 'WEB',
+    Authorization: `Bearer ${bearerToken}`,
+  };
+
+  const tryCreateViaEndpoint = async (
+    baseUrl: string
+  ): Promise<{ handled: boolean; profile?: UserProfile; error?: string }> => {
+    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/users`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${bearerToken}`,
-      },
-      body: JSON.stringify(enrichedPayload),
+      headers: requestHeaders,
+      body: JSON.stringify(apiPayload),
     });
     const json = await res.json().catch(() => null);
     if (res.ok && json?.data) {
-      createdProfile = json.data as UserProfile;
+      return { handled: true, profile: json.data as UserProfile };
+    }
+    if (res.status >= 400 && res.status < 500 && res.status !== 404) {
+      return {
+        handled: true,
+        error:
+          json?.error?.message || json?.message || `Account provisioning blocked (${res.status}).`,
+      };
+    }
+    return { handled: false };
+  };
+
+  try {
+    const primaryAttempt = await tryCreateViaEndpoint(API_BASE_URL);
+    if (primaryAttempt.profile) {
+      createdProfile = primaryAttempt.profile;
       apiSynced = true;
+    } else if (primaryAttempt.error) {
+      explicitHttpError = primaryAttempt.error;
+    } else if (!primaryAttempt.handled && API_BASE_URL !== CLOUD_FALLBACK_API) {
+      const cloudAttempt = await tryCreateViaEndpoint(CLOUD_FALLBACK_API).catch(() => ({
+        handled: false,
+      }));
+      if ('profile' in cloudAttempt && cloudAttempt.profile) {
+        createdProfile = cloudAttempt.profile;
+        apiSynced = true;
+      } else if ('error' in cloudAttempt && cloudAttempt.error) {
+        explicitHttpError = cloudAttempt.error;
+      }
     }
   } catch {
-    // Direct data sync continues seamlessly
+    if (API_BASE_URL !== CLOUD_FALLBACK_API) {
+      try {
+        const cloudAttempt = await tryCreateViaEndpoint(CLOUD_FALLBACK_API);
+        if (cloudAttempt.profile) {
+          createdProfile = cloudAttempt.profile;
+          apiSynced = true;
+        } else if (cloudAttempt.error) {
+          explicitHttpError = cloudAttempt.error;
+        }
+      } catch {
+        // Direct data sync continues seamlessly when backend API is offline
+      }
+    }
   }
+
+  if (explicitHttpError) {
+    throw new Error(explicitHttpError);
+  }
+
+  const finalCode = normalizeIdentifierCode(
+    createdProfile?.userCode ||
+      createdProfile?.labId ||
+      createdProfile?.phlebotomistId ||
+      createdProfile?.employeeId ||
+      sequentialFallbackCode
+  );
 
   const fallbackProfile: UserProfile = {
     id: `usr-${normalized.replace(/[^a-z0-9]/g, '').slice(0, 12)}-${Date.now().toString(36)}`,
     email: normalized,
-    displayName: enrichedPayload.displayName.trim(),
-    role: enrichedPayload.role,
+    userCode: finalCode,
+    userCodeUpper: finalCode,
+    displayName: apiPayload.displayName.trim(),
+    role: apiPayload.role,
     ...(resolvedAdminSubRole ? { adminSubRole: resolvedAdminSubRole } : {}),
-    ...(enrichedPayload.phoneNumber ? { phoneNumber: enrichedPayload.phoneNumber.trim() } : {}),
+    ...(typeof apiPayload.isSuperAdmin === 'boolean'
+      ? { isSuperAdmin: apiPayload.isSuperAdmin }
+      : {}),
+    ...(Array.isArray(apiPayload.founderRoles)
+      ? { founderRoles: apiPayload.founderRoles }
+      : {}),
+    ...(apiPayload.founderSeatKey ? { founderSeatKey: apiPayload.founderSeatKey } : {}),
+    ...(apiPayload.employeeId
+      ? { employeeId: apiPayload.employeeId }
+      : isEmpAdmin
+      ? { employeeId: finalCode }
+      : {}),
+    ...(apiPayload.primaryDepartmentId
+      ? { primaryDepartmentId: apiPayload.primaryDepartmentId }
+      : {}),
+    ...(Array.isArray(apiPayload.departmentIds)
+      ? { departmentIds: apiPayload.departmentIds }
+      : {}),
+    ...(apiPayload.designationId ? { designationId: apiPayload.designationId } : {}),
+    ...(apiPayload.designationTitle ? { designationTitle: apiPayload.designationTitle } : {}),
+    ...(apiPayload.reportingManagerEmail
+      ? { reportingManagerEmail: apiPayload.reportingManagerEmail }
+      : {}),
+    ...(apiPayload.reportingManagerName
+      ? { reportingManagerName: apiPayload.reportingManagerName }
+      : {}),
+    ...(Array.isArray(apiPayload.responsibilities)
+      ? { responsibilities: apiPayload.responsibilities }
+      : {}),
+    ...(Array.isArray(apiPayload.permissions)
+      ? { permissions: apiPayload.permissions }
+      : {}),
+    ...(apiPayload.assignedCity ? { assignedCity: apiPayload.assignedCity } : {}),
+    ...(apiPayload.assignedZone ? { assignedZone: apiPayload.assignedZone } : {}),
+    ...(apiPayload.joiningDate ? { joiningDate: apiPayload.joiningDate } : {}),
+    ...(apiPayload.phoneNumber ? { phoneNumber: apiPayload.phoneNumber.trim() } : {}),
     ...(resolvedLabId ? { labId: resolvedLabId } : {}),
     ...(resolvedParentLabId ? { parentLabId: resolvedParentLabId } : {}),
     ...(resolvedPhleboId ? { phlebotomistId: resolvedPhleboId } : {}),
+    initialPasswordSet: false,
     isActive: true,
     createdByAdmin: true,
     createdAt: now,
     updatedAt: now,
   };
   const profile: UserProfile = stripUndefinedFields<UserProfile>(
-    createdProfile || fallbackProfile
+    createdProfile
+      ? {
+          ...createdProfile,
+          userCode: createdProfile.userCode || finalCode,
+          userCodeUpper: normalizeIdentifierCode(createdProfile.userCode || finalCode),
+        }
+      : fallbackProfile
   );
+
+  const effectiveLabId = profile.labId || resolvedLabId;
+  const effectivePhleboId = profile.phlebotomistId || resolvedPhleboId;
 
   if (auth.currentUser) {
     await setDoc(doc(db, 'user_directory', normalized), profile, { merge: true });
@@ -803,14 +1239,16 @@ export async function provisionRoleUser(
     if (extra?.createFacilityRecord !== false) {
       if (
         (profile.role === UserRole.SMALL_LAB || profile.role === UserRole.LARGE_LAB) &&
-        resolvedLabId
+        effectiveLabId
       ) {
         const isLarge = profile.role === UserRole.LARGE_LAB;
         const resolvedCenterType: LabCenterType =
           extra?.centerType || (resolvedParentLabId ? 'COLLECTION_CENTER' : 'MAIN_HUB');
 
         const rawLabPayload: LabFacility = {
-          id: resolvedLabId,
+          id: effectiveLabId,
+          userCode: profile.userCode || effectiveLabId,
+          userCodeUpper: normalizeIdentifierCode(profile.userCode || effectiveLabId),
           name: profile.displayName,
           type: isLarge ? 'LARGE_LAB' : 'SMALL_LAB',
           ...(isLarge ? { centerType: resolvedCenterType } : {}),
@@ -819,8 +1257,8 @@ export async function provisionRoleUser(
           city: extra?.city?.trim() || 'Mumbai',
           address: extra?.address?.trim() || `${profile.displayName} Facility`,
           ...(extra?.pincode?.trim() ? { pincode: extra.pincode.trim() } : {}),
-          latitude: typeof extra?.latitude === 'number' ? extra.latitude : 19.1438,
-          longitude: typeof extra?.longitude === 'number' ? extra.longitude : 72.9378,
+          latitude: typeof extra?.latitude === 'number' ? extra.latitude : 19.124,
+          longitude: typeof extra?.longitude === 'number' ? extra.longitude : 72.866,
           ...(typeof extra?.serviceRadiusKm === 'number'
             ? { serviceRadiusKm: extra.serviceRadiusKm }
             : isLarge
@@ -834,25 +1272,33 @@ export async function provisionRoleUser(
           verified: true,
           verificationStatus: 'VERIFIED',
           ...(isLarge ? { cutoffWindow: '08:30 PM Daily Cutoff', courierEtaMins: 20 } : {}),
+          ...(profile.initialPasswordSet
+            ? {
+                initialPasswordSet: true,
+                initialPasswordUpdatedAt: profile.initialPasswordUpdatedAt || now,
+              }
+            : {}),
           rating: 5.0,
           createdAt: now,
           updatedAt: now,
         };
         const labPayload: LabFacility = stripUndefinedFields<LabFacility>(rawLabPayload);
-        await setDoc(doc(db, 'labs', resolvedLabId), labPayload, { merge: true });
-      } else if (profile.role === UserRole.PHLEBOTOMIST && resolvedPhleboId) {
+        await setDoc(doc(db, 'labs', effectiveLabId), labPayload, { merge: true });
+      } else if (profile.role === UserRole.PHLEBOTOMIST && effectivePhleboId) {
         const rawPhleboPayload: PhlebotomistProfile = {
-          id: resolvedPhleboId,
+          id: effectivePhleboId,
+          userCode: profile.userCode || effectivePhleboId,
+          userCodeUpper: normalizeIdentifierCode(profile.userCode || effectivePhleboId),
           name: profile.displayName,
           phone: profile.phoneNumber || '',
           email: normalized,
           status: 'ONLINE',
           currentLocation: extra?.city?.trim() || 'Active Field Zone',
-          latitude: typeof extra?.latitude === 'number' ? extra.latitude : 19.1363,
-          longitude: typeof extra?.longitude === 'number' ? extra.longitude : 72.8277,
+          latitude: typeof extra?.latitude === 'number' ? extra.latitude : 19.124,
+          longitude: typeof extra?.longitude === 'number' ? extra.longitude : 72.866,
           batteryPct: 100,
           chillerTempCelsius: 4.2,
-          coolerBoxId: `CB-${resolvedPhleboId}`,
+          coolerBoxId: `CB-${effectivePhleboId}`,
           vehicleInfo: extra?.vehicleInfo?.trim() || 'Cold-Chain Two-Wheeler',
           rating: 5.0,
           totalPickups: 0,
@@ -862,7 +1308,7 @@ export async function provisionRoleUser(
         };
         const phleboPayload: PhlebotomistProfile =
           stripUndefinedFields<PhlebotomistProfile>(rawPhleboPayload);
-        await setDoc(doc(db, 'phlebotomists', resolvedPhleboId), phleboPayload, {
+        await setDoc(doc(db, 'phlebotomists', effectivePhleboId), phleboPayload, {
           merge: true,
         });
       }
@@ -877,20 +1323,21 @@ export async function provisionRoleUser(
         templateData: {
           displayName: profile.displayName,
           email: normalized,
+          ...(profile.userCode ? { userCode: profile.userCode } : {}),
           role: profile.role,
           ...(profile.adminSubRole ? { adminSubRole: profile.adminSubRole } : {}),
-          ...(profile.labId ? { labId: profile.labId } : {}),
+          ...(effectiveLabId ? { labId: effectiveLabId } : {}),
           ...(profile.parentLabId ? { parentLabId: profile.parentLabId } : {}),
-          ...(profile.phlebotomistId ? { phlebotomistId: profile.phlebotomistId } : {}),
+          ...(effectivePhleboId ? { phlebotomistId: effectivePhleboId } : {}),
           hasPassword: Boolean(payload.password),
           ...(typeof window !== 'undefined' ? { portalOrigin: window.location.origin } : {}),
         },
         message: {
-          subject: `Welcome to LabSetu — ${ROLE_LABELS[profile.role]} Account Ready`,
-          text: `Hello ${profile.displayName}, Admin (${ADMIN_LOGIN_EMAIL}) has created your ${ROLE_LABELS[profile.role]} account for ${normalized}. ${
+          subject: `Welcome to LabSetu — ${ROLE_LABELS[profile.role]} Account Ready (${profile.userCode || finalCode})`,
+          text: `Hello ${profile.displayName}, Admin (${ADMIN_LOGIN_EMAIL}) has created your ${ROLE_LABELS[profile.role]} account (${normalized} | Assigned ID: ${profile.userCode || finalCode}). ${
             profile.role === UserRole.PHLEBOTOMIST
               ? 'Please open the LabSetu Mobile App and sign in using Email OTP or your password.'
-              : `Sign in at ${window.location.origin}/login using Google Sign-In, Email & Password, or Email OTP.`
+              : `Sign in at ${window.location.origin}/login using Google Sign-In, Email/ID & Password, or Email OTP.`
           }`,
         },
         createdAt: now,
@@ -916,6 +1363,12 @@ export async function updateManagedUserAccess(
     isActive?: boolean;
     role?: UserRole;
     adminSubRole?: AdminTeamRole;
+    isSuperAdmin?: boolean;
+    primaryDepartmentId?: string;
+    departmentIds?: string[];
+    designationId?: string;
+    designationTitle?: string;
+    permissions?: PermissionCode[];
     labId?: string;
     parentLabId?: string;
     phlebotomistId?: string;
@@ -923,18 +1376,29 @@ export async function updateManagedUserAccess(
 ): Promise<void> {
   const normalized = user.email.trim().toLowerCase();
   const updatedAt = new Date().toISOString();
+  let explicitHttpError: string | null = null;
 
   try {
-    await fetch(`${API_BASE_URL}/users/${encodeURIComponent(normalized)}`, {
+    const res = await fetch(`${API_BASE_URL}/users/${encodeURIComponent(normalized)}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
+        'X-Client-Platform': 'WEB',
         Authorization: `Bearer ${bearerToken}`,
       },
       body: JSON.stringify(updates),
     });
+    const json = await res.json().catch(() => null);
+    if (!res.ok && res.status >= 400 && res.status < 500 && res.status !== 404) {
+      explicitHttpError =
+        json?.error?.message || json?.message || `Access update rejected (${res.status}).`;
+    }
   } catch {
     // Non-fatal when API is offline locally
+  }
+
+  if (explicitHttpError) {
+    throw new Error(explicitHttpError);
   }
 
   const nextProfile = stripUndefinedFields({
@@ -1106,7 +1570,15 @@ export async function deleteDiagnosticTest(testId: string): Promise<void> {
 export async function createLiveBooking(params: {
   sessionUser: UserProfile;
   operatorUid: string;
-  patient: { id: string; pseudonym: string; age: number; gender: 'MALE' | 'FEMALE' | 'OTHER' };
+  patient: {
+    id: string;
+    pseudonym: string;
+    age: number;
+    gender: 'MALE' | 'FEMALE' | 'OTHER';
+    phone?: string;
+    alternatePhone?: string;
+    clinicalNote?: string;
+  };
   smallLab: { id: string; name: string; address: string; phone?: string };
   targetLab: { id: string; name: string; address: string; parentLabId?: string };
   dropType?: DropDestinationType;
@@ -1114,6 +1586,7 @@ export async function createLiveBooking(params: {
     address: string;
     latitude: number;
     longitude: number;
+    pincode?: string;
     contactName?: string;
     contactPhone?: string;
   };
@@ -1121,9 +1594,11 @@ export async function createLiveBooking(params: {
     address: string;
     latitude: number;
     longitude: number;
+    pincode?: string;
     contactName?: string;
     contactPhone?: string;
   };
+  serviceZones?: ServiceZoneRecord[];
   phlebotomist?: { id: string; name: string } | null;
   selectedTests: DiagnosticTestItem[];
   smallLabPayableTestTotalInr?: number;
@@ -1176,10 +1651,42 @@ export async function createLiveBooking(params: {
 
   const resolvedPickup = params.pickupLocation || {
     address: params.smallLab.address,
-    latitude: 19.1438,
-    longitude: 72.9378,
+    latitude: 19.124,
+    longitude: 72.866,
     ...(params.smallLab.phone ? { contactPhone: params.smallLab.phone } : {}),
   };
+
+  let zonesToEvaluate: ServiceZoneRecord[] =
+    Array.isArray(params.serviceZones) && params.serviceZones.length > 0
+      ? params.serviceZones
+      : [];
+  if (zonesToEvaluate.length === 0) {
+    try {
+      const zSnap = await getDocs(collection(db, 'service_zones'));
+      if (!zSnap.empty) {
+        zonesToEvaluate = zSnap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<ServiceZoneRecord, 'id'>),
+        }));
+      }
+    } catch {
+      // Fallback to starter pilot zone below
+    }
+  }
+  if (zonesToEvaluate.length === 0) {
+    zonesToEvaluate = [...DEFAULT_STARTER_SERVICE_ZONES];
+  }
+
+  const coverage = evaluatePointServiceCoverage(
+    zonesToEvaluate,
+    resolvedPickup.latitude,
+    resolvedPickup.longitude,
+    resolvedPickup.pincode
+  );
+  if (!coverage.covered) {
+    throw new Error(coverage.message);
+  }
+
   const resolvedDelivery = params.deliveryLocation || {
     address: params.targetLab.address,
     latitude: 19.1726,
@@ -1232,7 +1739,15 @@ export async function createLiveBooking(params: {
     ...(params.phlebotomist?.name ? { phlebotomistName: params.phlebotomist.name } : {}),
     status: hasPhlebo ? OrderStatus.ASSIGNED_TO_PHLEBO : OrderStatus.READY_FOR_PICKUP,
     priority: params.priority,
-    patient: params.patient,
+    patient: {
+      id: params.patient.id,
+      pseudonym: params.patient.pseudonym,
+      age: params.patient.age,
+      gender: params.patient.gender,
+      phone: params.patient.phone || '',
+      alternatePhone: params.patient.alternatePhone || '',
+      clinicalNote: params.patient.clinicalNote || '',
+    },
     specimens,
     custodyHistory: [custodyEvent],
     pickupLocation: resolvedPickup,
@@ -1250,6 +1765,12 @@ export async function createLiveBooking(params: {
       : {}),
     distanceKm: computedDistanceKm,
     broadcastRadiusKm,
+    ...(coverage.matchedZone
+      ? {
+          serviceZoneId: coverage.matchedZone.id,
+          serviceZoneName: coverage.matchedZone.name,
+        }
+      : {}),
     paymentStatus: 'UNPAID',
     handoverOtp,
     department: params.selectedTests[0]?.department || 'Pathology',
@@ -1450,11 +1971,23 @@ export async function updateOrderCustodyTransition(params: {
       `${params.eventType}${params.scannedBarcode ? ` • Barcode: ${params.scannedBarcode}` : ''}`,
   };
 
+  const isCompletedDrop = params.nextStatus === OrderStatus.DELIVERED_TO_LAB;
+  const payoutDueAtIso = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+
   await updateDoc(doc(db, 'orders', params.order.id), {
     ...(params.extraFields || {}),
     status: params.nextStatus,
     ...(params.nextStatus === OrderStatus.PICKED_UP ? { actualPickupAt: now } : {}),
-    ...(params.nextStatus === OrderStatus.DELIVERED_TO_LAB ? { actualDeliveredAt: now } : {}),
+    ...(isCompletedDrop
+      ? {
+          actualDeliveredAt: now,
+          deliveredAt: now,
+          completedAt: params.order.completedAt || now,
+          payoutDueAt: params.order.payoutDueAt || payoutDueAtIso,
+          payoutWindowMinutes: 30,
+          instantPayoutEligible: true,
+        }
+      : {}),
     ...(typeof params.temperatureCelsius === 'number'
       ? { arrivalTemperatureCelsius: params.temperatureCelsius }
       : {}),
@@ -1462,6 +1995,24 @@ export async function updateOrderCustodyTransition(params: {
     custodyHistory: [...(params.order.custodyHistory || []), evt],
     updatedAt: now,
   });
+
+  if (isCompletedDrop) {
+    try {
+      await setDoc(
+        doc(db, 'settlements', `STL-${params.order.id.replace('BK-', '')}`),
+        {
+          completedAt: params.order.completedAt || now,
+          payoutDueAt: params.order.payoutDueAt || payoutDueAtIso,
+          payoutWindowMinutes: 30,
+          instantPayoutEligible: true,
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+    } catch {
+      // Non-admin clients let Cloud Function trigger stamp settlement SLA safely
+    }
+  }
 
   await addDoc(collection(db, 'custody_events'), evt);
 
@@ -1558,10 +2109,15 @@ export async function publishDiagnosticReport(params: {
     notes: `Verified report ${reportId} uploaded by ${record.pathologistName}`,
   };
 
+  const payoutDueAtIso = params.order.payoutDueAt || new Date(Date.now() + 30 * 60 * 1000).toISOString();
   await updateDoc(doc(db, 'orders', params.order.id), {
     status: OrderStatus.REPORT_UPLOADED,
     reportDocumentUrl: downloadUrl,
     reportId,
+    completedAt: params.order.completedAt || now,
+    payoutDueAt: payoutDueAtIso,
+    payoutWindowMinutes: 30,
+    instantPayoutEligible: true,
     custodyHistory: [...(params.order.custodyHistory || []), evt],
     updatedAt: now,
   });

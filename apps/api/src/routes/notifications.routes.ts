@@ -7,13 +7,19 @@ import {
   PlatformNotification,
   EmailDeliverySettings,
   UserRole,
+  SupportContactsConfig,
 } from '@diagnostic/shared';
 import { AppError } from '../middleware/errorHandler';
-import { AuthenticatedRequest, requireAuth, requireRoles } from '../middleware/auth';
+import { requireAuth, requireRoles } from '../middleware/auth';
+import { AuthenticatedRequest, requirePermissions } from '../middleware/rbac';
 import {
   getNotificationSettings,
   listNotifications,
   markNotificationRead,
+  markAllNotificationsRead,
+  clearAllNotifications,
+  getSupportContactsSettings,
+  updateSupportContactsSettings,
   registerUserFcmToken,
   sendPlatformNotification,
   updateNotificationSettings,
@@ -51,6 +57,7 @@ notificationsRouter.get(
   '/settings',
   requireAuth,
   requireRoles(UserRole.ADMIN),
+  requirePermissions('MANAGE_SETTINGS'),
   async (_req: Request, res: Response, next: NextFunction) => {
     try {
       const settings = await getNotificationSettings();
@@ -74,6 +81,7 @@ notificationsRouter.put(
   '/settings',
   requireAuth,
   requireRoles(UserRole.ADMIN),
+  requirePermissions('MANAGE_SETTINGS'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const updated = await updateNotificationSettings(req.body || {});
@@ -125,11 +133,11 @@ notificationsRouter.post(
         message,
         category,
         priority,
-        recipientEmail,
-        recipientUid,
-        recipientRole,
-        orderId,
-        labId,
+        ...(recipientEmail ? { recipientEmail } : {}),
+        ...(recipientUid ? { recipientUid } : {}),
+        ...(recipientRole ? { recipientRole } : {}),
+        ...(orderId ? { orderId } : {}),
+        ...(labId ? { labId } : {}),
         channels,
         templateType,
         actionUrl,
@@ -199,6 +207,106 @@ notificationsRouter.patch(
       const response: ApiResponse<{ id: string; read: boolean }> = {
         success: true,
         data: { id: req.params.id, read: true },
+        timestamp: new Date().toISOString(),
+      };
+      res.json(response);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * POST /api/v1/notifications/read-all
+ * Mark all notifications as read for current user / role
+ */
+notificationsRouter.post(
+  '/read-all',
+  requireAuth,
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const recipientRole = req.body?.recipientRole || req.user?.role;
+      const recipientUid = req.body?.recipientUid || req.user?.uid;
+      const updatedCount = await markAllNotificationsRead(recipientRole, recipientUid);
+
+      const response: ApiResponse<{ updatedCount: number }> = {
+        success: true,
+        data: { updatedCount },
+        message: 'All notifications marked as read',
+        timestamp: new Date().toISOString(),
+      };
+      res.json(response);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * POST /api/v1/notifications/clear-all
+ * Clear all notifications for current user / role
+ */
+notificationsRouter.post(
+  '/clear-all',
+  requireAuth,
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const recipientRole = req.body?.recipientRole || req.user?.role;
+      const recipientUid = req.body?.recipientUid || req.user?.uid;
+      const clearedCount = await clearAllNotifications(recipientRole, recipientUid);
+
+      const response: ApiResponse<{ clearedCount: number }> = {
+        success: true,
+        data: { clearedCount },
+        message: 'All notifications cleared',
+        timestamp: new Date().toISOString(),
+      };
+      res.json(response);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * GET /api/v1/notifications/support-contacts
+ * Retrieve live platform emergency & support contacts (accessible to authenticated users)
+ */
+notificationsRouter.get(
+  '/support-contacts',
+  requireAuth,
+  async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const contacts = await getSupportContactsSettings();
+      const response: ApiResponse<SupportContactsConfig> = {
+        success: true,
+        data: contacts,
+        message: 'Support contacts retrieved successfully',
+        timestamp: new Date().toISOString(),
+      };
+      res.json(response);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * PUT /api/v1/notifications/support-contacts
+ * Update platform emergency & support contacts (Admin only)
+ */
+notificationsRouter.put(
+  '/support-contacts',
+  requireAuth,
+  requireRoles(UserRole.ADMIN),
+  requirePermissions('MANAGE_SETTINGS'),
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const updated = await updateSupportContactsSettings(req.body || {}, req.user?.uid);
+      const response: ApiResponse<SupportContactsConfig> = {
+        success: true,
+        data: updated,
+        message: 'Support contacts updated successfully',
         timestamp: new Date().toISOString(),
       };
       res.json(response);

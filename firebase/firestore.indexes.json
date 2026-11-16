@@ -122,6 +122,103 @@
         { "fieldPath": "recipientEmail", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "stockBatches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "expiryDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "stockBatches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "itemId", "order": "ASCENDING" },
+        { "fieldPath": "expiryDate", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "stockTransactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "itemId", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "stockTransactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "referenceId", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "kitSerials",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "currentLocationId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "kitSerials",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "assignedPhleboId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tubeSerials",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "parentKitId", "order": "ASCENDING" },
+        { "fieldPath": "tubeSerial", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tubeSerials",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "bookingId", "order": "ASCENDING" },
+        { "fieldPath": "currentStatus", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "kitTransfers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "receiverPhleboId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "kitTransfers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "senderPhleboId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "scannerEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sessionId", "order": "ASCENDING" },
+        { "fieldPath": "scannedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "scannerPairingSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "expiresAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

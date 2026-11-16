@@ -1,11 +1,15 @@
 import React from 'react';
 import {
   Modal,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BRAND_COLORS, BRAND_FONTS } from './LabSetuBrand';
+import { lh, MAX_TEXT_SCALE, rf, rs } from '../utils/responsive';
 
 export type DynamicAlertVariant = 'success' | 'error' | 'warning' | 'info' | 'confirm';
 
@@ -44,6 +48,7 @@ const VARIANT_CONFIG: Record<
 };
 
 export function DynamicAlertModal({ alertState, onClose }: DynamicAlertModalProps) {
+  const insets = useSafeAreaInsets();
   const isConfirm = alertState.variant === 'confirm' || Boolean(alertState.onConfirm);
   const cfg = VARIANT_CONFIG[alertState.variant] || VARIANT_CONFIG.info;
 
@@ -51,10 +56,21 @@ export function DynamicAlertModal({ alertState, onClose }: DynamicAlertModalProp
     <Modal
       visible={alertState.isOpen}
       transparent
+      statusBarTranslucent
       animationType="fade"
       onRequestClose={onClose}
     >
-      <View style={styles.overlay}>
+      <View
+        style={[
+          styles.overlay,
+          {
+            paddingTop: Math.max(20, insets.top + 12),
+            paddingBottom: Math.max(20, insets.bottom + 12),
+            paddingLeft: Math.max(20, insets.left + 16),
+            paddingRight: Math.max(20, insets.right + 16),
+          },
+        ]}
+      >
         <View style={styles.card}>
           <View style={[styles.topStrip, { backgroundColor: cfg.accent }]} />
 
@@ -66,25 +82,35 @@ export function DynamicAlertModal({ alertState, onClose }: DynamicAlertModalProp
             <Text style={styles.closeBtnText}>✕</Text>
           </TouchableOpacity>
 
-          <View style={styles.body}>
+          <ScrollView
+            style={{ maxHeight: 380 }}
+            contentContainerStyle={styles.body}
+            showsVerticalScrollIndicator={false}
+          >
             <View style={[styles.iconBadge, { backgroundColor: cfg.badgeBg }]}>
               <Text style={[styles.iconText, { color: cfg.accent }]}>{cfg.icon}</Text>
             </View>
 
-            <Text style={styles.title}>{alertState.title}</Text>
-            <Text style={styles.message}>{alertState.message}</Text>
+            <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.title}>
+              {alertState.title}
+            </Text>
+            <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.message}>
+              {alertState.message}
+            </Text>
 
             {alertState.detail ? (
               <View style={styles.detailBox}>
-                <Text style={styles.detailText}>{alertState.detail}</Text>
+                <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.detailText}>
+                  {alertState.detail}
+                </Text>
               </View>
             ) : null}
-          </View>
+          </ScrollView>
 
           <View style={styles.footer}>
             {isConfirm ? (
               <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
-                <Text style={styles.cancelBtnText}>
+                <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.cancelBtnText}>
                   {alertState.cancelLabel || 'Cancel'}
                 </Text>
               </TouchableOpacity>
@@ -95,7 +121,7 @@ export function DynamicAlertModal({ alertState, onClose }: DynamicAlertModalProp
                 styles.confirmBtn,
                 {
                   backgroundColor:
-                    alertState.variant === 'error' ? '#DC2626' : '#0D9488',
+                    alertState.variant === 'error' ? '#DC2626' : BRAND_COLORS.navyPrimary,
                 },
               ]}
               onPress={() => {
@@ -104,7 +130,7 @@ export function DynamicAlertModal({ alertState, onClose }: DynamicAlertModalProp
                 if (cb) cb();
               }}
             >
-              <Text style={styles.confirmBtnText}>
+              <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.confirmBtnText}>
                 {alertState.confirmLabel || (isConfirm ? 'Confirm' : 'Got It')}
               </Text>
             </TouchableOpacity>
@@ -155,13 +181,14 @@ const styles = StyleSheet.create({
   },
   closeBtnText: {
     color: '#64748B',
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: rf(13),
+    fontFamily: BRAND_FONTS.bold,
+    includeFontPadding: true,
   },
   body: {
-    paddingHorizontal: 22,
-    paddingTop: 26,
-    paddingBottom: 18,
+    paddingHorizontal: rs(20),
+    paddingTop: rs(24),
+    paddingBottom: rs(18),
     alignItems: 'center',
   },
   iconBadge: {
@@ -173,21 +200,25 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   iconText: {
-    fontSize: 22,
-    fontWeight: '800',
+    fontSize: rf(22),
+    fontFamily: BRAND_FONTS.extraBold,
   },
   title: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#0F172A',
+    fontSize: rf(17.5),
+    lineHeight: lh(rf(17.5)),
+    fontFamily: BRAND_FONTS.extraBold,
+    color: BRAND_COLORS.navyPrimary,
     textAlign: 'center',
     marginBottom: 8,
+    includeFontPadding: true,
   },
   message: {
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: rf(13.5),
+    fontFamily: BRAND_FONTS.regular,
+    lineHeight: lh(rf(13.5), 1.45),
     color: '#475569',
     textAlign: 'center',
+    includeFontPadding: true,
   },
   detailBox: {
     marginTop: 12,
@@ -200,44 +231,59 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   detailText: {
-    fontSize: 12,
+    fontSize: rf(12),
+    lineHeight: lh(rf(12), 1.4),
+    fontFamily: BRAND_FONTS.semiBold,
     color: '#334155',
-    fontWeight: '600',
     textAlign: 'center',
+    includeFontPadding: true,
   },
   footer: {
     flexDirection: 'row',
-    gap: 10,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
+    flexWrap: 'wrap',
+    gap: rs(10),
+    paddingHorizontal: rs(18),
+    paddingVertical: rs(14),
     backgroundColor: '#F8FAFC',
     borderTopWidth: 1,
     borderTopColor: '#E2E8F0',
   },
   cancelBtn: {
     flex: 1,
+    minWidth: rs(100),
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#CBD5E1',
-    borderRadius: 10,
-    paddingVertical: 11,
+    borderRadius: 11,
+    paddingVertical: rs(11),
+    paddingHorizontal: rs(10),
     alignItems: 'center',
+    justifyContent: 'center',
   },
   cancelBtnText: {
     color: '#334155',
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: rf(13.5),
+    lineHeight: lh(rf(13.5)),
+    fontFamily: BRAND_FONTS.bold,
+    textAlign: 'center',
+    includeFontPadding: true,
   },
   confirmBtn: {
     flex: 1,
-    borderRadius: 10,
-    paddingVertical: 11,
+    minWidth: rs(110),
+    borderRadius: 11,
+    paddingVertical: rs(11),
+    paddingHorizontal: rs(10),
     alignItems: 'center',
+    justifyContent: 'center',
   },
   confirmBtnText: {
     color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: rf(13.5),
+    lineHeight: lh(rf(13.5)),
+    fontFamily: BRAND_FONTS.bold,
+    textAlign: 'center',
+    includeFontPadding: true,
   },
 });
 

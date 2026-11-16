@@ -1,6 +1,10 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import {
+  type AdminTeamRole,
+  type FounderRoleCode,
+  isEffectiveSuperAdmin,
   LABSETU_THEME,
+  resolveEffectivePermissions,
   ROLE_LABELS,
   type UserProfile,
   UserRole,
@@ -24,7 +28,13 @@ import {
   googleProvider,
 } from '../firebase';
 import { type DynamicAlertVariant } from './DynamicAlertModal';
-import { ensureRootAdminInitialized } from '../services/firestoreService';
+import {
+  AuthApiRequestError,
+  ensureRootAdminInitialized,
+  loginWithIdentifierApi,
+  sendOtpApi,
+  verifyOtpApi,
+} from '../services/firestoreService';
 
 export interface VerifiedPortalSession {
   firebaseUser: User | null;
@@ -211,6 +221,18 @@ export function LoginPage({
           message: msg,
         });
         return;
+      } else if (!res.ok && res.status >= 400 && res.status < 500 && res.status !== 404) {
+        await signOut(auth);
+        const msg =
+          json?.error?.message ||
+          `Access check rejected your sign-in attempt (${res.status}).`;
+        setInlineError(msg);
+        onShowAlert({
+          variant: 'error',
+          title: 'Access Denied',
+          message: msg,
+        });
+        return;
       }
     } catch {
       // Fall through to direct account record check
@@ -248,14 +270,24 @@ export function LoginPage({
         return;
       }
 
-      if (apiProfile.role === UserRole.ADMIN) {
-        await ensureRootAdminInitialized(user.uid, apiProfile).catch(() => {});
+      const hydratedApiProfile: UserProfile = {
+        ...apiProfile,
+        ...(apiProfile.role === UserRole.ADMIN
+          ? {
+              isSuperAdmin: isEffectiveSuperAdmin(apiProfile, ADMIN_LOGIN_EMAIL),
+              permissions: resolveEffectivePermissions(apiProfile, ADMIN_LOGIN_EMAIL),
+            }
+          : {}),
+      };
+
+      if (hydratedApiProfile.role === UserRole.ADMIN) {
+        await ensureRootAdminInitialized(user.uid, hydratedApiProfile).catch(() => {});
       }
 
       const freshToken = claimRole ? idToken : await user.getIdToken(true);
       onAuthenticated({
         firebaseUser: user,
-        profile: apiProfile,
+        profile: hydratedApiProfile,
         authSource: 'firebase',
         bearerToken: freshToken,
       });
@@ -336,15 +368,77 @@ export function LoginPage({
     }
 
     const now = new Date().toISOString();
-    const finalProfile: UserProfile = {
+    const claimAdminSubRole = tokenResult.claims?.adminSubRole as AdminTeamRole | undefined;
+    const claimFounderRoles = Array.isArray(tokenResult.claims?.founderRoles)
+      ? (tokenResult.claims.founderRoles as FounderRoleCode[])
+      : undefined;
+    const claimPrimaryDept = tokenResult.claims?.primaryDepartmentId as string | undefined;
+    const claimDeptIds = Array.isArray(tokenResult.claims?.departmentIds)
+      ? (tokenResult.claims.departmentIds as string[])
+      : undefined;
+    const claimDesigId = tokenResult.claims?.designationId as string | undefined;
+    const claimIsSuperAdmin =
+      typeof tokenResult.claims?.isSuperAdmin === 'boolean'
+        ? Boolean(tokenResult.claims.isSuperAdmin)
+        : undefined;
+
+    const revoked = Boolean(dirProfile?.revokedSuperAdmin);
+    const defaultRootAdmin = isRootAdmin && !revoked;
+
+    const candidateProfile: UserProfile = {
       id: user.uid,
       email,
       displayName:
         dirProfile?.displayName ||
         user.displayName ||
-        (isRootAdmin ? 'LabSetu Platform Admin' : email.split('@')[0]),
+        (defaultRootAdmin ? 'Vikas (Super Admin & Tech Head)' : email.split('@')[0]),
       role: resolvedRole,
+      ...(resolvedRole === UserRole.ADMIN
+        ? {
+            adminSubRole:
+              dirProfile?.adminSubRole ||
+              claimAdminSubRole ||
+              (defaultRootAdmin ? 'SUPER_ADMIN' : 'DEPARTMENT_EMPLOYEE'),
+            isSuperAdmin:
+              typeof dirProfile?.isSuperAdmin === 'boolean'
+                ? dirProfile.isSuperAdmin
+                : typeof claimIsSuperAdmin === 'boolean'
+                ? claimIsSuperAdmin
+                : defaultRootAdmin,
+            revokedSuperAdmin: revoked,
+            founderRoles:
+              dirProfile?.founderRoles ||
+              claimFounderRoles ||
+              (defaultRootAdmin ? ['SUPER_ADMIN', 'PRODUCT_TECHNOLOGY_HEAD'] : undefined),
+            founderSeatKey:
+              dirProfile?.founderSeatKey || (defaultRootAdmin ? 'VIKAS' : undefined),
+            employeeId: dirProfile?.employeeId,
+            primaryDepartmentId:
+              dirProfile?.primaryDepartmentId ||
+              claimPrimaryDept ||
+              (defaultRootAdmin ? 'PRODUCT_TECHNOLOGY' : undefined),
+            departmentIds:
+              dirProfile?.departmentIds ||
+              claimDeptIds ||
+              (defaultRootAdmin
+                ? [
+                    'PRODUCT_TECHNOLOGY',
+                    'FINANCE_BUSINESS',
+                    'OPERATIONS_PARTNERSHIPS',
+                    'MARKETING_GROWTH',
+                  ]
+                : undefined),
+            designationId: dirProfile?.designationId || claimDesigId,
+            designationTitle: dirProfile?.designationTitle,
+            reportingManagerEmail: dirProfile?.reportingManagerEmail,
+            reportingManagerName: dirProfile?.reportingManagerName,
+            responsibilities: dirProfile?.responsibilities,
+            permissions: dirProfile?.permissions,
+          }
+        : {}),
       labId: dirProfile?.labId || (tokenResult.claims?.labId as string | undefined),
+      parentLabId:
+        dirProfile?.parentLabId || (tokenResult.claims?.parentLabId as string | undefined),
       phlebotomistId:
         dirProfile?.phlebotomistId ||
         (tokenResult.claims?.phlebotomistId as string | undefined),
@@ -353,6 +447,16 @@ export function LoginPage({
       createdByAdmin: true,
       createdAt: dirProfile?.createdAt || now,
       updatedAt: now,
+    };
+
+    const finalProfile: UserProfile = {
+      ...candidateProfile,
+      ...(candidateProfile.role === UserRole.ADMIN
+        ? {
+            isSuperAdmin: isEffectiveSuperAdmin(candidateProfile, ADMIN_LOGIN_EMAIL),
+            permissions: resolveEffectivePermissions(candidateProfile, ADMIN_LOGIN_EMAIL),
+          }
+        : {}),
     };
 
     if (finalProfile.role === UserRole.ADMIN) {
@@ -427,27 +531,92 @@ export function LoginPage({
     setInlineError(null);
     setInlineSuccess(null);
     setSuggestedCorrectRole(null);
-    setSubmitting(true);
+    const rawInput = loginEmail.trim();
+    if (!rawInput || !loginPassword) {
+      setInlineError('Please enter your Email or Assigned Login ID and password.');
+      return;
+    }
 
+    setSubmitting(true);
     try {
-      await signInWithEmailAndPassword(auth, loginEmail.trim(), loginPassword);
-    } catch (err: unknown) {
-      const fbErr = err as { code?: string; message?: string };
-      let msg = fbErr.message || 'Could not sign in with that email and password.';
-      if (
-        fbErr.code === 'auth/configuration-not-found' ||
-        fbErr.code === 'auth/operation-not-allowed'
-      ) {
-        msg = 'Password sign-in is not available right now. Please sign in using Google or Email OTP.';
-      } else if (
-        fbErr.code === 'auth/invalid-credential' ||
-        fbErr.code === 'auth/wrong-password' ||
-        fbErr.code === 'auth/user-not-found'
-      ) {
-        msg = `Incorrect email or password for ${loginEmail.trim()}. Tap "Forgot / Set Password" or sign in with Google / Email OTP.`;
+      const apiRes = await loginWithIdentifierApi({
+        identifier: rawInput,
+        password: loginPassword,
+        portalRole: selectedRole,
+        clientType: 'WEB',
+      });
+      if (apiRes.customToken) {
+        await signInWithCustomToken(auth, apiRes.customToken);
+        return;
       }
-      setInlineError(msg);
-      onShowAlert({ variant: 'error', title: 'Sign In Unsuccessful', message: msg });
+      if (rawInput.includes('@')) {
+        await signInWithEmailAndPassword(auth, rawInput.toLowerCase(), loginPassword);
+        return;
+      }
+      throw new Error('Could not establish session token. Please try Email OTP or Google Sign-In.');
+    } catch (err: unknown) {
+      if (err instanceof AuthApiRequestError) {
+        if (err.code === 'ROLE_MISMATCH' && err.details?.assignedRole) {
+          const assigned = err.details.assignedRole as UserRole;
+          if (assigned !== UserRole.PHLEBOTOMIST) {
+            setSuggestedCorrectRole(assigned);
+          }
+          setInlineError(err.message);
+          onShowAlert({
+            variant: 'error',
+            title: assigned === UserRole.PHLEBOTOMIST ? 'Mobile App Only' : 'Wrong Portal Selected',
+            message: err.message,
+          });
+          return;
+        }
+        if (err.status >= 400 && err.status < 500) {
+          setInlineError(err.message);
+          onShowAlert({
+            variant: 'error',
+            title:
+              err.code === 'MOBILE_APP_ONLY'
+                ? 'Mobile App Only'
+                : err.code === 'ACCOUNT_SUSPENDED'
+                ? 'Account Paused'
+                : 'Sign In Unsuccessful',
+            message: err.message,
+          });
+          return;
+        }
+      }
+
+      if (rawInput.includes('@')) {
+        try {
+          await signInWithEmailAndPassword(auth, rawInput.toLowerCase(), loginPassword);
+          return;
+        } catch (fbRaw: unknown) {
+          const fbErr = fbRaw as { code?: string; message?: string };
+          let msg = fbErr.message || 'Could not sign in with that email and password.';
+          if (
+            fbErr.code === 'auth/configuration-not-found' ||
+            fbErr.code === 'auth/operation-not-allowed'
+          ) {
+            msg =
+              'Password sign-in is not available right now. Please sign in using Google or Email OTP.';
+          } else if (
+            fbErr.code === 'auth/invalid-credential' ||
+            fbErr.code === 'auth/wrong-password' ||
+            fbErr.code === 'auth/user-not-found'
+          ) {
+            msg = `Incorrect email/ID or password for ${rawInput}. Tap "Forgot / Set Password" or sign in with Google / Email OTP.`;
+          }
+          setInlineError(msg);
+          onShowAlert({ variant: 'error', title: 'Sign In Unsuccessful', message: msg });
+          return;
+        }
+      }
+
+      const fallbackMsg =
+        err instanceof Error
+          ? err.message
+          : 'Unable to verify Assigned ID right now. Please try your registered email or Email OTP.';
+      setInlineError(fallbackMsg);
+      onShowAlert({ variant: 'error', title: 'Sign In Unsuccessful', message: fallbackMsg });
     } finally {
       setSubmitting(false);
     }
@@ -458,41 +627,35 @@ export function LoginPage({
     setInlineError(null);
     setInlineSuccess(null);
     setSuggestedCorrectRole(null);
-    const normalized = otpEmail.trim().toLowerCase();
-    if (!normalized || !normalized.includes('@')) {
-      setInlineError('Please enter your registered email address.');
+    const rawInput = otpEmail.trim();
+    if (!rawInput) {
+      setInlineError('Please enter your registered Email Address or Assigned Login ID.');
       return;
     }
 
     setSubmitting(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/otp/send`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Client-Platform': 'web',
-        },
-        body: JSON.stringify({
-          email: normalized,
-          portalRole: selectedRole,
-          clientType: 'WEB',
-        }),
+      const data = await sendOtpApi({
+        identifier: rawInput,
+        portalRole: selectedRole,
+        clientType: 'WEB',
       });
-
-      const json = await res.json().catch(() => null);
-      if (!res.ok) {
-        const errCode = json?.error?.code;
-        if (errCode === 'MOBILE_APP_ONLY') {
+      setOtpSent(true);
+      setOtpCooldown(60);
+      const targetDisplay = rawInput.includes('@') ? rawInput.toLowerCase() : data.maskedEmail;
+      const deliveryNote = `A 6-digit verification OTP has been sent to ${targetDisplay}. Please check your inbox and spam folder.`;
+      setInlineSuccess(deliveryNote);
+      onShowAlert({ variant: 'success', title: 'OTP Sent to Email', message: deliveryNote });
+    } catch (err: unknown) {
+      if (err instanceof AuthApiRequestError) {
+        if (err.code === 'MOBILE_APP_ONLY') {
           setSuggestedCorrectRole(null);
-          const msg =
-            json?.error?.message ||
-            'Field Phlebotomist accounts can only sign in using the LabSetu Mobile App, not on the website.';
-          setInlineError(msg);
-          onShowAlert({ variant: 'error', title: 'Mobile App Only', message: msg });
+          setInlineError(err.message);
+          onShowAlert({ variant: 'error', title: 'Mobile App Only', message: err.message });
           return;
         }
-        if (errCode === 'ROLE_MISMATCH' && json?.error?.details?.assignedRole) {
-          const assigned = json.error.details.assignedRole as UserRole;
+        if (err.code === 'ROLE_MISMATCH' && err.details?.assignedRole) {
+          const assigned = err.details.assignedRole as UserRole;
           if (assigned === UserRole.PHLEBOTOMIST) {
             setSuggestedCorrectRole(null);
             const msg =
@@ -502,31 +665,18 @@ export function LoginPage({
             return;
           }
           setSuggestedCorrectRole(assigned);
-          const msg = `${normalized} is registered as "${ROLE_LABELS[assigned]}" and cannot sign in under "${ROLE_LABELS[selectedRole]}".`;
-          setInlineError(msg);
-          onShowAlert({
-            variant: 'error',
-            title: 'Wrong Portal Selected',
-            message: msg,
-          });
+          setInlineError(err.message);
+          onShowAlert({ variant: 'error', title: 'Wrong Portal Selected', message: err.message });
           return;
         }
-        const errMsg = json?.error?.message || 'Unable to send the verification email.';
-        setInlineError(errMsg);
+        setInlineError(err.message);
         onShowAlert({
           variant: 'error',
-          title: errCode === 'USER_NOT_PROVISIONED' ? 'Email Not Added Yet' : 'Could Not Send OTP',
-          message: errMsg,
+          title: err.code === 'USER_NOT_PROVISIONED' ? 'Account Not Added Yet' : 'Could Not Send OTP',
+          message: err.message,
         });
         return;
       }
-
-      setOtpSent(true);
-      setOtpCooldown(60);
-      const deliveryNote = `A 6-digit verification OTP has been sent to ${normalized}. Please check your inbox and spam folder.`;
-      setInlineSuccess(deliveryNote);
-      onShowAlert({ variant: 'success', title: 'OTP Sent to Email', message: deliveryNote });
-    } catch {
       const msg =
         'Unable to send the verification code right now. Please check your internet connection or try Google / Password sign-in.';
       setInlineError(msg);
@@ -539,55 +689,42 @@ export function LoginPage({
   async function handleVerifyOtp(e: FormEvent) {
     e.preventDefault();
     setInlineError(null);
-    const normalized = otpEmail.trim().toLowerCase();
-    if (otpCode.trim().length < 6) {
-      setInlineError('Please enter all 6 digits of your OTP.');
+    const rawInput = otpEmail.trim();
+    if (!rawInput || otpCode.trim().length < 6) {
+      setInlineError('Please enter your Email / Login ID and all 6 digits of your OTP.');
       return;
     }
 
     setSubmitting(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/otp/verify`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Client-Platform': 'web',
-        },
-        body: JSON.stringify({
-          email: normalized,
-          otp: otpCode.trim(),
-          portalRole: selectedRole,
-          clientType: 'WEB',
-        }),
+      const data = await verifyOtpApi({
+        identifier: rawInput,
+        otp: otpCode.trim(),
+        portalRole: selectedRole,
+        clientType: 'WEB',
       });
-      const json = await res.json().catch(() => null);
-      if (!res.ok) {
-        const errCode = json?.error?.code;
-        if (errCode === 'MOBILE_APP_ONLY') {
-          setSuggestedCorrectRole(null);
-        }
-        const errMsg = json?.error?.message || 'OTP check failed.';
-        setInlineError(errMsg);
-        onShowAlert({
-          variant: 'error',
-          title: errCode === 'MOBILE_APP_ONLY' ? 'Mobile App Only' : 'Invalid OTP',
-          message: errMsg,
-        });
+      if (data.customToken) {
+        await signInWithCustomToken(auth, data.customToken);
         return;
       }
-
-      const customToken = json?.data?.customToken as string | null;
-      if (customToken) {
-        await signInWithCustomToken(auth, customToken);
-        return;
-      }
-
       onShowAlert({
         variant: 'error',
         title: 'Sign-In Incomplete',
         message: 'Email OTP verified, but we could not finish signing you in. Please try signing in with Google or your password.',
       });
-    } catch {
+    } catch (err: unknown) {
+      if (err instanceof AuthApiRequestError) {
+        if (err.code === 'MOBILE_APP_ONLY') {
+          setSuggestedCorrectRole(null);
+        }
+        setInlineError(err.message);
+        onShowAlert({
+          variant: 'error',
+          title: err.code === 'MOBILE_APP_ONLY' ? 'Mobile App Only' : 'Invalid OTP',
+          message: err.message,
+        });
+        return;
+      }
       onShowAlert({
         variant: 'error',
         title: 'Verification Error',
@@ -765,7 +902,7 @@ export function LoginPage({
             </button>
 
             <div className="auth-divider">
-              <span>OR SIGN IN WITH EMAIL</span>
+              <span>OR SIGN IN WITH EMAIL OR ASSIGNED ID</span>
             </div>
 
             <div className="labsetu-auth-tabs">
@@ -777,7 +914,7 @@ export function LoginPage({
                   setInlineError(null);
                 }}
               >
-                Email &amp; Password
+                Email / ID &amp; Password
               </button>
               <button
                 type="button"
@@ -795,15 +932,16 @@ export function LoginPage({
               <form onSubmit={(e) => void handlePasswordSignIn(e)}>
                 <div className="form-group">
                   <label className="form-label" htmlFor="portal-email">
-                    Email Address
+                    Email Address or Assigned Login ID
                   </label>
                   <input
                     id="portal-email"
-                    type="email"
+                    type="text"
                     className="form-input"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="Enter your registered email"
+                    placeholder="name@company.com or LAB-SM-1001 / USR-ADM-1001"
+                    autoComplete="username"
                     required
                   />
                 </div>
@@ -878,15 +1016,16 @@ export function LoginPage({
               >
                 <div className="form-group">
                   <label className="form-label" htmlFor="otp-email">
-                    Registered Email Address
+                    Email Address or Assigned Login ID
                   </label>
                   <input
                     id="otp-email"
-                    type="email"
+                    type="text"
                     className="form-input"
                     value={otpEmail}
                     onChange={(e) => setOtpEmail(e.target.value)}
-                    placeholder="Enter your registered email"
+                    placeholder="name@company.com or LAB-SM-1001 / USR-ADM-1001"
+                    autoComplete="username"
                     disabled={otpSent}
                     required
                   />

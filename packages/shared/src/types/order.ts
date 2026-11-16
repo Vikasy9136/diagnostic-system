@@ -32,9 +32,12 @@ export enum OrderPriority {
  */
 export interface PatientMetadata {
   id: string;
-  pseudonym: string; // e.g. "PT-9482" (no real names)
+  pseudonym: string; // e.g. "PT-9482"
   age: number;
   gender: 'MALE' | 'FEMALE' | 'OTHER';
+  phone?: string;
+  alternatePhone?: string;
+  clinicalNote?: string;
 }
 
 export type DropDestinationType = 'LARGE_LAB' | 'SELF_DROP' | 'CUSTOM_ADDRESS';
@@ -69,12 +72,14 @@ export interface PickupOrder {
   custodyHistory: CustodyEvent[];
   pickupLocation: {
     address: string;
+    pincode?: string;
     latitude: number;
     longitude: number;
     contactPhone?: string;
   };
   deliveryLocation: {
     address: string;
+    pincode?: string;
     latitude: number;
     longitude: number;
     contactName?: string;
@@ -93,19 +98,32 @@ export interface PickupOrder {
   packageSavingsInr?: number;
   distanceKm?: number;
   broadcastRadiusKm?: number;
+  serviceZoneId?: string;
+  serviceZoneName?: string;
   sampleCollectionPhotoUrl?: string;
+  phleboSelfieUrl?: string;
   phleboLiveLocation?: LiveGeoCoordinate;
-  paymentStatus?: 'UNPAID' | 'PAID' | 'FAILED' | 'REFUNDED';
+  paymentStatus?: 'UNPAID' | 'PAID' | 'FAILED' | 'REFUNDED' | 'PAID_TO_LAB';
   razorpayOrderId?: string;
   razorpayPaymentId?: string;
   razorpayPaymentLinkId?: string;
   paidAt?: string;
   paymentMethod?: string;
-  collectedByRole?: 'SMALL_LAB' | 'PHLEBOTOMIST' | 'ADMIN';
+  collectedByRole?: 'SMALL_LAB' | 'PHLEBOTOMIST' | 'ADMIN' | 'PATIENT_DIRECT_LAB';
+  completedAt?: string;
+  payoutDueAt?: string;
+  payoutWindowMinutes?: number;
+  instantPayoutEligible?: boolean;
+  instantPayoutAutoTriggered?: boolean;
   handoverOtp?: string;
   arrivalTemperatureCelsius?: number;
   qualityStatus?: SpecimenQualityStatus;
   department?: string;
+  baseCourierFeeInr?: number;
+  surgeIncentiveInr?: number;
+  searchStatus?: 'SEARCHING' | 'NO_PHLEBO_FOUND' | 'ASSIGNED' | 'EXPIRED';
+  broadcastExpiresAt?: string;
+  searchRetryCount?: number;
   cancellationReason?: string;
   rejectionReason?: string;
   createdAt: string;

@@ -1,8 +1,22 @@
 import dotenv from 'dotenv';
+import fs from 'fs';
 import path from 'path';
 
 // Load .env from monorepo root if not already loaded
-dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
+const envCandidates = [
+  path.resolve(__dirname, '../../../.env'),
+  path.resolve(__dirname, '../../../../.env'),
+  path.resolve(process.cwd(), '../../.env'),
+  path.resolve(process.cwd(), '../.env'),
+  path.resolve(process.cwd(), '.env'),
+];
+
+for (const candidate of envCandidates) {
+  if (fs.existsSync(candidate)) {
+    dotenv.config({ path: candidate });
+    break;
+  }
+}
 dotenv.config(); // fallback to local directory .env
 
 export const config = {
@@ -34,6 +48,8 @@ export const config = {
     serviceAccountKeyPath: process.env.FIREBASE_SERVICE_ACCOUNT_KEY_PATH || './serviceAccountKey.json',
     storageBucket:
       process.env.FIREBASE_STORAGE_BUCKET || 'labsetu-diagnostics.firebasestorage.app',
+    webApiKey:
+      process.env.FIREBASE_WEB_API_KEY || 'AIzaSyBM4u9_Kv7EdingjaLFoMFHrnkqijDI-SA',
   },
   smtp: {
     host: (process.env.SMTP_HOST || 'smtp.gmail.com').trim(),
@@ -46,9 +62,14 @@ export const config = {
   razorpay: {
     keyId: (process.env.RAZORPAY_KEY_ID || '').trim(),
     keySecret: (process.env.RAZORPAY_KEY_SECRET || '').trim(),
+    webhookSecret: (process.env.RAZORPAY_WEBHOOK_SECRET || '').trim(),
     xAccountNumber: (process.env.RAZORPAYX_ACCOUNT_NUMBER || '').trim(),
   },
   cloudFunctionsApiUrl:
     process.env.CLOUD_FUNCTIONS_API_URL ||
     'https://us-central1-labsetu-diagnostics.cloudfunctions.net/api',
+  googleMapsApiKey:
+    (process.env.GOOGLE_MAPS_API_KEY ||
+      process.env.VITE_GOOGLE_MAPS_API_KEY ||
+      'AIzaSyDEUzwXFySwEvwIXanvnnmV0eSs9e5aFeA').trim(),
 };

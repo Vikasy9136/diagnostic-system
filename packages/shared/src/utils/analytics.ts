@@ -24,7 +24,12 @@ export function formatOrderStatus(status: OrderStatus | string): string {
 }
 
 export function isOrderCompleted(status: OrderStatus): boolean {
-  return status === OrderStatus.REPORT_UPLOADED || status === OrderStatus.COMPLETED;
+  return (
+    status === OrderStatus.DELIVERED_TO_LAB ||
+    status === OrderStatus.UNDER_ANALYSIS ||
+    status === OrderStatus.REPORT_UPLOADED ||
+    status === OrderStatus.COMPLETED
+  );
 }
 
 export function isOrderInProgress(status: OrderStatus): boolean {

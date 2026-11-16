@@ -1,10 +1,14 @@
 import {
   CommissionConfig,
+  DiagnosticDepartment,
   DiagnosticTestItem,
   DropDestinationType,
   LabFacility,
   OrderPriority,
+  ServiceZoneRecord,
   SpecimenItem,
+  SpecimenType,
+  StorageTemperature,
   TubeType,
 } from '../types/index.js';
 
@@ -159,6 +163,100 @@ export function inferRequiredTubeForTestCode(
     }
   }
   return fallbackTube || TubeType.SERUM_RED_GOLD;
+}
+
+export interface InferredCatalogDefaults {
+  department: DiagnosticDepartment;
+  specimenType: SpecimenType;
+  tubeType: TubeType;
+  temperatureRequirement: StorageTemperature;
+  suggestedName?: string;
+}
+
+const KNOWN_CATALOG_NAMES: Record<string, string> = {
+  CBC: 'Complete Blood Count (CBC)',
+  HB: 'Hemoglobin (Hb)',
+  ESR: 'Erythrocyte Sedimentation Rate (ESR)',
+  HBA1C: 'Glycosylated Hemoglobin (HbA1c)',
+  LFT: 'Liver Function Test (LFT)',
+  KFT: 'Kidney Function Test (KFT)',
+  RFT: 'Renal Function Test (RFT)',
+  LIPID: 'Lipid Profile',
+  TSH: 'Thyroid Stimulating Hormone (TSH)',
+  TFT: 'Thyroid Function Test (T3, T4, TSH)',
+  FBS: 'Fasting Blood Sugar (FBS)',
+  PPBS: 'Post-Prandial Blood Sugar (PPBS)',
+  RBS: 'Random Blood Sugar (RBS)',
+  PT: 'Prothrombin Time (PT)',
+  INR: 'Prothrombin Time / INR',
+  APTT: 'Activated Partial Thromboplastin Time (aPTT)',
+  CRP: 'C-Reactive Protein (CRP)',
+  VITD: 'Vitamin D (25-OH)',
+  B12: 'Vitamin B12',
+  URINE: 'Urine Routine & Microscopy',
+  RTPCR: 'RT-PCR Viral Molecular Panel',
+};
+
+export function inferCatalogDefaultsForCode(rawCode?: string): InferredCatalogDefaults {
+  const code = String(rawCode || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, '');
+
+  const tubeType = inferRequiredTubeForTestCode(code, TubeType.SERUM_RED_GOLD);
+
+  let specimenType: SpecimenType = SpecimenType.SERUM;
+  if (tubeType === TubeType.URINE_CONTAINER) {
+    specimenType = code.includes('STOOL') ? SpecimenType.OTHER : SpecimenType.URINE;
+  } else if (tubeType === TubeType.VIRAL_TRANSPORT_MEDIA) {
+    specimenType = SpecimenType.SWAB;
+  } else if (
+    tubeType === TubeType.SODIUM_FLUORIDE_GREY ||
+    tubeType === TubeType.SODIUM_CITRATE_BLUE ||
+    tubeType === TubeType.HEPARIN_GREEN
+  ) {
+    specimenType = SpecimenType.PLASMA;
+  } else if (tubeType === TubeType.EDTA_LAVENDER) {
+    specimenType = SpecimenType.BLOOD;
+  } else {
+    specimenType = SpecimenType.SERUM;
+  }
+
+  let department: DiagnosticDepartment = 'Biochemistry';
+  if (
+    /^(CBC|HB(?=$|[_-])|ESR|PLATELET|PS(?=$|[_-])|PT(?=$|[_-])|INR|APTT|DDIMER|COAG|FIBRINOGEN)/.test(
+      code
+    )
+  ) {
+    department = 'Hematology';
+  } else if (/^(TSH|T3|T4|TFT|VITD|B12|CRP|WIDAL|DENGUE|MALARIA|HIV|HBSAG)/.test(code)) {
+    department = 'Immunology';
+  } else if (/^(RTPCR|COVID|HPV|H1N1|CHROMOSOME|KARYOTYPE)/.test(code)) {
+    department = 'Molecular';
+  } else if (/(CULTURE|SENSITIVITY)/.test(code)) {
+    department = 'Microbiology';
+  } else if (/^(EXEC|WELL|MASTER|PKG|HEALTH|ANNUAL|FULLBODY)/.test(code)) {
+    department = 'Preventive Health';
+  } else if (/^(HISTO|BIOPSY|CYTO|PAP)/.test(code)) {
+    department = 'Pathology';
+  }
+
+  const temperatureRequirement: StorageTemperature =
+    /^(AMMONIA|LACTATE|INSULIN|FROZEN)/.test(code)
+      ? StorageTemperature.FROZEN
+      : StorageTemperature.REFRIGERATED;
+
+  const exactMatchKey = Object.keys(KNOWN_CATALOG_NAMES).find(
+    (k) => code === k || (k.length >= 3 && code.startsWith(k))
+  );
+
+  return {
+    department,
+    specimenType,
+    tubeType,
+    temperatureRequirement,
+    suggestedName: exactMatchKey ? KNOWN_CATALOG_NAMES[exactMatchKey] : undefined,
+  };
 }
 
 export function extractTubeTagFromBarcode(barcode: string): TubeType | null {
@@ -724,5 +822,205 @@ export function evaluateLargeLabQuotesForSelection(params: {
   });
 
   return quotes;
+}
+
+export interface ServiceCoverageEvaluation {
+  covered: boolean;
+  matchedZone: ServiceZoneRecord | null;
+  nearestZone: ServiceZoneRecord | null;
+  distanceToNearestKm: number;
+  activeZoneCount: number;
+  message: string;
+}
+
+/**
+ * Evaluates whether a pickup/facility point falls inside an active LabSetu expansion zone.
+ */
+export function evaluatePointServiceCoverage(
+  zones: ServiceZoneRecord[],
+  latitude?: number,
+  longitude?: number,
+  pincode?: string,
+  city?: string
+): ServiceCoverageEvaluation {
+  if (!Array.isArray(zones) || zones.length === 0) {
+    return {
+      covered: true,
+      matchedZone: null,
+      nearestZone: null,
+      distanceToNearestKm: 0,
+      activeZoneCount: 0,
+      message: 'No service zones configured; all coordinates allowed.',
+    };
+  }
+
+  const activeZones = zones.filter((z) => z.isActive !== false && z.launchPhase !== 'PAUSED');
+  if (activeZones.length === 0) {
+    return {
+      covered: false,
+      matchedZone: null,
+      nearestZone: zones[0] || null,
+      distanceToNearestKm: 0,
+      activeZoneCount: 0,
+      message: 'All service zones are currently paused. Enable at least one operational area in Control Tower.',
+    };
+  }
+
+  const cleanPin = String(pincode || '')
+    .trim()
+    .replace(/\D/g, '')
+    .slice(0, 6);
+  const cleanCity = String(city || '').trim().toLowerCase();
+  const hasCoords =
+    typeof latitude === 'number' &&
+    typeof longitude === 'number' &&
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude) &&
+    (Math.abs(latitude) > 0.01 || Math.abs(longitude) > 0.01);
+
+  // 1. Direct Area Expansion Pincode Match (City prioritized if provided)
+  if (cleanPin.length === 6) {
+    const pinMatches = activeZones.filter(
+      (z) => Array.isArray(z.pincodes) && z.pincodes.includes(cleanPin)
+    );
+    if (pinMatches.length > 0) {
+      let bestPinZone = pinMatches[0];
+      if (cleanCity) {
+        const cityMatch = pinMatches.find((z) => (z.city || '').toLowerCase().includes(cleanCity));
+        if (cityMatch) bestPinZone = cityMatch;
+      }
+      const dist = hasCoords
+        ? calculateHaversineDistanceKm(latitude!, longitude!, bestPinZone.centerLatitude, bestPinZone.centerLongitude)
+        : 0;
+      return {
+        covered: true,
+        matchedZone: bestPinZone,
+        nearestZone: bestPinZone,
+        distanceToNearestKm: dist,
+        activeZoneCount: activeZones.length,
+        message: `Covered under active area expansion: ${bestPinZone.city} — ${bestPinZone.name} (Pincode ${cleanPin} Verified).`,
+      };
+    }
+  }
+
+  // 2. Proximity GPS Radius Match
+  let matchedZone: ServiceZoneRecord | null = null;
+  let nearestZone: ServiceZoneRecord | null = null;
+  let nearestDistanceKm = Number.POSITIVE_INFINITY;
+
+  for (const zone of activeZones) {
+    const dist = hasCoords
+      ? calculateHaversineDistanceKm(latitude!, longitude!, zone.centerLatitude, zone.centerLongitude)
+      : 0;
+
+    if (dist < nearestDistanceKm) {
+      nearestDistanceKm = dist;
+      nearestZone = zone;
+    }
+
+    const radiusKm = Math.max(0.5, zone.radiusKm || 5);
+    const inRadius = hasCoords && dist <= radiusKm;
+
+    if (inRadius) {
+      if (!matchedZone || dist < calculateHaversineDistanceKm(latitude || 0, longitude || 0, matchedZone.centerLatitude, matchedZone.centerLongitude)) {
+        matchedZone = zone;
+      }
+    }
+  }
+
+  const safeDistance = Number.isFinite(nearestDistanceKm)
+    ? Math.round(nearestDistanceKm * 100) / 100
+    : 0;
+
+  if (matchedZone) {
+    return {
+      covered: true,
+      matchedZone,
+      nearestZone: matchedZone,
+      distanceToNearestKm: hasCoords
+        ? calculateHaversineDistanceKm(latitude!, longitude!, matchedZone.centerLatitude, matchedZone.centerLongitude)
+        : 0,
+      activeZoneCount: activeZones.length,
+      message: `Covered under active zone: ${matchedZone.city} — ${matchedZone.name} (${matchedZone.zoneCode} • within ${matchedZone.radiusKm} km radius).`,
+    };
+  }
+
+  return {
+    covered: false,
+    matchedZone: null,
+    nearestZone,
+    distanceToNearestKm: safeDistance,
+    activeZoneCount: activeZones.length,
+    message: nearestZone
+      ? cleanPin.length === 6
+        ? `Pincode ${cleanPin} (${city || nearestZone.city}) is not yet enrolled in active service zones. Nearest area is "${nearestZone.name}" (${safeDistance} km away). Add this pincode in Admin Control Tower to expand coverage.`
+        : `Selected location is ${safeDistance} km from nearest active zone "${nearestZone.name}" (${nearestZone.radiusKm} km radius). Expand service zone or pick an address inside active pockets.`
+      : 'Selected location is outside currently active service zones.',
+  };
+}
+
+const CODE128_PATTERNS = [
+  '212222', '222122', '222221', '121223', '121322', '131222', '122213', '122312', '132212', '221213',
+  '221312', '231212', '112232', '122132', '122231', '113222', '123122', '123221', '223211', '221132',
+  '221231', '213212', '223112', '312131', '311222', '321122', '321221', '312212', '322112', '322211',
+  '212123', '212321', '232121', '111323', '131123', '131321', '112313', '132113', '132311', '211313',
+  '231113', '231311', '112133', '112331', '132131', '113123', '113321', '133121', '313121', '211331',
+  '231131', '213113', '213311', '213131', '311123', '311321', '331121', '312113', '312311', '332111',
+  '314111', '221411', '431111', '111224', '111422', '121124', '121421', '141122', '141221', '112214',
+  '112412', '122114', '122411', '142112', '142211', '241211', '221114', '413111', '241112', '134111',
+  '111242', '121142', '121241', '114212', '124112', '124211', '411212', '421112', '421211', '212141',
+  '214121', '412121', '111143', '111341', '131141', '114113', '114311', '411113', '411311', '113141',
+  '114131', '311141', '411131', '211412', '211214', '211232', '2331112'
+];
+
+export interface Code128Bar {
+  x: number;
+  width: number;
+}
+
+export interface Code128Result {
+  totalWidth: number;
+  bars: Code128Bar[];
+  text: string;
+}
+
+/**
+ * Encodes text into Code 128 (Subset B) bar coordinate array for high-DPI SVG rendering
+ * and thermal printer output (50mm x 25mm vacutainer stickers).
+ */
+export function generateCode128Bars(rawText: string): Code128Result {
+  const text = (rawText || '').trim().replace(/[^\x20-\x7E]/g, '');
+  const codes: number[] = [104]; // Start B
+  let checkSum = 104;
+
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i) - 32;
+    codes.push(code);
+    checkSum += code * (i + 1);
+  }
+  codes.push(checkSum % 103);
+  codes.push(106); // Stop
+
+  const quietZone = 10;
+  let currentX = quietZone;
+  const bars: Code128Bar[] = [];
+
+  for (const c of codes) {
+    const pattern = CODE128_PATTERNS[c] || CODE128_PATTERNS[0];
+    for (let j = 0; j < pattern.length; j++) {
+      const w = Number(pattern[j]);
+      if (j % 2 === 0) {
+        bars.push({ x: currentX, width: w });
+      }
+      currentX += w;
+    }
+  }
+  currentX += quietZone;
+
+  return {
+    totalWidth: currentX,
+    bars,
+    text,
+  };
 }
 

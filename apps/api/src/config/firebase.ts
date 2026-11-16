@@ -91,6 +91,7 @@ export function initializeFirebase(): {
     }
 
     firestoreDb = admin.firestore(firebaseApp);
+    firestoreDb.settings({ ignoreUndefinedProperties: true });
     firebaseAuth = admin.auth(firebaseApp);
     firebaseStorage = admin.storage(firebaseApp);
     firebaseMessaging = admin.messaging(firebaseApp);

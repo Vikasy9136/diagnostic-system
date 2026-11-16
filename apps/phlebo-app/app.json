@@ -2,32 +2,91 @@
   "expo": {
     "name": "LabSetu Partner",
     "slug": "labsetu-phlebo",
+    "scheme": "labsetu-phlebo",
     "version": "1.0.0",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "splash": {
-      "backgroundColor": "#0F766E",
-      "resizeMode": "contain"
-    },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.diagnostic.phleboapp"
+      "bundleIdentifier": "com.diagnostic.phleboapp",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "location",
+          "fetch",
+          "remote-notification"
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0F766E"
       },
       "package": "com.diagnostic.phleboapp",
       "permissions": [
         "CAMERA",
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "SYSTEM_ALERT_WINDOW",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "WAKE_LOCK",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
       ]
     },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true,
+          "locationAlwaysAndWhenInUsePermission": "Allow LabSetu Partner to share live rider location while On Duty.",
+          "locationWhenInUsePermission": "Allow LabSetu Partner to locate nearby lab pickups within 1-5 km."
+        }
+      ],
+      "expo-notifications",
+      "./plugins/withFloatingDispatchOverlay",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash.png",
+          "backgroundColor": "#0F766E",
+          "resizeMode": "contain"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow LabSetu Partner to use the camera to scan specimen barcodes and take sample collection photo proof."
+        }
+      ],
+      "expo-font",
+      "expo-web-browser"
+    ],
     "web": {
+      "bundler": "metro",
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "e5bd37ce-6506-43ec-8199-3ca004bc234a"
+      }
     }
   }
 }
-

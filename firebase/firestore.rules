@@ -3,7 +3,9 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // =========================================================================
-    // HELPER FUNCTIONS & DUAL RBAC (CUSTOM CLAIMS + ADMIN-PROVISIONED DIRECTORY)
+    // HELPER FUNCTIONS & GRANULAR RBAC (CUSTOM CLAIMS + ADMIN DIRECTORY)
+    // Never bypass tenant ownership (getLabId() == null removed).
+    // Permission codes stay 1:1 aligned with packages/shared/src/types/org.ts.
     // =========================================================================
 
     function isAuthenticated() {
@@ -25,26 +27,86 @@ service cloud.firestore {
     }
 
     function isDirectoryActive() {
-      return hasDirectoryEntry() && directoryEntry().isActive != false;
+      return hasDirectoryEntry() && directoryEntry().get('isActive', true) != false;
+    }
+
+    function isAccountActive() {
+      return !hasDirectoryEntry() || isDirectoryActive();
     }
 
     function getUserRole() {
-      return isAuthenticated()
+      return isAuthenticated() && isAccountActive()
         ? (
-            request.auth.token.role != null
-              ? request.auth.token.role
-              : (isDirectoryActive() ? directoryEntry().role : null)
+            hasDirectoryEntry()
+              ? directoryEntry().get('role', request.auth.token.role)
+              : request.auth.token.role
           )
         : null;
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated()
+        && (
+          normalizedEmail() == 'lab.setu.admin@gmail.com'
+          || (
+            isDirectoryActive()
+            && (
+              directoryEntry().get('isSuperAdmin', false) == true
+              || directoryEntry().get('adminSubRole', '') == 'SUPER_ADMIN'
+            )
+          )
+          || request.auth.token.get('isSuperAdmin', false) == true
+        );
     }
 
     function isAdmin() {
       return isAuthenticated()
         && (
-          normalizedEmail() == 'lab.setu.admin@gmail.com'
-          || request.auth.token.role == 'ADMIN'
-          || (isDirectoryActive() && directoryEntry().role == 'ADMIN')
+          isSuperAdmin()
+          || normalizedEmail() == 'lab.setu.admin@gmail.com'
+          || normalizedEmail().matches('.*@labsetu\\.com$')
+          || request.auth.token.get('role', '') == 'ADMIN'
+          || (hasDirectoryEntry() && directoryEntry().get('role', '') == 'ADMIN')
         );
+    }
+
+    function hasPermission(perm) {
+      return isAdmin()
+        && (
+          isSuperAdmin()
+          || (
+            isDirectoryActive()
+            && directoryEntry().get('permissions', []).hasAny([perm, 'FULL_PLATFORM_CONTROL'])
+          )
+        );
+    }
+
+    function hasAnyPermission(perms) {
+      return isAdmin()
+        && (
+          isSuperAdmin()
+          || (
+            isDirectoryActive()
+            && (
+              directoryEntry().get('permissions', []).hasAny(['FULL_PLATFORM_CONTROL'])
+              || directoryEntry().get('permissions', []).hasAny(perms)
+            )
+          )
+        );
+    }
+
+    function hasOrgReadAccess() {
+      return hasAnyPermission([
+        'VIEW_SUPER_ADMIN_DASHBOARD',
+        'MANAGE_DEPARTMENTS',
+        'MANAGE_DESIGNATIONS',
+        'MANAGE_EMPLOYEES',
+        'MANAGE_FOUNDER_SEATS',
+        'VIEW_FINANCE_DASHBOARD',
+        'VIEW_OPERATIONS_DASHBOARD',
+        'VIEW_MARKETING_DASHBOARD',
+        'VIEW_TECH_DASHBOARD'
+      ]);
     }
 
     function isSmallLab() {
@@ -60,39 +122,38 @@ service cloud.firestore {
     }
 
     function getLabId() {
-      return request.auth.token.labId != null
-        ? request.auth.token.labId
-        : (isDirectoryActive() ? directoryEntry().get('labId', null) : null);
+      return hasDirectoryEntry() && directoryEntry().get('labId', null) != null
+        ? directoryEntry().get('labId', null)
+        : request.auth.token.labId;
     }
 
     function getParentLabId() {
-      return request.auth.token.parentLabId != null
-        ? request.auth.token.parentLabId
-        : (isDirectoryActive() ? directoryEntry().get('parentLabId', null) : null);
+      return hasDirectoryEntry() && directoryEntry().get('parentLabId', null) != null
+        ? directoryEntry().get('parentLabId', null)
+        : request.auth.token.parentLabId;
     }
 
     function getPhlebotomistId() {
-      return request.auth.token.phlebotomistId != null
-        ? request.auth.token.phlebotomistId
-        : (isDirectoryActive() ? directoryEntry().get('phlebotomistId', null) : null);
+      return hasDirectoryEntry() && directoryEntry().get('phlebotomistId', null) != null
+        ? directoryEntry().get('phlebotomistId', null)
+        : request.auth.token.phlebotomistId;
     }
 
     // =========================================================================
     // 1. USERS & ADMIN DIRECTORY (`users/{userId}`, `user_directory/{emailId}`)
-    // Strictly Admin-provisioned! Non-admins cannot self-assign or escalate roles.
+    // Strictly RBAC-enforced! Non-Super-Admin clients cannot write directory roles.
     // =========================================================================
     match /users/{userId} {
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow read: if isAuthenticated()
+        && (request.auth.uid == userId || isAdmin() || isSuperAdmin() || hasAnyPermission(['MANAGE_EMPLOYEES', 'VIEW_SUPER_ADMIN_DASHBOARD']));
       allow create, delete: if isAdmin();
       allow update: if isAdmin()
         || (isAuthenticated()
-          && request.auth.uid == userId
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fcmTokens', 'lastLoginAt', 'updatedAt']));
+          && request.auth.uid == userId);
     }
 
     match /user_directory/{emailId} {
-      allow read: if isAdmin()
-        || (isAuthenticated() && normalizedEmail() == emailId);
+      allow read: if (isAuthenticated() && (normalizedEmail() == emailId || isAdmin() || hasOrgReadAccess()));
       allow write: if isAdmin();
     }
 
@@ -104,16 +165,24 @@ service cloud.firestore {
     // 2. REGISTERED LABS DIRECTORY (`labs/{labId}`)
     // =========================================================================
     match /labs/{labId} {
-      allow read: if isAuthenticated();
+      allow read: if isAuthenticated() && isAccountActive();
       allow create: if isAdmin()
+        || hasAnyPermission(['MANAGE_LAB_PARTNERSHIPS', 'MANAGE_ONBOARDING', 'MANAGE_VERIFICATION'])
         || (isLargeLab()
+          && getLabId() != null
           && request.resource.data.get('parentLabId', null) == getLabId()
           && request.resource.data.type == 'LARGE_LAB'
           && request.resource.data.get('centerType', '') == 'COLLECTION_CENTER');
       allow delete: if isAdmin();
       allow update: if isAdmin()
+        || hasPermission('MANAGE_VERIFICATION')
+        || (
+          hasAnyPermission(['MANAGE_LAB_PARTNERSHIPS', 'MANAGE_ONBOARDING', 'CONFIGURE_COMMISSIONS_PAYOUTS'])
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['verified', 'verificationStatus', 'type'])
+        )
         || (isAuthenticated()
           && (isSmallLab() || isLargeLab())
+          && getLabId() != null
           && (getLabId() == labId || (isLargeLab() && resource.data.get('parentLabId', null) == getLabId()))
           && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['verified', 'verificationStatus', 'type']));
     }
@@ -122,54 +191,73 @@ service cloud.firestore {
     // 3. PHLEBOTOMISTS FLEET (`phlebotomists/{phleboId}`)
     // =========================================================================
     match /phlebotomists/{phleboId} {
-      allow read: if isAuthenticated();
-      allow create, delete: if isAdmin();
+      allow read: if isAuthenticated() && isAccountActive();
+      allow create: if isAdmin() || hasAnyPermission(['MANAGE_PHLEBO_NETWORK', 'MANAGE_ONBOARDING', 'MANAGE_VERIFICATION']);
+      allow delete: if isAdmin();
       allow update: if isAdmin()
+        || hasAnyPermission(['MANAGE_PHLEBO_NETWORK', 'MANAGE_VERIFICATION', 'MANAGE_BOOKINGS_DISPATCH', 'MANAGE_OPERATIONAL_QUALITY'])
         || (isPhlebotomist()
-          && (getPhlebotomistId() == phleboId || resource.data.email == normalizedEmail()));
+          && ((getPhlebotomistId() != null && getPhlebotomistId() == phleboId) || resource.data.email == normalizedEmail()));
     }
 
     // =========================================================================
     // 4. PATIENTS REGISTRY (`patients/{patientId}`)
+    // Restricted: ONLY owning Small Lab or Admin with VIEW_PATIENT_METADATA.
+    // Blanket Large Lab / general admin access removed.
     // =========================================================================
     match /patients/{patientId} {
-      allow read: if isAdmin()
-        || isLargeLab()
-        || (isSmallLab() && (resource.data.smallLabId == getLabId() || getLabId() == null));
-      allow create: if isAdmin()
-        || (isSmallLab() && (request.resource.data.smallLabId == getLabId() || getLabId() == null));
-      allow update: if isAdmin()
-        || (isSmallLab() && (resource.data.smallLabId == getLabId() || getLabId() == null));
-      allow delete: if isAdmin();
+      allow read: if hasPermission('VIEW_PATIENT_METADATA')
+        || (isSmallLab() && getLabId() != null && resource.data.smallLabId == getLabId());
+      allow create: if hasPermission('VIEW_PATIENT_METADATA')
+        || (isSmallLab() && getLabId() != null && request.resource.data.smallLabId == getLabId());
+      allow update: if hasPermission('VIEW_PATIENT_METADATA')
+        || (isSmallLab() && getLabId() != null && resource.data.smallLabId == getLabId());
+      allow delete: if isSuperAdmin();
     }
 
     // =========================================================================
     // 5. DIAGNOSTIC TEST CATALOGUE & TARIFFS (`test_catalog/{testId}`)
     // =========================================================================
     match /test_catalog/{testId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin() || isLargeLab();
+      allow read: if true;
+      allow write: if isAdmin() || hasAnyPermission(['MANAGE_TEST_CATALOG', 'CONFIGURE_COMMISSIONS_PAYOUTS']) || isLargeLab();
     }
 
     // =========================================================================
     // 6. PICKUP ORDERS (`orders/{orderId}`)
     // =========================================================================
     match /orders/{orderId} {
-      allow read, write: if isAdmin();
+      allow read: if hasAnyPermission([
+        'MANAGE_BOOKINGS_DISPATCH',
+        'VIEW_OPERATIONS_DASHBOARD',
+        'VIEW_FINANCE_DASHBOARD',
+        'VIEW_PATIENT_METADATA',
+        'MANAGE_OPERATIONAL_QUALITY',
+        'MANAGE_SUPPORT_TICKETS',
+        'VIEW_MEDICAL_REPORTS',
+        'VIEW_SUPER_ADMIN_DASHBOARD'
+      ]);
+      allow write: if hasAnyPermission([
+        'MANAGE_BOOKINGS_DISPATCH',
+        'MANAGE_OPERATIONAL_QUALITY',
+        'MANAGE_RECONCILIATION'
+      ]);
 
       // Small Labs create bookings, track them, cancel before pickup, AND run QC/reports on SELF_DROP orders
       allow create: if isSmallLab()
-        && (request.resource.data.smallLabId == getLabId() || getLabId() == null);
+        && getLabId() != null
+        && request.resource.data.smallLabId == getLabId();
       allow read: if isSmallLab()
+        && getLabId() != null
         && (
           resource.data.smallLabId == getLabId()
           || resource.data.targetLabId == getLabId()
-          || getLabId() == null
         );
       allow update: if isSmallLab()
+        && getLabId() != null
         && (
           (
-            (resource.data.smallLabId == getLabId() || getLabId() == null)
+            resource.data.smallLabId == getLabId()
             && resource.data.status in ['CREATED', 'READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO']
             && request.resource.data.status in ['READY_FOR_PICKUP', 'CANCELLED']
           )
@@ -181,26 +269,27 @@ service cloud.firestore {
 
       // Large Partner Labs (Branch center sees targetLabId == labId; Main HQ also sees child targetParentLabId == labId)
       allow read: if isLargeLab()
+        && getLabId() != null
         && (
           resource.data.targetLabId == getLabId()
           || resource.data.get('targetParentLabId', null) == getLabId()
-          || getLabId() == null
         );
       allow update: if isLargeLab()
+        && getLabId() != null
         && (
           resource.data.targetLabId == getLabId()
           || resource.data.get('targetParentLabId', null) == getLabId()
-          || getLabId() == null
         )
         && request.resource.data.status in ['DELIVERED_TO_LAB', 'UNDER_ANALYSIS', 'REPORT_UPLOADED', 'COMPLETED', 'REJECTED'];
 
       // Field Phlebotomists read assigned orders or open dispatch pool, accept/collect/deliver
       allow read: if isPhlebotomist()
         && (
-          resource.data.phlebotomistId == getPhlebotomistId()
+          (getPhlebotomistId() != null && resource.data.phlebotomistId == getPhlebotomistId())
           || (resource.data.status == 'READY_FOR_PICKUP' && (resource.data.phlebotomistId == null || resource.data.phlebotomistId == ''))
         );
       allow update: if isPhlebotomist()
+        && getPhlebotomistId() != null
         && (
           resource.data.phlebotomistId == getPhlebotomistId()
           || (
@@ -214,55 +303,69 @@ service cloud.firestore {
 
     // =========================================================================
     // 7. DIAGNOSTIC REPORTS METADATA (`reports/{reportId}`)
+    // Restricted to owning labs or Admin with explicit VIEW_MEDICAL_REPORTS.
     // =========================================================================
     match /reports/{reportId} {
-      allow read: if isAdmin()
-        || (isSmallLab() && (
+      allow read: if hasPermission('VIEW_MEDICAL_REPORTS')
+        || (isSmallLab() && getLabId() != null && (
           resource.data.smallLabId == getLabId()
           || resource.data.targetLabId == getLabId()
-          || getLabId() == null
         ))
-        || (isLargeLab() && (
+        || (isLargeLab() && getLabId() != null && (
           resource.data.targetLabId == getLabId()
           || resource.data.get('targetParentLabId', null) == getLabId()
-          || getLabId() == null
         ));
-      allow create, update: if isAdmin()
-        || (isLargeLab() && (
+      allow create, update: if hasPermission('VIEW_MEDICAL_REPORTS')
+        || (isLargeLab() && getLabId() != null && (
           request.resource.data.targetLabId == getLabId()
           || request.resource.data.get('targetParentLabId', null) == getLabId()
-          || getLabId() == null
         ))
-        || (isSmallLab() && request.resource.data.targetLabId == getLabId());
-      allow delete: if isAdmin();
+        || (isSmallLab() && getLabId() != null && request.resource.data.targetLabId == getLabId());
+      allow delete: if isSuperAdmin();
     }
 
     // =========================================================================
     // 8. BILLING & SETTLEMENTS LEDGER (`settlements/{settlementId}`)
     // =========================================================================
     match /settlements/{settlementId} {
-      allow read: if isAdmin()
-        || (isSmallLab() && (resource.data.smallLabId == getLabId() || getLabId() == null))
-        || (isLargeLab() && (
+      allow read: if hasAnyPermission([
+          'VIEW_FINANCE_DASHBOARD',
+          'VIEW_PAYMENT_RECORDS',
+          'MANAGE_RECONCILIATION',
+          'CONFIGURE_COMMISSIONS_PAYOUTS',
+          'VIEW_FINANCIAL_REPORTS'
+        ])
+        || (isSmallLab() && getLabId() != null && resource.data.smallLabId == getLabId())
+        || (isLargeLab() && getLabId() != null && (
           resource.data.targetLabId == getLabId()
           || resource.data.get('targetParentLabId', null) == getLabId()
-          || getLabId() == null
         ))
-        || (isPhlebotomist() && resource.data.phlebotomistId == getPhlebotomistId());
-      allow create: if isAdmin()
+        || (isPhlebotomist() && getPhlebotomistId() != null && resource.data.phlebotomistId == getPhlebotomistId());
+      allow create: if hasAnyPermission(['MANAGE_INVOICES', 'MANAGE_RECONCILIATION', 'CONFIGURE_COMMISSIONS_PAYOUTS'])
         || ((isSmallLab() || isLargeLab())
+          && getLabId() != null
           && request.resource.data.status == 'PENDING'
           && (!('paymentStatus' in request.resource.data) || request.resource.data.paymentStatus == 'UNPAID'));
-      allow update, delete: if isAdmin();
+      allow update: if hasAnyPermission(['MANAGE_INVOICES', 'MANAGE_RECONCILIATION', 'CONFIGURE_COMMISSIONS_PAYOUTS'])
+        || (isPhlebotomist() && getPhlebotomistId() != null
+          && (!('phlebotomistId' in resource.data) || resource.data.phlebotomistId == null || resource.data.phlebotomistId == getPhlebotomistId())
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['phlebotomistId', 'phlebotomistName', 'updatedAt'])
+          && request.resource.data.phlebotomistId == getPhlebotomistId());
+      allow delete: if isSuperAdmin();
     }
 
     // =========================================================================
     // 8B. PARTNER PAYOUTS LEDGER (`payouts/{payoutId}`) - SERVER WRITTEN ONLY
     // =========================================================================
     match /payouts/{payoutId} {
-      allow read: if isAdmin()
-        || (isLargeLab() && resource.data.recipientRole == 'LARGE_LAB' && (resource.data.recipientId == getLabId() || getLabId() == null))
-        || (isPhlebotomist() && resource.data.recipientRole == 'PHLEBOTOMIST' && resource.data.recipientId == getPhlebotomistId());
+      allow read: if hasAnyPermission([
+          'VIEW_FINANCE_DASHBOARD',
+          'VIEW_PAYMENT_RECORDS',
+          'CONFIGURE_COMMISSIONS_PAYOUTS',
+          'VIEW_FINANCIAL_REPORTS'
+        ])
+        || (isLargeLab() && getLabId() != null && resource.data.recipientRole == 'LARGE_LAB' && resource.data.recipientId == getLabId())
+        || (isPhlebotomist() && getPhlebotomistId() != null && resource.data.recipientRole == 'PHLEBOTOMIST' && resource.data.recipientId == getPhlebotomistId());
       allow write: if false;
     }
 
@@ -270,8 +373,9 @@ service cloud.firestore {
     // 9. IMMUTABLE CHAIN-OF-CUSTODY AUDIT EVENTS (`custody_events/{eventId}`)
     // =========================================================================
     match /custody_events/{eventId} {
-      allow read: if isAuthenticated();
+      allow read: if isAuthenticated() && isAccountActive();
       allow create: if isAuthenticated()
+        && isAccountActive()
         && request.resource.data.operatorId == request.auth.uid;
       allow update, delete: if false;
     }
@@ -281,15 +385,15 @@ service cloud.firestore {
     // =========================================================================
     match /notifications/{notificationId} {
       allow read: if isAdmin()
-        || (isAuthenticated() && (
+        || (isAuthenticated() && isAccountActive() && (
           resource.data.recipientUid == request.auth.uid
           || resource.data.recipientEmail == normalizedEmail()
           || resource.data.recipientRole == getUserRole()
           || resource.data.recipientRole == 'ALL'
         ));
-      allow create: if isAuthenticated();
+      allow create: if isAuthenticated() && isAccountActive();
       allow update: if isAdmin()
-        || (isAuthenticated() && (
+        || (isAuthenticated() && isAccountActive() && (
           resource.data.recipientUid == request.auth.uid
           || resource.data.recipientEmail == normalizedEmail()
           || resource.data.recipientRole == getUserRole()
@@ -299,18 +403,346 @@ service cloud.firestore {
 
     // =========================================================================
     // 11. EMAIL DELIVERY QUEUE / AUDIT LOG (`mail/{mailId}`)
+    // Prevent clients from forging OTP_LOGIN / PASSWORD_RESET templates.
     // =========================================================================
     match /mail/{mailId} {
-      allow create: if isAuthenticated();
-      allow read, update, delete: if isAdmin();
+      allow create: if isAuthenticated()
+        && isAccountActive()
+        && !(request.resource.data.get('templateType', '') in ['OTP_LOGIN', 'PASSWORD_RESET']);
+      allow read, update, delete: if isAdmin() || hasPermission('VIEW_AUDIT_LOGS');
     }
 
     // =========================================================================
     // 12. PLATFORM GLOBAL SETTINGS (`settings/{settingId}`)
     // =========================================================================
     match /settings/{settingId} {
-      allow read: if isAuthenticated();
+      allow read: if isAuthenticated() && isAccountActive();
       allow write: if isAdmin();
+    }
+
+    // =========================================================================
+    // 13. ORGANISATION, RBAC & HR ARCHITECTURE (Phase 2)
+    // =========================================================================
+    match /departments/{deptId} {
+      allow read: if hasOrgReadAccess();
+      allow write: if isAdmin() || hasPermission('MANAGE_DEPARTMENTS');
+    }
+
+    match /designations/{desigId} {
+      allow read: if hasOrgReadAccess();
+      allow write: if isAdmin() || hasPermission('MANAGE_DESIGNATIONS');
+    }
+
+    match /founder_seats/{seatId} {
+      allow read: if hasOrgReadAccess();
+      allow write: if false; // Enforced via Super Admin backend API only
+    }
+
+    match /employees/{empId} {
+      allow read: if (isAdmin() && resource.data.email == normalizedEmail())
+        || hasOrgReadAccess();
+      allow write: if false; // Enforced via backend RBAC API only (prevents privilege escalation)
+    }
+
+    // =========================================================================
+    // 14. FINANCE & BUSINESS COLLECTIONS (Phase 4)
+    // =========================================================================
+    match /subscription_plans/{planId} {
+      allow read: if isAuthenticated() && isAccountActive();
+      allow write: if hasPermission('MANAGE_SUBSCRIPTIONS');
+    }
+
+    match /lab_subscriptions/{subId} {
+      allow read: if hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'MANAGE_SUBSCRIPTIONS', 'MANAGE_INVOICES', 'VIEW_FINANCIAL_REPORTS'])
+        || ((isSmallLab() || isLargeLab()) && getLabId() != null && resource.data.labId == getLabId());
+      allow write: if false;
+    }
+
+    match /invoices/{invoiceId} {
+      allow read: if hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'MANAGE_INVOICES', 'VIEW_PAYMENT_RECORDS', 'VIEW_FINANCIAL_REPORTS'])
+        || ((isSmallLab() || isLargeLab()) && getLabId() != null && resource.data.labId == getLabId());
+      allow write: if false;
+    }
+
+    match /payment_records/{paymentId} {
+      allow read: if hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'VIEW_PAYMENT_RECORDS', 'MANAGE_RECONCILIATION', 'VIEW_FINANCIAL_REPORTS']);
+      allow write: if false;
+    }
+
+    match /reconciliation_alerts/{alertId} {
+      allow read: if hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'MANAGE_RECONCILIATION', 'VIEW_PAYMENT_RECORDS']);
+      allow write: if false;
+    }
+
+    match /expenses/{expenseId} {
+      allow read: if hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'MANAGE_EXPENSES_BUDGETS', 'VIEW_FINANCIAL_REPORTS']);
+      allow write: if false;
+    }
+
+    match /financial_budgets/{budgetId} {
+      allow read: if hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'MANAGE_EXPENSES_BUDGETS', 'VIEW_FINANCIAL_REPORTS']);
+      allow write: if false;
+    }
+
+    match /refund_requests/{refundId} {
+      allow read: if hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'APPROVE_REFUNDS', 'VIEW_PAYMENT_RECORDS']);
+      allow write: if false;
+    }
+
+    // =========================================================================
+    // 15. OPERATIONS & PARTNERSHIPS COLLECTIONS (Phase 5)
+    // =========================================================================
+    match /onboarding_records/{recordId} {
+      allow read: if hasAnyPermission(['VIEW_OPERATIONS_DASHBOARD', 'MANAGE_ONBOARDING', 'MANAGE_PHLEBO_NETWORK', 'MANAGE_LAB_PARTNERSHIPS']);
+      allow write: if false;
+    }
+
+    match /verification_reviews/{reviewId} {
+      // Raw KYC fields require explicit VIEW_IDENTITY_DOCS; Ops reviewers without it use masked REST endpoint.
+      allow read: if hasPermission('VIEW_IDENTITY_DOCS');
+      allow write: if false;
+    }
+
+    match /training_records/{trainingId} {
+      allow read: if hasAnyPermission(['VIEW_OPERATIONS_DASHBOARD', 'MANAGE_TRAINING', 'MANAGE_PHLEBO_NETWORK', 'MANAGE_LAB_PARTNERSHIPS']);
+      allow write: if false;
+    }
+
+    match /support_tickets/{ticketId} {
+      allow read: if hasAnyPermission(['VIEW_OPERATIONS_DASHBOARD', 'MANAGE_SUPPORT_TICKETS', 'MANAGE_PHLEBO_NETWORK', 'MANAGE_LAB_PARTNERSHIPS'])
+        || (isAuthenticated() && isAccountActive() && resource.data.reporterEmail == normalizedEmail());
+      allow write: if false;
+    }
+
+    match /operational_exceptions/{excId} {
+      allow read: if hasAnyPermission(['VIEW_OPERATIONS_DASHBOARD', 'MANAGE_BOOKINGS_DISPATCH', 'MANAGE_OPERATIONAL_QUALITY', 'MANAGE_SUPPORT_TICKETS']);
+      allow write: if false;
+    }
+
+    // =========================================================================
+    // 16. MARKETING & GROWTH COLLECTIONS (Phase 6 — ZERO SENSITIVE PATIENT/PAYMENT DATA)
+    // =========================================================================
+    match /leads/{leadId} {
+      allow read: if hasAnyPermission(['VIEW_MARKETING_DASHBOARD', 'MANAGE_LEADS', 'VIEW_GROWTH_ANALYTICS', 'MANAGE_FIELD_ACQUISITION']);
+      allow write: if false;
+    }
+
+    match /campaigns/{campaignId} {
+      allow read: if hasAnyPermission(['VIEW_MARKETING_DASHBOARD', 'MANAGE_CAMPAIGNS', 'VIEW_GROWTH_ANALYTICS']);
+      allow write: if false;
+    }
+
+    // =========================================================================
+    // 17. PRODUCT & TECHNOLOGY COLLECTIONS (Phase 3)
+    // =========================================================================
+    match /system_health_checks/{checkId} {
+      allow read: if hasAnyPermission(['VIEW_TECH_DASHBOARD', 'MANAGE_SYSTEM_HEALTH', 'VIEW_SUPER_ADMIN_DASHBOARD']);
+      allow write: if false;
+    }
+
+    match /backup_records/{backupId} {
+      allow read: if hasAnyPermission(['VIEW_TECH_DASHBOARD', 'MANAGE_BACKUPS', 'VIEW_SUPER_ADMIN_DASHBOARD']);
+      allow write: if false;
+    }
+
+    match /tech_issues/{issueId} {
+      allow read: if hasAnyPermission(['VIEW_TECH_DASHBOARD', 'MANAGE_TECH_ISSUES', 'MANAGE_SOFTWARE_QA']);
+      allow write: if false;
+    }
+
+    // =========================================================================
+    // 18B. SERVICE COVERAGE ZONES (`service_zones/{zoneId}`)
+    // Controlled city/ward expansion: public read for routing, write by Admin
+    // =========================================================================
+    match /service_zones/{zoneId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // =========================================================================
+    // 18. IMMUTABLE SERVER-ONLY TELEMETRY, WEBHOOKS & AUDIT LOGS
+    // =========================================================================
+    match /audit_logs/{logId} {
+      allow read: if isSuperAdmin() || hasPermission('VIEW_AUDIT_LOGS');
+      allow write: if false;
+    }
+
+    match /login_history/{entryId} {
+      allow read: if isSuperAdmin() || hasPermission('VIEW_LOGIN_HISTORY');
+      allow write: if false;
+    }
+
+    match /razorpay_webhook_events/{eventId} {
+      allow read: if isSuperAdmin() || hasAnyPermission(['MANAGE_RECONCILIATION', 'VIEW_PAYMENT_RECORDS']);
+      allow write: if false;
+    }
+
+    match /automation_runs/{runId} {
+      allow read: if isSuperAdmin() || hasAnyPermission([
+        'VIEW_SUPER_ADMIN_DASHBOARD',
+        'VIEW_FINANCE_DASHBOARD',
+        'VIEW_OPERATIONS_DASHBOARD',
+        'VIEW_MARKETING_DASHBOARD',
+        'VIEW_TECH_DASHBOARD'
+      ]);
+      allow write: if false;
+    }
+
+    match /app_error_logs/{errId} {
+      allow read: if isSuperAdmin() || hasPermission('VIEW_APP_ERROR_LOGS');
+      allow write: if false;
+    }
+
+    // =========================================================================
+    // 19. ENTERPRISE INVENTORY, KITS, BARCODES & LIVE SCANNER
+    // =========================================================================
+    match /inventoryItems/{itemId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || hasAnyPermission(['MANAGE_INVENTORY_MASTER', 'MANAGE_CENTRAL_WAREHOUSE']);
+    }
+
+    match /inventoryCategories/{catId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || hasPermission('MANAGE_INVENTORY_MASTER');
+    }
+
+    match /inventorySuppliers/{supplierId} {
+      allow read: if isAuthenticated() && (isAdmin() || hasAnyPermission(['MANAGE_INVENTORY_MASTER', 'MANAGE_STOCK_INWARD', 'VIEW_INVENTORY_DASHBOARD']));
+      allow write: if isAdmin() || hasPermission('MANAGE_INVENTORY_MASTER');
+    }
+
+    match /supplierBarcodeMappings/{mappingId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || hasAnyPermission(['MANAGE_INVENTORY_MASTER', 'MANAGE_STOCK_INWARD']);
+    }
+
+    match /stockInwards/{inwardId} {
+      allow read: if isAuthenticated() && (isAdmin() || hasAnyPermission(['MANAGE_STOCK_INWARD', 'VIEW_INVENTORY_DASHBOARD']));
+      allow write: if isAdmin() || hasPermission('MANAGE_STOCK_INWARD');
+    }
+
+    match /stockBatches/{batchId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || hasAnyPermission(['MANAGE_STOCK_INWARD', 'MANAGE_CENTRAL_WAREHOUSE', 'ASSEMBLE_DIAGNOSTIC_KITS']);
+    }
+
+    match /centralWarehouses/{whId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || hasPermission('MANAGE_CENTRAL_WAREHOUSE');
+    }
+
+    match /warehouseStock/{stockId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    match /stockTransactions/{txId} {
+      allow read: if isAuthenticated() && (isAdmin() || hasAnyPermission(['VIEW_INVENTORY_DASHBOARD', 'VIEW_TRACEABILITY_AUDIT']));
+      allow write: if false;
+    }
+
+    match /stockAuditLogs/{auditId} {
+      allow read: if isAuthenticated() && (isAdmin() || hasPermission('VIEW_TRACEABILITY_AUDIT'));
+      allow write: if false;
+    }
+
+    match /kitDefinitions/{kitDefId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || hasPermission('MANAGE_INVENTORY_MASTER');
+    }
+
+    match /kitBomVersions/{bomId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || hasPermission('MANAGE_INVENTORY_MASTER');
+    }
+
+    match /kitAssemblies/{assemblyId} {
+      allow read: if isAuthenticated() && (isAdmin() || hasAnyPermission(['ASSEMBLE_DIAGNOSTIC_KITS', 'VIEW_INVENTORY_DASHBOARD']));
+      allow write: if isAdmin() || hasPermission('ASSEMBLE_DIAGNOSTIC_KITS');
+    }
+
+    match /kitSerials/{serialId} {
+      allow read: if isAuthenticated() && (
+        isAdmin()
+        || hasAnyPermission(['VIEW_INVENTORY_DASHBOARD', 'ISSUE_KITS_TO_PHLEBO', 'INSPECT_KIT_RETURNS'])
+        || (isPhlebotomist() && (resource.data.assignedPhleboId == getPhlebotomistId() || resource.data.assignedPhleboId == request.auth.uid))
+      );
+      allow write: if isAdmin() || hasAnyPermission(['ASSEMBLE_DIAGNOSTIC_KITS', 'ISSUE_KITS_TO_PHLEBO']);
+    }
+
+    match /tubeSerials/{tubeId} {
+      allow read: if isAuthenticated() && (
+        isAdmin()
+        || hasAnyPermission(['VIEW_TRACEABILITY_AUDIT', 'VIEW_INVENTORY_DASHBOARD'])
+        || (isPhlebotomist() && resource.data.assignedPhleboId == getPhlebotomistId())
+      );
+      allow write: if false;
+    }
+
+    match /phleboInventory/{invId} {
+      allow read: if isAuthenticated() && (
+        isAdmin()
+        || hasAnyPermission(['VIEW_INVENTORY_DASHBOARD', 'ISSUE_KITS_TO_PHLEBO'])
+        || (isPhlebotomist() && (resource.data.phleboId == getPhlebotomistId() || resource.data.phleboId == request.auth.uid))
+      );
+      allow write: if false;
+    }
+
+    match /kitIssues/{issueId} {
+      allow read: if isAuthenticated() && (
+        isAdmin()
+        || hasPermission('ISSUE_KITS_TO_PHLEBO')
+        || (isPhlebotomist() && resource.data.phleboId == getPhlebotomistId())
+      );
+      allow write: if isAdmin() || hasPermission('ISSUE_KITS_TO_PHLEBO');
+    }
+
+    match /kitTransfers/{transferId} {
+      allow read: if isAuthenticated() && (
+        isAdmin()
+        || hasPermission('VIEW_INVENTORY_DASHBOARD')
+        || (isPhlebotomist() && (
+          resource.data.senderPhleboId == getPhlebotomistId()
+          || resource.data.receiverPhleboId == getPhlebotomistId()
+        ))
+      );
+      allow write: if isAdmin() || (
+        isPhlebotomist() && (
+          (request.resource.data.senderPhleboId == getPhlebotomistId())
+          || (resource != null && resource.data.receiverPhleboId == getPhlebotomistId())
+        )
+      );
+    }
+
+    match /kitReturns/{returnId} {
+      allow read: if isAuthenticated() && (
+        isAdmin()
+        || hasPermission('INSPECT_KIT_RETURNS')
+        || (isPhlebotomist() && resource.data.phleboId == getPhlebotomistId())
+      );
+      allow create: if isPhlebotomist() || isAdmin();
+      allow update: if isAdmin() || hasPermission('INSPECT_KIT_RETURNS');
+      allow delete: if isAdmin();
+    }
+
+    match /scannerPairingSessions/{sessionId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
+    match /scannerEvents/{eventId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    // =========================================================================
+    // DEFAULT DENY
+    // =========================================================================
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

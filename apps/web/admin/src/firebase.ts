@@ -1,6 +1,6 @@
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator, GoogleAuthProvider, Auth } from 'firebase/auth';
-import { getFirestore, connectFirestoreEmulator, Firestore } from 'firebase/firestore';
+import { initializeFirestore, connectFirestoreEmulator, Firestore } from 'firebase/firestore';
 import {
   getStorage,
   connectStorageEmulator,
@@ -52,7 +52,9 @@ const firebaseConfig = {
 
 export const app: FirebaseApp = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
 export const auth: Auth = getAuth(app);
-export const db: Firestore = getFirestore(app);
+export const db: Firestore = initializeFirestore(app, {
+  ignoreUndefinedProperties: true,
+});
 export const storage: FirebaseStorage = getStorage(app);
 
 export const googleProvider = new GoogleAuthProvider();

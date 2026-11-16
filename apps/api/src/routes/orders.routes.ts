@@ -6,30 +6,88 @@ import {
   OrderPriority,
   CustodyEvent,
   CustodyEventType,
+  DEFAULT_STARTER_SERVICE_ZONES,
   NotificationCategory,
   NotificationChannel,
   NotificationPriority,
+  PermissionCode,
+  type ServiceZoneRecord,
   UserRole,
+  evaluatePointServiceCoverage,
   isValidSpecimenBarcode,
   isTemperatureCompliant,
 } from '@diagnostic/shared';
 import { AppError } from '../middleware/errorHandler';
-import { AuthenticatedRequest, requireAuth } from '../middleware/auth';
+import { requireAuth } from '../middleware/auth';
+import { AuthenticatedRequest } from '../middleware/rbac';
 import { initializeFirebase } from '../config/firebase';
 import { config } from '../config/env';
 import { sendPlatformNotification } from '../services/notification.service';
+import { dualList } from '../services/dualCollection';
 
 export const ordersRouter = Router();
 
-// Empty volatile store only when Admin SDK serviceAccountKey.json is not attached yet
 const VOLATILE_DEV_ORDERS: PickupOrder[] = [];
 
-/**
- * GET /api/v1/orders
- * Returns live Firestore pickup orders (no dummy seed records)
- */
+const ORDER_READ_PERMS: PermissionCode[] = [
+  'VIEW_SUPER_ADMIN_DASHBOARD',
+  'VIEW_OPERATIONS_DASHBOARD',
+  'MANAGE_BOOKINGS_DISPATCH',
+  'VIEW_FINANCE_DASHBOARD',
+  'VIEW_PATIENT_METADATA',
+  'VIEW_MEDICAL_REPORTS',
+  'MANAGE_OPERATIONAL_QUALITY',
+  'MANAGE_SUPPORT_TICKETS',
+];
+
+const ORDER_WRITE_PERMS: PermissionCode[] = [
+  'MANAGE_BOOKINGS_DISPATCH',
+  'MANAGE_OPERATIONAL_QUALITY',
+  'MANAGE_RECONCILIATION',
+];
+
+function userCanAccessOrder(req: AuthenticatedRequest, order: PickupOrder, forWrite: boolean): boolean {
+  const user = req.user;
+  if (!user) return false;
+  if (user.role === UserRole.ADMIN) {
+    if (user.isSuperAdmin) return true;
+    const allowed = forWrite ? ORDER_WRITE_PERMS : ORDER_READ_PERMS;
+    return allowed.some((p) => user.permissions.includes(p));
+  }
+  if (user.role === UserRole.SMALL_LAB) {
+    return Boolean(user.labId && (order.smallLabId === user.labId || order.targetLabId === user.labId));
+  }
+  if (user.role === UserRole.LARGE_LAB) {
+    return Boolean(
+      user.labId && (order.targetLabId === user.labId || order.targetParentLabId === user.labId)
+    );
+  }
+  if (user.role === UserRole.PHLEBOTOMIST) {
+    return Boolean(
+      (user.phlebotomistId && order.phlebotomistId === user.phlebotomistId) ||
+        (!forWrite && order.status === OrderStatus.READY_FOR_PICKUP && !order.phlebotomistId) ||
+        (forWrite && order.status === OrderStatus.READY_FOR_PICKUP && !order.phlebotomistId)
+    );
+  }
+  return false;
+}
+
 ordersRouter.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
+    if (
+      req.user?.role === UserRole.ADMIN &&
+      !req.user.isSuperAdmin &&
+      !ORDER_READ_PERMS.some((p) => req.user!.permissions.includes(p))
+    ) {
+      return next(
+        new AppError(
+          'Your department role does not include permission to inspect booking orders.',
+          403,
+          'PERMISSION_DENIED'
+        )
+      );
+    }
+
     const { db, isMockMode } = initializeFirebase();
     const role = req.user?.role;
     const labId = req.user?.labId;
@@ -84,9 +142,9 @@ ordersRouter.get('/', requireAuth, async (req: AuthenticatedRequest, res: Respon
 
     let scoped = [...VOLATILE_DEV_ORDERS];
     if (role === UserRole.SMALL_LAB && labId) {
-      scoped = scoped.filter((o) => o.smallLabId === labId);
+      scoped = scoped.filter((o) => o.smallLabId === labId || o.targetLabId === labId);
     } else if (role === UserRole.LARGE_LAB && labId) {
-      scoped = scoped.filter((o) => o.targetLabId === labId);
+      scoped = scoped.filter((o) => o.targetLabId === labId || o.targetParentLabId === labId);
     }
 
     return res.json({
@@ -100,12 +158,20 @@ ordersRouter.get('/', requireAuth, async (req: AuthenticatedRequest, res: Respon
   }
 });
 
-/**
- * POST /api/v1/orders
- * Creates a pickup order in Firestore and dispatches email + in-app notification
- */
 ordersRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
+    if (
+      req.user?.role === UserRole.PHLEBOTOMIST ||
+      req.user?.role === UserRole.LARGE_LAB ||
+      (req.user?.role === UserRole.ADMIN &&
+        !req.user.isSuperAdmin &&
+        !req.user.permissions.includes('MANAGE_BOOKINGS_DISPATCH'))
+    ) {
+      return next(
+        new AppError('You do not have permission to create pickup orders.', 403, 'PERMISSION_DENIED')
+      );
+    }
+
     const { smallLabName, targetLabName, patient, specimens, priority } = req.body || {};
     if (!smallLabName || !patient) {
       return next(new AppError('Missing required fields: smallLabName and patient', 400, 'BAD_REQUEST'));
@@ -114,6 +180,40 @@ ordersRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res: Respo
     const now = new Date().toISOString();
     const orderNumber =
       req.body.orderNumber || `BK-${Math.floor(100000 + Math.random() * 899999)}`;
+
+    const pickupLoc = req.body.pickupLocation || {
+      address: smallLabName,
+      latitude: 19.1438,
+      longitude: 72.9378,
+    };
+    const pickupPincode =
+      String(
+        req.body.pickupPincode ||
+          pickupLoc.pincode ||
+          (typeof pickupLoc.address === 'string'
+            ? pickupLoc.address.match(/\b[1-9]\d{5}\b/)?.[0] || ''
+            : '')
+      ).trim() || undefined;
+
+    let zones = await dualList<ServiceZoneRecord>('service_zones');
+    if (zones.length === 0) {
+      zones = [...DEFAULT_STARTER_SERVICE_ZONES];
+    }
+    const coverage = evaluatePointServiceCoverage(
+      zones,
+      Number(pickupLoc.latitude),
+      Number(pickupLoc.longitude),
+      pickupPincode
+    );
+    if (!coverage.covered) {
+      return next(
+        new AppError(coverage.message, 400, 'OUTSIDE_SERVICE_ZONE', {
+          nearestZone: coverage.nearestZone,
+          distanceToNearestKm: coverage.distanceToNearestKm,
+          activeZoneCount: coverage.activeZoneCount,
+        })
+      );
+    }
 
     const newOrder: PickupOrder = {
       id: orderNumber,
@@ -126,15 +226,16 @@ ordersRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res: Respo
       ...(req.body.dropType ? { dropType: req.body.dropType } : {}),
       ...(req.body.phlebotomistId ? { phlebotomistId: req.body.phlebotomistId } : {}),
       ...(req.body.phlebotomistName ? { phlebotomistName: req.body.phlebotomistName } : {}),
+      ...(coverage.matchedZone?.id ? { serviceZoneId: coverage.matchedZone.id } : {}),
+      ...(coverage.matchedZone?.name ? { serviceZoneName: coverage.matchedZone.name } : {}),
       status: OrderStatus.READY_FOR_PICKUP,
       priority: priority || OrderPriority.ROUTINE,
       patient,
       specimens: Array.isArray(specimens) ? specimens : [],
       custodyHistory: [],
-      pickupLocation: req.body.pickupLocation || {
-        address: smallLabName,
-        latitude: 19.1438,
-        longitude: 72.9378,
+      pickupLocation: {
+        ...pickupLoc,
+        ...(pickupPincode ? { pincode: pickupPincode } : {}),
       },
       deliveryLocation: req.body.deliveryLocation || {
         address: targetLabName || 'Partner Reference Lab',
@@ -204,10 +305,6 @@ ordersRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res: Respo
   }
 });
 
-/**
- * PATCH /api/v1/orders/:id
- * Updates order lifecycle status, courier assignment, or QC details & records custody audit event
- */
 ordersRouter.patch('/:id', requireAuth, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const orderId = req.params.id;
@@ -234,6 +331,22 @@ ordersRouter.patch('/:id', requireAuth, async (req: AuthenticatedRequest, res: R
       return next(new AppError(`Order not found: ${orderId}`, 404, 'NOT_FOUND'));
     }
 
+    if (!userCanAccessOrder(req, existing, true)) {
+      return next(
+        new AppError('You do not have permission to update this booking order.', 403, 'PERMISSION_DENIED')
+      );
+    }
+
+    const nextStatus = updates.status || existing.status;
+    const isTerminalOrDelivered =
+      nextStatus === OrderStatus.DELIVERED_TO_LAB ||
+      nextStatus === OrderStatus.REPORT_UPLOADED ||
+      nextStatus === OrderStatus.COMPLETED;
+    const completedAtStamp = isTerminalOrDelivered ? existing.completedAt || now : existing.completedAt;
+    const payoutDueAtStamp = isTerminalOrDelivered
+      ? existing.payoutDueAt || new Date(Date.now() + 30 * 60 * 1000).toISOString()
+      : existing.payoutDueAt;
+
     const patchPayload: Partial<PickupOrder> = {
       ...(updates.status ? { status: updates.status } : {}),
       ...(updates.phlebotomistId !== undefined ? { phlebotomistId: updates.phlebotomistId } : {}),
@@ -253,6 +366,14 @@ ordersRouter.patch('/:id', requireAuth, async (req: AuthenticatedRequest, res: R
         ? { sampleCollectionPhotoUrl: updates.sampleCollectionPhotoUrl }
         : {}),
       ...(Array.isArray(updates.specimens) ? { specimens: updates.specimens } : {}),
+      ...(isTerminalOrDelivered
+        ? {
+            completedAt: completedAtStamp,
+            payoutDueAt: payoutDueAtStamp,
+            payoutWindowMinutes: 30,
+            instantPayoutEligible: true,
+          }
+        : {}),
       updatedAt: now,
     };
 
@@ -260,6 +381,26 @@ ordersRouter.patch('/:id', requireAuth, async (req: AuthenticatedRequest, res: R
 
     if (db && !isMockMode) {
       await db.collection('orders').doc(orderId).set(patchPayload, { merge: true });
+      if (isTerminalOrDelivered) {
+        const instantPatch = {
+          completedAt: completedAtStamp,
+          payoutDueAt: payoutDueAtStamp,
+          payoutWindowMinutes: 30,
+          instantPayoutEligible: true,
+          updatedAt: now,
+        };
+        const directStlId = `STL-${orderId.replace(/^BK-/, '')}`;
+        const directStlSnap = await db.collection('settlements').doc(directStlId).get();
+        if (directStlSnap.exists) {
+          await directStlSnap.ref.set(instantPatch, { merge: true });
+        }
+        const linkedStls = await db.collection('settlements').where('orderId', '==', orderId).get();
+        for (const stlDoc of linkedStls.docs) {
+          if (stlDoc.id !== directStlId || !directStlSnap.exists) {
+            await stlDoc.ref.set(instantPatch, { merge: true });
+          }
+        }
+      }
       if (updates.custodyEventType && req.user) {
         const evt: Omit<CustodyEvent, 'id'> = {
           orderId,
@@ -291,11 +432,7 @@ ordersRouter.patch('/:id', requireAuth, async (req: AuthenticatedRequest, res: R
   }
 });
 
-/**
- * GET /api/v1/orders/:id
- * Retrieve single order from Firestore
- */
-ordersRouter.get('/:id', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+ordersRouter.get('/:id', requireAuth, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const orderId = req.params.id;
     const { db, isMockMode } = initializeFirebase();
@@ -314,6 +451,12 @@ ordersRouter.get('/:id', requireAuth, async (req: Request, res: Response, next: 
       return next(new AppError(`Order not found: ${orderId}`, 404, 'NOT_FOUND'));
     }
 
+    if (!userCanAccessOrder(req, order, false)) {
+      return next(
+        new AppError('You do not have permission to view this booking order.', 403, 'PERMISSION_DENIED')
+      );
+    }
+
     return res.json({
       success: true,
       data: order,
@@ -324,10 +467,6 @@ ordersRouter.get('/:id', requireAuth, async (req: Request, res: Response, next: 
   }
 });
 
-/**
- * POST /api/v1/orders/validate-specimen
- * Validates specimen barcode structure & temperature compliance
- */
 ordersRouter.post('/validate-specimen', (req: Request, res: Response, next: NextFunction) => {
   const { barcode, temperatureCelsius, temperatureRequirement } = req.body;
 

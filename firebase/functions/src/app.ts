@@ -10,23 +10,41 @@ import {
   OrderPriority,
   OrderStatus,
   StorageTemperature,
-  type UserCustomClaims,
   type UserProfile,
   UserRole,
   isTemperatureCompliant,
   isValidSpecimenBarcode,
 } from './types';
-import { ADMIN_EMAIL, AppError, auth, db, PROJECT_ID, RAZORPAY_CONFIG, SMTP_CONFIG } from './firebaseAdmin';
+import {
+  ADMIN_EMAIL,
+  AppError,
+  db,
+  IS_PRODUCTION,
+  PROJECT_ID,
+  RAZORPAY_CONFIG,
+  SMTP_CONFIG,
+} from './firebaseAdmin';
 import {
   createOrUpdateManagedUser,
-  findProvisionedUserByEmail,
+  exchangeMobileGoogleSession,
   listProvisionedUsers,
+  loginWithIdentifierAndPassword,
+  provisionBranchCenterFacility,
+  redeemMobileGoogleCode,
   requestEmailOtp,
   requestPasswordReset,
+  resolveProvisionedUserByIdentifier,
+  setManagedUserInitialPassword,
   updateManagedUserStatus,
   verifyAndSyncSessionRole,
   verifyEmailOtp,
 } from './directory';
+import {
+  DEFAULT_STARTER_SERVICE_ZONES,
+  evaluatePointServiceCoverage,
+  maskEmailAddress,
+} from './orgConstants';
+import { type ServiceZoneRecord } from './modulesTypes';
 import {
   getNotificationSettings,
   listNotifications,
@@ -38,104 +56,48 @@ import {
 import {
   createRazorpayOrder,
   createRazorpayPaymentLink,
+  processVerifiedRazorpayWebhook,
   releaseSettlementPayout,
   syncPaymentLinkStatus,
   verifyRazorpayPayment,
 } from './razorpay';
+import {
+  type AuthenticatedRequest,
+  getRequestClientMeta,
+  logAppError,
+  optionalAuth,
+  rateLimitByKey,
+  requireAnyPermission,
+  requireAuth,
+  requirePermissions,
+  requireRoles,
+} from './rbac';
+import { createOrgRouter } from './org';
+import { createFinanceRouter } from './finance';
+import { createOpsRouter } from './ops';
+import { createMarketingRouter } from './marketing';
+import { createTechRouter } from './tech';
 
-interface AuthenticatedRequest extends Request {
-  user?: UserCustomClaims & { uid: string; email?: string };
-}
+const ALLOWED_WEB_ORIGINS = new Set([
+  'https://labsetu-diagnostics.web.app',
+  'https://labsetu-diagnostics.firebaseapp.com',
+]);
 
-async function requireAuth(
-  req: AuthenticatedRequest,
-  _res: Response,
-  next: NextFunction
-): Promise<void> {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return next(new AppError('Authentication required. Missing Bearer token.', 401, 'UNAUTHORIZED'));
-  }
-
-  const idToken = authHeader.slice('Bearer '.length).trim();
+function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) return true; // Native mobile apps, curl, Razorpay webhooks
+  if (ALLOWED_WEB_ORIGINS.has(origin)) return true;
   try {
-    const decoded = await auth.verifyIdToken(idToken);
-    const provisioned = decoded.email ? await findProvisionedUserByEmail(decoded.email) : null;
-
-    if (provisioned && !provisioned.isActive) {
-      return next(
-        new AppError(
-          `Account (${decoded.email}) is suspended by Platform Admin.`,
-          403,
-          'ACCOUNT_SUSPENDED'
-        )
-      );
+    const parsed = new URL(origin);
+    if (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')
+    ) {
+      return true;
     }
-
-    const isRootAdmin = decoded.email?.toLowerCase() === ADMIN_EMAIL;
-    const tokenRole =
-      provisioned?.role ||
-      (decoded.role as UserRole | undefined) ||
-      (isRootAdmin ? UserRole.ADMIN : undefined);
-
-    if (!tokenRole || !Object.values(UserRole).includes(tokenRole)) {
-      return next(
-        new AppError(
-          `Account (${decoded.email || decoded.uid}) has not been provisioned by Platform Admin (${ADMIN_EMAIL}).`,
-          403,
-          'USER_NOT_PROVISIONED'
-        )
-      );
-    }
-
-    req.user = {
-      uid: decoded.uid,
-      email: decoded.email,
-      role: tokenRole,
-      ...(provisioned?.adminSubRole || decoded.adminSubRole
-        ? { adminSubRole: (provisioned?.adminSubRole || decoded.adminSubRole) as UserCustomClaims['adminSubRole'] }
-        : {}),
-      labId: (provisioned?.labId || decoded.labId) as string | undefined,
-      ...(provisioned?.parentLabId || decoded.parentLabId
-        ? { parentLabId: (provisioned?.parentLabId || decoded.parentLabId) as string }
-        : {}),
-      phlebotomistId: (provisioned?.phlebotomistId || decoded.phlebotomistId) as string | undefined,
-    };
-    return next();
-  } catch (err) {
-    return next(
-      new AppError('Invalid or expired Firebase authentication token.', 401, 'UNAUTHORIZED', err)
-    );
+  } catch {
+    return false;
   }
-}
-
-function requireRoles(...allowedRoles: UserRole[]) {
-  return (req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
-    if (!req.user) {
-      return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'));
-    }
-    if (!allowedRoles.includes(req.user.role)) {
-      return next(
-        new AppError(
-          `Forbidden. Requires [${allowedRoles.join(', ')}], got [${req.user.role}]`,
-          403,
-          'FORBIDDEN'
-        )
-      );
-    }
-    next();
-  };
-}
-
-function optionalAuth(
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> | void {
-  if (req.headers.authorization?.startsWith('Bearer ')) {
-    return requireAuth(req, res, next);
-  }
-  return next();
+  return false;
 }
 
 function resolveClientPlatform(req: Request): 'WEB' | 'MOBILE' | undefined {
@@ -150,11 +112,28 @@ export function createCloudApiApp(): Application {
   const app = express();
 
   app.use(helmet({ crossOriginResourcePolicy: false }));
-  app.use(cors({ origin: true, credentials: true }));
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
+  app.use(
+    cors({
+      origin: (origin, callback) => {
+        if (isAllowedOrigin(origin)) return callback(null, true);
+        return callback(new AppError(`Origin ${origin} is not allowed by CORS policy.`, 403, 'CORS_BLOCKED'));
+      },
+      credentials: true,
+    })
+  );
 
-  // Normalize direct Cloud Function calls (/health, /create-order) as well as Hosting rewrites (/api/v1/*, /api/*)
+  // Capture exact rawBody bytes for cryptographic Razorpay webhook signature verification
+  app.use(
+    express.json({
+      limit: '1mb',
+      verify: (req, _res, buf) => {
+        (req as AuthenticatedRequest).rawBody = buf;
+      },
+    })
+  );
+  app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+  // Normalize direct Cloud Function calls (/health, /create-order) as well as Hosting rewrites (/api/v1/*)
   app.use((req: Request, _res: Response, next: NextFunction) => {
     if (req.url === '/api/create-order' || req.url.startsWith('/api/create-order?')) {
       req.url = req.url.replace('/api/create-order', '/api/v1/payments/create-order');
@@ -184,89 +163,143 @@ export function createCloudApiApp(): Application {
         adminEmail: ADMIN_EMAIL,
         smtpConfigured: Boolean(SMTP_CONFIG.pass),
         razorpayConfigured: Boolean(RAZORPAY_CONFIG.keyId && RAZORPAY_CONFIG.keySecret),
+        razorpayWebhookConfigured: Boolean(RAZORPAY_CONFIG.webhookSecret),
       },
-      message: 'LabSetu Firebase Cloud Functions Backend is operational',
+      message: 'LabSetu Cloud Backend is operational',
       timestamp: new Date().toISOString(),
     });
   });
 
   // AUTH
-  app.post('/api/v1/auth/otp/send', async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { email, portalRole } = req.body || {};
-      const clientType = resolveClientPlatform(req);
-      if (!email || typeof email !== 'string') {
-        return next(new AppError('Please enter your email address.', 400, 'BAD_REQUEST'));
+  app.post(
+    '/api/v1/auth/login',
+    rateLimitByKey('pwd_login', 12, 5 * 60 * 1000),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { identifier, email, password, portalRole } = req.body || {};
+        const loginInput = typeof identifier === 'string' && identifier.trim() ? identifier : email;
+        const clientType = resolveClientPlatform(req);
+        if (!loginInput || typeof loginInput !== 'string' || !password || typeof password !== 'string') {
+          return next(new AppError('Login ID / email and password are required.', 400, 'BAD_REQUEST'));
+        }
+        const result = await loginWithIdentifierAndPassword(
+          loginInput,
+          password,
+          portalRole as UserRole | undefined,
+          clientType,
+          getRequestClientMeta(req)
+        );
+        return res.json({
+          success: true,
+          data: result,
+          message: 'Signed in successfully',
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        return next(err);
       }
-      const result = await requestEmailOtp(
-        email,
-        portalRole as UserRole | undefined,
-        clientType
-      );
-      return res.json({
-        success: true,
-        data: result,
-        message: `6-digit OTP sent to ${email.trim().toLowerCase()}`,
-        timestamp: new Date().toISOString(),
-      });
-    } catch (err) {
-      return next(err);
     }
-  });
+  );
 
-  app.post('/api/v1/auth/otp/verify', async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { email, otp, portalRole } = req.body || {};
-      const clientType = resolveClientPlatform(req);
-      if (!email || !otp) {
-        return next(new AppError('Email and 6-digit OTP code are required.', 400, 'BAD_REQUEST'));
+  app.post(
+    '/api/v1/auth/otp/send',
+    rateLimitByKey('otp_send', 8, 5 * 60 * 1000),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { identifier, email, portalRole } = req.body || {};
+        const loginInput = typeof identifier === 'string' && identifier.trim() ? identifier : email;
+        const clientType = resolveClientPlatform(req);
+        if (!loginInput || typeof loginInput !== 'string' || !loginInput.trim()) {
+          return next(
+            new AppError('Please enter your registered email address or Login ID.', 400, 'BAD_REQUEST')
+          );
+        }
+        const result = await requestEmailOtp(
+          loginInput,
+          portalRole as UserRole | undefined,
+          clientType
+        );
+        return res.json({
+          success: true,
+          data: result,
+          message: `6-digit OTP sent to ${result.maskedEmail}`,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        return next(err);
       }
-      const result = await verifyEmailOtp(
-        email,
-        String(otp),
-        portalRole as UserRole | undefined,
-        clientType
-      );
-      return res.json({
-        success: true,
-        data: result,
-        message: 'OTP verified successfully',
-        timestamp: new Date().toISOString(),
-      });
-    } catch (err) {
-      return next(err);
     }
-  });
+  );
 
-  app.post('/api/v1/auth/forgot-password', async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { email, origin } = req.body || {};
-      const clientType = resolveClientPlatform(req);
-      if (!email || typeof email !== 'string' || !email.trim().includes('@')) {
-        return next(new AppError('Please enter a valid registered email address.', 400, 'BAD_REQUEST'));
+  app.post(
+    '/api/v1/auth/otp/verify',
+    rateLimitByKey('otp_verify', 12, 5 * 60 * 1000),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { identifier, email, otp, portalRole } = req.body || {};
+        const loginInput = typeof identifier === 'string' && identifier.trim() ? identifier : email;
+        const clientType = resolveClientPlatform(req);
+        if (!loginInput || !otp) {
+          return next(
+            new AppError('Login ID or email and 6-digit OTP code are required.', 400, 'BAD_REQUEST')
+          );
+        }
+        const result = await verifyEmailOtp(
+          loginInput,
+          String(otp),
+          portalRole as UserRole | undefined,
+          clientType,
+          getRequestClientMeta(req)
+        );
+        return res.json({
+          success: true,
+          data: result,
+          message: 'OTP verified successfully',
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        return next(err);
       }
-      const headerOrigin =
-        typeof req.headers['x-forwarded-origin'] === 'string'
-          ? req.headers['x-forwarded-origin']
-          : typeof req.headers.origin === 'string'
-          ? req.headers.origin
-          : undefined;
-
-      const result = await requestPasswordReset(
-        email,
-        typeof origin === 'string' ? origin : headerOrigin,
-        clientType
-      );
-      return res.json({
-        success: true,
-        data: result,
-        message: `Password reset link sent to ${email.trim().toLowerCase()}`,
-        timestamp: new Date().toISOString(),
-      });
-    } catch (err) {
-      return next(err);
     }
-  });
+  );
+
+  app.post(
+    '/api/v1/auth/forgot-password',
+    rateLimitByKey('pwd_reset', 5, 10 * 60 * 1000),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { identifier, email, origin } = req.body || {};
+        const loginInput = typeof identifier === 'string' && identifier.trim() ? identifier : email;
+        const clientType = resolveClientPlatform(req);
+        if (!loginInput || typeof loginInput !== 'string' || !loginInput.trim()) {
+          return next(
+            new AppError('Please enter your registered email address or Login ID.', 400, 'BAD_REQUEST')
+          );
+        }
+        const headerOrigin =
+          typeof req.headers['x-forwarded-origin'] === 'string'
+            ? req.headers['x-forwarded-origin']
+            : typeof req.headers.origin === 'string'
+            ? req.headers.origin
+            : undefined;
+
+        const result = await requestPasswordReset(
+          loginInput,
+          typeof origin === 'string' ? origin : headerOrigin,
+          clientType,
+          getRequestClientMeta(req)
+        );
+        return res.json({
+          success: true,
+          data: result,
+          message: `Password reset link sent to ${result.maskedEmail}`,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        return next(err);
+      }
+    }
+  );
 
   app.post(
     '/api/v1/auth/verify-session',
@@ -281,7 +314,8 @@ export function createCloudApiApp(): Application {
           uid,
           email,
           requiredRole,
-          clientType
+          clientType,
+          getRequestClientMeta(req)
         );
         return res.json({
           success: true,
@@ -295,32 +329,96 @@ export function createCloudApiApp(): Application {
     }
   );
 
-  app.get('/api/v1/auth/role-check', async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const email = (req.query.email as string) || '';
-      if (!email) {
-        return next(new AppError('Missing query param: email', 400, 'BAD_REQUEST'));
+  app.get(
+    '/api/v1/auth/role-check',
+    rateLimitByKey('role_check', 30, 5 * 60 * 1000),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const loginInput =
+          (typeof req.query.identifier === 'string' && req.query.identifier.trim()) ||
+          (typeof req.query.email === 'string' && req.query.email.trim()) ||
+          '';
+        if (!loginInput) {
+          return next(new AppError('Missing query param: identifier or email', 400, 'BAD_REQUEST'));
+        }
+        const profile = await resolveProvisionedUserByIdentifier(loginInput);
+        return res.json({
+          success: true,
+          data: {
+            provisioned: Boolean(profile),
+            role: profile ? profile.role : null,
+            isActive: profile ? profile.isActive : false,
+            maskedEmail: profile ? maskEmailAddress(profile.email) : null,
+          },
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        return next(err);
       }
-      const profile = await findProvisionedUserByEmail(email);
-      return res.json({
-        success: true,
-        data: {
-          provisioned: Boolean(profile),
-          role: profile ? profile.role : null,
-          isActive: profile ? profile.isActive : false,
-        },
-        timestamp: new Date().toISOString(),
-      });
-    } catch (err) {
-      return next(err);
     }
-  });
+  );
 
-  // USERS (Admin Only)
+  app.post(
+    '/api/v1/auth/mobile-google-exchange',
+    rateLimitByKey('mobile_google_ex', 25, 5 * 60 * 1000),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+          return next(
+            new AppError('Google ID token missing in Authorization header.', 401, 'UNAUTHORIZED')
+          );
+        }
+        const idToken = authHeader.slice('Bearer '.length).trim();
+        const requiredRole =
+          (req.body?.requiredRole as UserRole | undefined) || UserRole.PHLEBOTOMIST;
+        const result = await exchangeMobileGoogleSession(
+          idToken,
+          requiredRole,
+          getRequestClientMeta(req)
+        );
+        return res.json({
+          success: true,
+          data: result,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        return next(err);
+      }
+    }
+  );
+
+  app.post(
+    '/api/v1/auth/mobile-google-redeem',
+    rateLimitByKey('mobile_google_red', 25, 5 * 60 * 1000),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const code = typeof req.body?.code === 'string' ? req.body.code : '';
+        const result = await redeemMobileGoogleCode(code);
+        return res.json({
+          success: true,
+          data: result,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        return next(err);
+      }
+    }
+  );
+
+  // ORGANISATION, FINANCE, OPERATIONS, MARKETING, TECH MODULE ROUTERS
+  app.use('/api/v1/org', createOrgRouter());
+  app.use('/api/v1/finance', createFinanceRouter());
+  app.use('/api/v1/ops', createOpsRouter());
+  app.use('/api/v1/marketing', createMarketingRouter());
+  app.use('/api/v1/tech', createTechRouter());
+
+  // USERS (Admin Only + RBAC permissions)
   app.get(
     '/api/v1/users',
     requireAuth,
     requireRoles(UserRole.ADMIN),
+    requireAnyPermission('MANAGE_EMPLOYEES', 'VIEW_SUPER_ADMIN_DASHBOARD', 'MANAGE_LAB_PARTNERSHIPS'),
     async (_req: Request, res: Response, next: NextFunction) => {
       try {
         const users: UserProfile[] = await listProvisionedUsers();
@@ -340,7 +438,8 @@ export function createCloudApiApp(): Application {
     '/api/v1/users',
     requireAuth,
     requireRoles(UserRole.ADMIN),
-    async (req: Request, res: Response, next: NextFunction) => {
+    requireAnyPermission('MANAGE_EMPLOYEES', 'MANAGE_LAB_PARTNERSHIPS', 'MANAGE_PHLEBO_NETWORK'),
+    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
       try {
         const payload = req.body as CreateManagedUserPayload;
         if (!payload?.email || !payload?.displayName || !payload?.role) {
@@ -348,7 +447,28 @@ export function createCloudApiApp(): Application {
             new AppError('Missing required fields: email, displayName, and role', 400, 'BAD_REQUEST')
           );
         }
-        const user = await createOrUpdateManagedUser(payload);
+        // Only Super Admin or MANAGE_EMPLOYEES holder can provision ADMIN team roles
+        if (
+          payload.role === UserRole.ADMIN &&
+          !req.user?.isSuperAdmin &&
+          !req.user?.permissions.includes('MANAGE_EMPLOYEES')
+        ) {
+          return next(
+            new AppError(
+              'Permission MANAGE_EMPLOYEES or Super Admin is required to provision Admin team users.',
+              403,
+              'PERMISSION_DENIED'
+            )
+          );
+        }
+        const user = await createOrUpdateManagedUser(payload, {
+          uid: req.user?.uid,
+          email: req.user?.email,
+          displayName: req.user?.displayName,
+          role: req.user?.role,
+          isSuperAdmin: req.user?.isSuperAdmin,
+          ...getRequestClientMeta(req),
+        });
         return res.status(201).json({
           success: true,
           data: user,
@@ -365,9 +485,17 @@ export function createCloudApiApp(): Application {
     '/api/v1/users/:identifier',
     requireAuth,
     requireRoles(UserRole.ADMIN),
-    async (req: Request, res: Response, next: NextFunction) => {
+    requireAnyPermission('MANAGE_EMPLOYEES', 'MANAGE_LAB_PARTNERSHIPS', 'MANAGE_PHLEBO_NETWORK'),
+    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
       try {
-        const updated = await updateManagedUserStatus(req.params.identifier, req.body || {});
+        const updated = await updateManagedUserStatus(req.params.identifier, req.body || {}, {
+          uid: req.user?.uid,
+          email: req.user?.email,
+          displayName: req.user?.displayName,
+          role: req.user?.role,
+          isSuperAdmin: req.user?.isSuperAdmin,
+          ...getRequestClientMeta(req),
+        });
         return res.json({
           success: true,
           data: updated,
@@ -380,7 +508,117 @@ export function createCloudApiApp(): Application {
     }
   );
 
-  // ORDERS
+  app.post(
+    '/api/v1/users/:identifier/initial-password',
+    requireAuth,
+    requireRoles(UserRole.ADMIN),
+    requireAnyPermission(
+      'MANAGE_EMPLOYEES',
+      'MANAGE_LAB_PARTNERSHIPS',
+      'MANAGE_PHLEBO_NETWORK',
+      'FULL_PLATFORM_CONTROL'
+    ),
+    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      try {
+        const { password, mustChangePassword, sendNotificationEmail } = req.body || {};
+        const result = await setManagedUserInitialPassword(
+          req.params.identifier,
+          String(password || ''),
+          {
+            mustChangePassword: mustChangePassword !== false,
+            sendNotificationEmail: sendNotificationEmail !== false,
+          },
+          {
+            uid: req.user?.uid,
+            email: req.user?.email,
+            displayName: req.user?.displayName,
+            role: req.user?.role,
+            isSuperAdmin: req.user?.isSuperAdmin,
+            ...getRequestClientMeta(req),
+          }
+        );
+        return res.json({
+          success: true,
+          data: result.profile,
+          message: `Initial sign-in password configured for ${result.profile.email}.`,
+          timestamp: result.passwordUpdatedAt,
+        });
+      } catch (err) {
+        return next(err);
+      }
+    }
+  );
+
+  app.post(
+    '/api/v1/labs/branches',
+    requireAuth,
+    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      try {
+        const isAllowedAdmin =
+          req.user?.role === UserRole.ADMIN &&
+          (req.user.isSuperAdmin ||
+            req.user.permissions.some((p) =>
+              ['MANAGE_LAB_PARTNERSHIPS', 'MANAGE_ONBOARDING', 'FULL_PLATFORM_CONTROL'].includes(p)
+            ));
+        const isMainHubHq =
+          req.user?.role === UserRole.LARGE_LAB &&
+          Boolean(req.user.labId) &&
+          !req.user.parentLabId;
+
+        if (!isAllowedAdmin && !isMainHubHq) {
+          return next(
+            new AppError(
+              'Only Large Reference Lab Main Hubs or authorised Admins may register Collection Center branches.',
+              403,
+              'PERMISSION_DENIED'
+            )
+          );
+        }
+
+        const body = req.body || {};
+        const resolvedParentId = isMainHubHq ? String(req.user?.labId || '') : String(body.parentLabId || '');
+        const result = await provisionBranchCenterFacility(
+          {
+            parentLabId: resolvedParentId,
+            name: body.name,
+            city: body.city,
+            address: body.address,
+            pincode: body.pincode,
+            latitude: body.latitude,
+            longitude: body.longitude,
+            serviceRadiusKm: body.serviceRadiusKm,
+            phone: body.phone,
+            nablNumber: body.nablNumber,
+            createSeparateLogin: body.createSeparateLogin,
+            email: body.email,
+            password: body.password,
+            managerName: body.managerName,
+          },
+          {
+            uid: req.user?.uid,
+            email: req.user?.email,
+            displayName: req.user?.displayName,
+            role: req.user?.role,
+            isSuperAdmin: req.user?.isSuperAdmin,
+            ...getRequestClientMeta(req),
+          }
+        );
+
+        return res.status(201).json({
+          success: true,
+          data: result,
+          message: `Branch ${result.branchId} registered${
+            result.profile ? ` with login ${result.profile.email}` : ''
+          }.`,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        return next(err);
+      }
+    }
+  );
+
+  // ORDERS (Tenant-isolated & Permission-scoped for Admin team)
   app.get(
     '/api/v1/orders',
     requireAuth,
@@ -390,10 +628,28 @@ export function createCloudApiApp(): Application {
         const labId = req.user?.labId;
         const phleboId = req.user?.phlebotomistId;
 
+        if (
+          role === UserRole.ADMIN &&
+          !req.user?.isSuperAdmin &&
+          !req.user?.permissions.some((p) =>
+            ['VIEW_OPERATIONS_DASHBOARD', 'MANAGE_BOOKINGS_DISPATCH', 'VIEW_FINANCE_DASHBOARD'].includes(p)
+          )
+        ) {
+          return next(
+            new AppError(
+              'Your department role does not have permission to view diagnostic orders.',
+              403,
+              'PERMISSION_DENIED'
+            )
+          );
+        }
+
         let ref: FirebaseFirestore.Query = db.collection('orders');
-        if (role === UserRole.SMALL_LAB && labId) {
+        if (role === UserRole.SMALL_LAB) {
+          if (!labId) return res.json({ success: true, data: [], timestamp: new Date().toISOString() });
           ref = ref.where('smallLabId', '==', labId);
-        } else if (role === UserRole.LARGE_LAB && labId) {
+        } else if (role === UserRole.LARGE_LAB) {
+          if (!labId) return res.json({ success: true, data: [], timestamp: new Date().toISOString() });
           ref = ref.where('targetLabId', '==', labId);
         }
 
@@ -406,7 +662,6 @@ export function createCloudApiApp(): Application {
           });
         });
 
-        // Main HQ Large Lab also aggregates orders dispatched to its Collection Centers
         if (role === UserRole.LARGE_LAB && labId && !req.user?.parentLabId) {
           const parentSnap = await db
             .collection('orders')
@@ -440,7 +695,7 @@ export function createCloudApiApp(): Application {
         return res.json({
           success: true,
           data: orders,
-          message: 'Live Firestore pickup orders retrieved successfully',
+          message: 'Live pickup orders retrieved successfully',
           timestamp: new Date().toISOString(),
         });
       } catch (err) {
@@ -454,6 +709,19 @@ export function createCloudApiApp(): Application {
     requireAuth,
     async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
       try {
+        if (
+          req.user?.role === UserRole.ADMIN &&
+          !req.user.isSuperAdmin &&
+          !req.user.permissions.includes('MANAGE_BOOKINGS_DISPATCH')
+        ) {
+          return next(
+            new AppError('Permission MANAGE_BOOKINGS_DISPATCH required.', 403, 'PERMISSION_DENIED')
+          );
+        }
+        if (req.user?.role === UserRole.PHLEBOTOMIST) {
+          return next(new AppError('Phlebotomists cannot create lab bookings.', 403, 'FORBIDDEN'));
+        }
+
         const { smallLabName, targetLabName, patient, specimens, priority } = req.body || {};
         if (!smallLabName || !patient) {
           return next(new AppError('Missing required fields: smallLabName and patient', 400, 'BAD_REQUEST'));
@@ -463,10 +731,50 @@ export function createCloudApiApp(): Application {
         const orderNumber =
           req.body.orderNumber || `BK-${Math.floor(100000 + Math.random() * 899999)}`;
 
+        const enforcedSmallLabId =
+          req.user?.role === UserRole.SMALL_LAB && req.user.labId
+            ? req.user.labId
+            : req.body.smallLabId || req.user?.labId || 'LAB-SM-UNASSIGNED';
+
+        const pickupLoc = req.body.pickupLocation || {
+          address: smallLabName,
+          latitude: 19.1438,
+          longitude: 72.9378,
+        };
+        const pickupPincode =
+          String(
+            req.body.pickupPincode ||
+              pickupLoc.pincode ||
+              (typeof pickupLoc.address === 'string'
+                ? pickupLoc.address.match(/\b[1-9]\d{5}\b/)?.[0] || ''
+                : '')
+          ).trim() || undefined;
+
+        const zoneSnap = await db.collection('service_zones').get();
+        let zones: ServiceZoneRecord[] = zoneSnap.docs.map((d) => d.data() as ServiceZoneRecord);
+        if (zones.length === 0) {
+          zones = [...DEFAULT_STARTER_SERVICE_ZONES];
+        }
+        const coverage = evaluatePointServiceCoverage(
+          zones,
+          Number(pickupLoc.latitude),
+          Number(pickupLoc.longitude),
+          pickupPincode
+        );
+        if (!coverage.covered) {
+          return next(
+            new AppError(coverage.message, 400, 'OUTSIDE_SERVICE_ZONE', {
+              nearestZone: coverage.nearestZone,
+              distanceToNearestKm: coverage.distanceToNearestKm,
+              activeZoneCount: coverage.activeZoneCount,
+            })
+          );
+        }
+
         const newOrder = {
           id: orderNumber,
           orderNumber,
-          smallLabId: req.body.smallLabId || req.user?.labId || 'LAB-SM-UNASSIGNED',
+          smallLabId: enforcedSmallLabId,
           smallLabName,
           targetLabId: req.body.targetLabId || 'LAB-LG-UNASSIGNED',
           targetLabName: targetLabName || 'Partner Reference Lab',
@@ -474,15 +782,16 @@ export function createCloudApiApp(): Application {
           ...(req.body.dropType ? { dropType: req.body.dropType } : {}),
           ...(req.body.phlebotomistId ? { phlebotomistId: req.body.phlebotomistId } : {}),
           ...(req.body.phlebotomistName ? { phlebotomistName: req.body.phlebotomistName } : {}),
+          ...(coverage.matchedZone?.id ? { serviceZoneId: coverage.matchedZone.id } : {}),
+          ...(coverage.matchedZone?.name ? { serviceZoneName: coverage.matchedZone.name } : {}),
           status: OrderStatus.READY_FOR_PICKUP,
           priority: priority || OrderPriority.ROUTINE,
           patient,
           specimens: Array.isArray(specimens) ? specimens : [],
           custodyHistory: [],
-          pickupLocation: req.body.pickupLocation || {
-            address: smallLabName,
-            latitude: 19.1438,
-            longitude: 72.9378,
+          pickupLocation: {
+            ...pickupLoc,
+            ...(pickupPincode ? { pincode: pickupPincode } : {}),
           },
           deliveryLocation: req.body.deliveryLocation || {
             address: targetLabName || 'Partner Reference Lab',
@@ -594,6 +903,49 @@ export function createCloudApiApp(): Application {
           return next(new AppError(`Order not found: ${orderId}`, 404, 'NOT_FOUND'));
         }
 
+        const existing = snap.data() as Record<string, unknown>;
+        const role = req.user?.role;
+        const userLabId = req.user?.labId;
+        const userPhleboId = req.user?.phlebotomistId;
+
+        if (role === UserRole.ADMIN) {
+          if (!req.user?.isSuperAdmin && !req.user?.permissions.includes('MANAGE_BOOKINGS_DISPATCH')) {
+            return next(new AppError('Permission MANAGE_BOOKINGS_DISPATCH required.', 403, 'PERMISSION_DENIED'));
+          }
+        } else if (role === UserRole.SMALL_LAB) {
+          if (existing.smallLabId !== userLabId && existing.targetLabId !== userLabId) {
+            return next(new AppError('Access denied for this booking.', 403, 'FORBIDDEN'));
+          }
+        } else if (role === UserRole.LARGE_LAB) {
+          if (existing.targetLabId !== userLabId && existing.targetParentLabId !== userLabId) {
+            return next(new AppError('Access denied for this booking.', 403, 'FORBIDDEN'));
+          }
+        } else if (role === UserRole.PHLEBOTOMIST) {
+          const isOpenPoolAccept =
+            existing.status === OrderStatus.READY_FOR_PICKUP && !existing.phlebotomistId;
+          if (existing.phlebotomistId !== userPhleboId && !isOpenPoolAccept) {
+            return next(new AppError('This order is assigned to another courier.', 403, 'FORBIDDEN'));
+          }
+        }
+
+        const nextStatus = (updates.status as OrderStatus | undefined) || (existing.status as OrderStatus);
+        const isTerminalOrDelivered =
+          nextStatus === OrderStatus.DELIVERED_TO_LAB ||
+          nextStatus === OrderStatus.REPORT_UPLOADED ||
+          nextStatus === OrderStatus.COMPLETED;
+        const existingCompletedAt =
+          typeof existing.completedAt === 'string' && existing.completedAt
+            ? existing.completedAt
+            : undefined;
+        const existingPayoutDueAt =
+          typeof existing.payoutDueAt === 'string' && existing.payoutDueAt
+            ? existing.payoutDueAt
+            : undefined;
+        const completedAtStamp = isTerminalOrDelivered ? existingCompletedAt || now : existingCompletedAt;
+        const payoutDueAtStamp = isTerminalOrDelivered
+          ? existingPayoutDueAt || new Date(Date.now() + 30 * 60 * 1000).toISOString()
+          : existingPayoutDueAt;
+
         const patchPayload = {
           ...(updates.status ? { status: updates.status } : {}),
           ...(updates.phlebotomistId !== undefined ? { phlebotomistId: updates.phlebotomistId } : {}),
@@ -615,10 +967,39 @@ export function createCloudApiApp(): Application {
             ? { sampleCollectionPhotoUrl: updates.sampleCollectionPhotoUrl }
             : {}),
           ...(Array.isArray(updates.specimens) ? { specimens: updates.specimens } : {}),
+          ...(isTerminalOrDelivered
+            ? {
+                completedAt: completedAtStamp,
+                payoutDueAt: payoutDueAtStamp,
+                payoutWindowMinutes: 30,
+                instantPayoutEligible: true,
+              }
+            : {}),
           updatedAt: now,
         };
 
         await db.collection('orders').doc(orderId).set(patchPayload, { merge: true });
+
+        if (isTerminalOrDelivered) {
+          const instantPatch = {
+            completedAt: completedAtStamp,
+            payoutDueAt: payoutDueAtStamp,
+            payoutWindowMinutes: 30,
+            instantPayoutEligible: true,
+            updatedAt: now,
+          };
+          const directStlId = `STL-${orderId.replace(/^BK-/, '')}`;
+          const directStlSnap = await db.collection('settlements').doc(directStlId).get();
+          if (directStlSnap.exists) {
+            await directStlSnap.ref.set(instantPatch, { merge: true });
+          }
+          const linkedStls = await db.collection('settlements').where('orderId', '==', orderId).get();
+          for (const stlDoc of linkedStls.docs) {
+            if (stlDoc.id !== directStlId || !directStlSnap.exists) {
+              await stlDoc.ref.set(instantPatch, { merge: true });
+            }
+          }
+        }
 
         if (updates.custodyEventType && req.user) {
           await db.collection('custody_events').add({
@@ -637,7 +1018,7 @@ export function createCloudApiApp(): Application {
 
         return res.json({
           success: true,
-          data: { id: snap.id, ...snap.data(), ...patchPayload },
+          data: { id: snap.id, ...existing, ...patchPayload },
           message: `Order ${orderId} updated`,
           timestamp: now,
         });
@@ -671,6 +1052,7 @@ export function createCloudApiApp(): Application {
     '/api/v1/notifications/settings',
     requireAuth,
     requireRoles(UserRole.ADMIN),
+    requireAnyPermission('MANAGE_SETTINGS', 'MANAGE_SYSTEM_SECURITY', 'VIEW_SUPER_ADMIN_DASHBOARD'),
     async (_req: Request, res: Response, next: NextFunction) => {
       try {
         const settings = await getNotificationSettings();
@@ -689,6 +1071,7 @@ export function createCloudApiApp(): Application {
     '/api/v1/notifications/settings',
     requireAuth,
     requireRoles(UserRole.ADMIN),
+    requirePermissions('MANAGE_SETTINGS'),
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const updated = await updateNotificationSettings(req.body || {});
@@ -733,11 +1116,11 @@ export function createCloudApiApp(): Application {
           message,
           category,
           priority,
-          recipientEmail,
-          recipientUid,
-          recipientRole,
-          orderId,
-          labId,
+          ...(recipientEmail ? { recipientEmail } : {}),
+          ...(recipientUid ? { recipientUid } : {}),
+          ...(recipientRole ? { recipientRole } : {}),
+          ...(orderId ? { orderId } : {}),
+          ...(labId ? { labId } : {}),
           channels,
           templateType,
           actionUrl,
@@ -762,6 +1145,7 @@ export function createCloudApiApp(): Application {
     '/api/v1/notifications/test-email',
     requireAuth,
     requireRoles(UserRole.ADMIN),
+    requirePermissions('MANAGE_SETTINGS'),
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const targetEmail = (req.body?.recipientEmail as string) || ADMIN_EMAIL;
@@ -831,12 +1215,13 @@ export function createCloudApiApp(): Application {
     }
   );
 
-  // PAYMENTS & PARTNER PAYOUTS (Razorpay Standard Checkout + Payment Links + Split Payouts)
+  // PAYMENTS, SERVER-SIDE WEBHOOK & CONFIGURABLE PAYOUTS
   app.get('/api/v1/payments/config', (_req: Request, res: Response) => {
     res.json({
       success: true,
       data: {
         razorpayConfigured: Boolean(RAZORPAY_CONFIG.keyId && RAZORPAY_CONFIG.keySecret),
+        razorpayWebhookConfigured: Boolean(RAZORPAY_CONFIG.webhookSecret),
         razorpayXEnabled: Boolean(RAZORPAY_CONFIG.xAccountNumber),
         keyId: RAZORPAY_CONFIG.keyId || null,
       },
@@ -844,17 +1229,47 @@ export function createCloudApiApp(): Application {
     });
   });
 
+  // Verified server-side Razorpay webhook (no Bearer JWT — verified via HMAC-SHA256 X-Razorpay-Signature)
+  app.post(
+    '/api/v1/payments/webhook',
+    rateLimitByKey('razorpay_webhook', 120, 60 * 1000),
+    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      try {
+        const rawBuf =
+          req.rawBody ||
+          (Buffer.isBuffer((req as unknown as { rawBody?: Buffer }).rawBody)
+            ? (req as unknown as { rawBody: Buffer }).rawBody
+            : Buffer.from(JSON.stringify(req.body || {}), 'utf8'));
+
+        const result = await processVerifiedRazorpayWebhook({
+          rawBody: rawBuf,
+          signatureHeader: req.headers['x-razorpay-signature'] as string | undefined,
+          eventIdHeader: req.headers['x-razorpay-event-id'] as string | undefined,
+        });
+
+        return res.status(200).json({
+          success: true,
+          data: result,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        return next(err);
+      }
+    }
+  );
+
   app.post(
     '/api/v1/payments/create-order',
+    rateLimitByKey('pay_create_order', 25, 60 * 1000),
     optionalAuth,
     async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
       try {
-        const { amount, amountInr, currency, receipt, bookingId, settlementId, notes } =
+        const { amount, amountInr, currency, receipt, bookingId, settlementId, invoiceId, notes } =
           req.body || {};
 
-        if ((bookingId || settlementId) && !req.user) {
+        if ((bookingId || settlementId || invoiceId) && !req.user) {
           return next(
-            new AppError('Authentication required to pay for a booking invoice.', 401, 'UNAUTHORIZED')
+            new AppError('Authentication required to pay for a booking or invoice.', 401, 'UNAUTHORIZED')
           );
         }
 
@@ -865,6 +1280,7 @@ export function createCloudApiApp(): Application {
           receipt,
           bookingId,
           settlementId,
+          invoiceId,
           notes,
           requesterUid: req.user?.uid,
           requesterRole: req.user?.role,
@@ -890,6 +1306,7 @@ export function createCloudApiApp(): Application {
 
   app.post(
     '/api/v1/payments/verify-payment',
+    rateLimitByKey('pay_verify', 25, 60 * 1000),
     optionalAuth,
     async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
       try {
@@ -899,6 +1316,7 @@ export function createCloudApiApp(): Application {
           razorpay_signature,
           bookingId,
           settlementId,
+          invoiceId,
           collectedByRole,
           paymentMethod,
         } = req.body || {};
@@ -909,6 +1327,7 @@ export function createCloudApiApp(): Application {
           razorpay_signature,
           bookingId,
           settlementId,
+          invoiceId,
           collectedByRole:
             collectedByRole ||
             (req.user?.role === UserRole.PHLEBOTOMIST
@@ -983,6 +1402,7 @@ export function createCloudApiApp(): Application {
     '/api/v1/payments/payout',
     requireAuth,
     requireRoles(UserRole.ADMIN),
+    requirePermissions('CONFIGURE_COMMISSIONS_PAYOUTS'),
     async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
       try {
         const { settlementId, recipientType, mode, referenceId, notes, forceWithoutCollection } =
@@ -1021,18 +1441,31 @@ export function createCloudApiApp(): Application {
     next(new AppError(`Endpoint not found: ${req.method} ${req.originalUrl}`, 404, 'NOT_FOUND'));
   });
 
-  // Error Handler
-  app.use((err: Error | AppError, _req: Request, res: Response, _next: NextFunction) => {
+  // Error Handler (logs unexpected 500s cleanly & hides internal details in production)
+  app.use((err: Error | AppError, req: Request, res: Response, _next: NextFunction) => {
     const isAppErr = err instanceof AppError;
     const statusCode = isAppErr ? err.statusCode : 500;
     const code = isAppErr ? err.code : 'INTERNAL_ERROR';
+
+    if (statusCode >= 500) {
+      void logAppError({
+        service: 'CLOUD_FUNCTIONS',
+        severity: 'ERROR',
+        errorCode: code,
+        message: err.message || 'Unhandled server error',
+        endpointOrRoute: `${req.method} ${req.originalUrl}`,
+      });
+    }
 
     res.status(statusCode).json({
       success: false,
       error: {
         code,
-        message: err.message || 'Internal Server Error',
-        details: isAppErr ? err.details : undefined,
+        message:
+          statusCode >= 500 && IS_PRODUCTION && !isAppErr
+            ? 'An internal server error occurred. Please try again shortly.'
+            : err.message || 'Internal Server Error',
+        details: isAppErr && (!IS_PRODUCTION || statusCode < 500) ? err.details : undefined,
       },
       timestamp: new Date().toISOString(),
     });

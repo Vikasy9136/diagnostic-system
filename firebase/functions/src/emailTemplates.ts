@@ -167,6 +167,7 @@ function wrapLabSetuEmail(opts: {
 export function buildOtpEmailTemplate(params: {
   displayName: string;
   email: string;
+  userCode?: string;
   role: UserRole;
   otpCode: string;
   expiresMinutes?: number;
@@ -210,6 +211,7 @@ export function buildOtpEmailTemplate(params: {
       </div>
     </div>
     ${buildMetadataTable([
+      ['Assigned Login ID', params.userCode],
       ['Registered Email', params.email],
       ['Assigned Role', roleLabel],
       ['Sign-In App', surface],
@@ -244,6 +246,7 @@ export function buildOtpEmailTemplate(params: {
 export function buildPasswordResetEmailTemplate(params: {
   displayName: string;
   email: string;
+  userCode?: string;
   role: UserRole;
   resetUrl: string;
   portalOrigin?: string;
@@ -277,6 +280,7 @@ export function buildPasswordResetEmailTemplate(params: {
     </p>
     ${renderCtaButton('Reset Your Password →', safeResetUrl, '#2563EB')}
     ${buildMetadataTable([
+      ['Assigned Login ID', params.userCode],
       ['Account Email', params.email],
       ['Assigned Role', roleLabel],
       [
@@ -596,6 +600,7 @@ export function buildPaymentReceiptEmailTemplate(
 export function buildAccountWelcomeEmailTemplate(params: {
   displayName: string;
   email: string;
+  userCode?: string;
   role: UserRole;
   labId?: string;
   phlebotomistId?: string;
@@ -615,12 +620,13 @@ export function buildAccountWelcomeEmailTemplate(params: {
     '',
     `Your LabSetu Diagnostics account has been created with the role: ${roleLabel}.`,
     `Account Email: ${params.email}`,
+    params.userCode ? `Assigned Login ID: ${params.userCode}` : '',
     params.labId ? `Facility ID: ${params.labId}` : '',
     params.phlebotomistId ? `Courier ID: ${params.phlebotomistId}` : '',
     '',
     isPhlebo
-      ? 'Sign-In Instructions: Please open the LabSetu Mobile App and sign in using Email OTP or Email & Password. Website dashboard login is disabled for Field Phlebotomist accounts.'
-      : `Sign in to your portal here: ${loginUrl} (using Google Sign-In, Email OTP, or Password).`,
+      ? 'Sign-In Instructions: Please open the LabSetu Mobile App and sign in using Email OTP, or your Email/Assigned ID & Password. Website dashboard login is disabled for Field Phlebotomist accounts.'
+      : `Sign in to your portal here: ${loginUrl} (using Google Sign-In, Email OTP, or your Email/Assigned ID & Password).`,
     '',
     `Need to set or update your password? Visit: ${setupPasswordUrl}`,
   ]
@@ -635,6 +641,7 @@ export function buildAccountWelcomeEmailTemplate(params: {
       Your <strong>${escapeHtml(roleLabel)}</strong> account is now active on the LabSetu Diagnostics Network.
     </p>
     ${buildMetadataTable([
+      ['Assigned Login ID', params.userCode],
       ['Email Address', params.email],
       ['Assigned Role', roleLabel],
       ['Assigned Lab ID', params.labId],
@@ -643,11 +650,11 @@ export function buildAccountWelcomeEmailTemplate(params: {
         'Allowed Sign-In Methods',
         isPhlebo
           ? params.hasPassword
-            ? 'LabSetu Mobile App • Email & Password, Email OTP'
-            : 'LabSetu Mobile App • Email OTP or Set Password'
+            ? 'LabSetu Mobile App • Email or ID & Password, OTP'
+            : 'LabSetu Mobile App • OTP or Set Password'
           : params.hasPassword
-          ? 'Google Sign-In, Email OTP, Email & Password'
-          : 'Google Sign-In, Email OTP, or Set Password',
+          ? 'Google Sign-In, Email/ID OTP, Email/ID & Password'
+          : 'Google Sign-In, Email/ID OTP, or Set Password',
       ],
     ])}
     ${
@@ -789,6 +796,7 @@ export function resolveNotificationEmailTemplate(
       return buildAccountWelcomeEmailTemplate({
         displayName: String(meta.displayName || 'LabSetu Partner'),
         email: payload.recipientEmail || '',
+        userCode: meta.userCode ? String(meta.userCode) : undefined,
         role,
         labId: meta.labId ? String(meta.labId) : payload.labId,
         phlebotomistId: meta.phlebotomistId ? String(meta.phlebotomistId) : undefined,

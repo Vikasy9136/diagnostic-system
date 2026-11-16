@@ -15,8 +15,8 @@ export async function forwardToCloudApiIfLocalMock(
     return next();
   }
 
-  // Only proxy /api/* and /api/v1/* API paths except local health status
-  if (req.originalUrl.startsWith('/api/v1/health')) {
+  // Only proxy /api/* and /api/v1/* API paths except local health status and scanner bridge
+  if (req.originalUrl.startsWith('/api/v1/health') || req.originalUrl.includes('/scanner-bridge')) {
     return next();
   }
 

@@ -8,7 +8,7 @@ import {
   type SendNotificationPayload,
   UserRole,
 } from './types';
-import { ADMIN_EMAIL, db, messaging, SMTP_CONFIG } from './firebaseAdmin';
+import { ADMIN_EMAIL, db, deepCleanFirestorePayload, messaging, SMTP_CONFIG } from './firebaseAdmin';
 import { renderQueuedMailDocument, resolveNotificationEmailTemplate } from './emailTemplates';
 
 export function createMailTransporter(): Transporter | null {
@@ -196,28 +196,32 @@ export async function sendPlatformNotification(
     }
   }
 
-  const record: PlatformNotification = {
+  const record: Record<string, unknown> = deepCleanFirestorePayload({
     id: `notif-${Date.now()}`,
     title: payload.title,
     message: payload.message,
     category: payload.category || NotificationCategory.SYSTEM_ALERT,
     priority: payload.priority || NotificationPriority.NORMAL,
-    recipientUid: payload.recipientUid,
-    recipientEmail,
+    ...(payload.recipientUid ? { recipientUid: payload.recipientUid } : {}),
+    ...(recipientEmail ? { recipientEmail } : {}),
     recipientRole: payload.recipientRole || UserRole.ADMIN,
-    orderId: payload.orderId,
-    labId: payload.labId,
+    ...(payload.orderId ? { orderId: payload.orderId } : {}),
+    ...(payload.labId ? { labId: payload.labId } : {}),
     channels,
     read: false,
     emailSent,
     emailStatus,
     pushSent,
     createdAt,
-  };
+  });
 
-  const docRef = await db.collection('notifications').add(record);
-  record.id = docRef.id;
-  return record;
+  try {
+    const docRef = await db.collection('notifications').add(record);
+    record.id = docRef.id;
+  } catch (err) {
+    console.warn('[mailer] Non-fatal notification collection write failed:', err);
+  }
+  return record as unknown as PlatformNotification;
 }
 
 export async function processQueuedMailDocument(

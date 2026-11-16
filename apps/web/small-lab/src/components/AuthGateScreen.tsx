@@ -1,6 +1,10 @@
 import { useState, useEffect, useMemo, useRef, type FormEvent } from 'react';
 import {
+  type AdminTeamRole,
+  type FounderRoleCode,
+  isEffectiveSuperAdmin,
   LABSETU_THEME,
+  resolveEffectivePermissions,
   ROLE_LABELS,
   type UserProfile,
   UserRole,
@@ -26,7 +30,14 @@ import {
   db,
   googleProvider,
 } from '../firebase';
-import { ensureRootAdminInitialized } from '../services/firestoreService';
+import {
+  AuthApiRequestError,
+  ensureRootAdminInitialized,
+  forgotPasswordApi,
+  loginWithIdentifierApi,
+  sendOtpApi,
+  verifyOtpApi,
+} from '../services/firestoreService';
 import { type DynamicAlertVariant } from './DynamicAlertModal';
 
 export interface VerifiedPortalSession {
@@ -126,7 +137,8 @@ export function AuthGateScreen({
   );
   const [forgotCooldown, setForgotCooldown] = useState(0);
   const [forgotSent, setForgotSent] = useState<{
-    email: string;
+    identifier: string;
+    targetDisplay: string;
     role: UserRole;
     roleLabel: string;
   } | null>(null);
@@ -393,6 +405,19 @@ export function AuthGateScreen({
           message: msg,
         });
         return;
+      } else if (!res.ok && res.status >= 400 && res.status < 500 && res.status !== 404) {
+        await signOut(auth);
+        onAuthenticated(null);
+        const msg =
+          json?.error?.message ||
+          `Access check rejected your sign-in attempt (${res.status}).`;
+        setInlineError(msg);
+        onShowAlert({
+          variant: 'error',
+          title: 'Access Denied',
+          message: msg,
+        });
+        return;
       }
     } catch {
       // Backend API unreachable; fall through to direct account record check
@@ -418,8 +443,18 @@ export function AuthGateScreen({
         return;
       }
 
-      if (apiProfile.role === UserRole.ADMIN) {
-        await ensureRootAdminInitialized(user.uid, apiProfile).catch(() => {});
+      const hydratedApiProfile: UserProfile = {
+        ...apiProfile,
+        ...(apiProfile.role === UserRole.ADMIN
+          ? {
+              isSuperAdmin: isEffectiveSuperAdmin(apiProfile, ADMIN_LOGIN_EMAIL),
+              permissions: resolveEffectivePermissions(apiProfile, ADMIN_LOGIN_EMAIL),
+            }
+          : {}),
+      };
+
+      if (hydratedApiProfile.role === UserRole.ADMIN) {
+        await ensureRootAdminInitialized(user.uid, hydratedApiProfile).catch(() => {});
       }
 
       setRoleMismatch(null);
@@ -427,7 +462,7 @@ export function AuthGateScreen({
       const freshToken = claimRole ? idToken : await user.getIdToken(true);
       onAuthenticated({
         firebaseUser: user,
-        profile: apiProfile,
+        profile: hydratedApiProfile,
         authSource: 'firebase',
         bearerToken: freshToken,
       });
@@ -492,15 +527,77 @@ export function AuthGateScreen({
     }
 
     const now = new Date().toISOString();
-    const finalProfile: UserProfile = {
+    const claimAdminSubRole = tokenResult.claims?.adminSubRole as AdminTeamRole | undefined;
+    const claimFounderRoles = Array.isArray(tokenResult.claims?.founderRoles)
+      ? (tokenResult.claims.founderRoles as FounderRoleCode[])
+      : undefined;
+    const claimPrimaryDept = tokenResult.claims?.primaryDepartmentId as string | undefined;
+    const claimDeptIds = Array.isArray(tokenResult.claims?.departmentIds)
+      ? (tokenResult.claims.departmentIds as string[])
+      : undefined;
+    const claimDesigId = tokenResult.claims?.designationId as string | undefined;
+    const claimIsSuperAdmin =
+      typeof tokenResult.claims?.isSuperAdmin === 'boolean'
+        ? Boolean(tokenResult.claims.isSuperAdmin)
+        : undefined;
+
+    const revoked = Boolean(dirProfile?.revokedSuperAdmin);
+    const defaultRootAdmin = isRootAdmin && !revoked;
+
+    const candidateProfile: UserProfile = {
       id: user.uid,
       email,
       displayName:
         dirProfile?.displayName ||
         user.displayName ||
-        (isRootAdmin ? 'LabSetu Platform Admin' : email.split('@')[0]),
+        (defaultRootAdmin ? 'Vikas (Super Admin & Tech Head)' : email.split('@')[0]),
       role: resolvedRole,
+      ...(resolvedRole === UserRole.ADMIN
+        ? {
+            adminSubRole:
+              dirProfile?.adminSubRole ||
+              claimAdminSubRole ||
+              (defaultRootAdmin ? 'SUPER_ADMIN' : 'DEPARTMENT_EMPLOYEE'),
+            isSuperAdmin:
+              typeof dirProfile?.isSuperAdmin === 'boolean'
+                ? dirProfile.isSuperAdmin
+                : typeof claimIsSuperAdmin === 'boolean'
+                ? claimIsSuperAdmin
+                : defaultRootAdmin,
+            revokedSuperAdmin: revoked,
+            founderRoles:
+              dirProfile?.founderRoles ||
+              claimFounderRoles ||
+              (defaultRootAdmin ? ['SUPER_ADMIN', 'PRODUCT_TECHNOLOGY_HEAD'] : undefined),
+            founderSeatKey:
+              dirProfile?.founderSeatKey || (defaultRootAdmin ? 'VIKAS' : undefined),
+            employeeId: dirProfile?.employeeId,
+            primaryDepartmentId:
+              dirProfile?.primaryDepartmentId ||
+              claimPrimaryDept ||
+              (defaultRootAdmin ? 'PRODUCT_TECHNOLOGY' : undefined),
+            departmentIds:
+              dirProfile?.departmentIds ||
+              claimDeptIds ||
+              (defaultRootAdmin
+                ? [
+                    'PRODUCT_TECHNOLOGY',
+                    'FINANCE_BUSINESS',
+                    'OPERATIONS_PARTNERSHIPS',
+                    'MARKETING_GROWTH',
+                  ]
+                : undefined),
+            designationId: dirProfile?.designationId || claimDesigId,
+            designationTitle: dirProfile?.designationTitle,
+            reportingManagerEmail: dirProfile?.reportingManagerEmail,
+            reportingManagerName: dirProfile?.reportingManagerName,
+            responsibilities: dirProfile?.responsibilities,
+            permissions: dirProfile?.permissions,
+          }
+        : {}),
       labId: dirProfile?.labId || (tokenResult.claims?.labId as string | undefined),
+      parentLabId:
+        dirProfile?.parentLabId || (tokenResult.claims?.parentLabId as string | undefined),
       phlebotomistId:
         dirProfile?.phlebotomistId ||
         (tokenResult.claims?.phlebotomistId as string | undefined),
@@ -509,6 +606,16 @@ export function AuthGateScreen({
       createdByAdmin: true,
       createdAt: dirProfile?.createdAt || now,
       updatedAt: now,
+    };
+
+    const finalProfile: UserProfile = {
+      ...candidateProfile,
+      ...(candidateProfile.role === UserRole.ADMIN
+        ? {
+            isSuperAdmin: isEffectiveSuperAdmin(candidateProfile, ADMIN_LOGIN_EMAIL),
+            permissions: resolveEffectivePermissions(candidateProfile, ADMIN_LOGIN_EMAIL),
+          }
+        : {}),
     };
 
     if (finalProfile.role === UserRole.ADMIN) {
@@ -599,28 +706,78 @@ export function AuthGateScreen({
     e.preventDefault();
     setInlineError(null);
     setInlineSuccess(null);
-    setAuthSubmitting(true);
+    const rawInput = loginEmail.trim();
+    if (!rawInput || !loginPassword) {
+      setInlineError('Please enter your Email or Assigned Login ID and password.');
+      return;
+    }
 
+    setAuthSubmitting(true);
     try {
-      await signInWithEmailAndPassword(auth, loginEmail.trim(), loginPassword);
-    } catch (err: unknown) {
-      const fbErr = err as { code?: string; message?: string };
-      let msg = fbErr.message || 'Could not sign in with that email and password.';
-      if (
-        fbErr.code === 'auth/configuration-not-found' ||
-        fbErr.code === 'auth/operation-not-allowed'
-      ) {
-        msg =
-          'Password sign-in is not available right now. Please sign in using Google or Email OTP.';
-      } else if (
-        fbErr.code === 'auth/invalid-credential' ||
-        fbErr.code === 'auth/wrong-password' ||
-        fbErr.code === 'auth/user-not-found'
-      ) {
-        msg = `Incorrect email or password for ${loginEmail.trim()}. Tap "Forgot / Set Password" or sign in with Google / Email OTP.`;
+      const apiRes = await loginWithIdentifierApi({
+        identifier: rawInput,
+        password: loginPassword,
+        portalRole: requiredRole,
+        clientType: 'WEB',
+      });
+      if (apiRes.customToken) {
+        await signInWithCustomToken(auth, apiRes.customToken);
+        return;
       }
-      setInlineError(msg);
-      onShowAlert({ variant: 'error', title: 'Sign In Unsuccessful', message: msg });
+      if (rawInput.includes('@')) {
+        await signInWithEmailAndPassword(auth, rawInput.toLowerCase(), loginPassword);
+        return;
+      }
+      throw new Error('Could not establish session token. Please try Email OTP or Google Sign-In.');
+    } catch (err: unknown) {
+      if (err instanceof AuthApiRequestError) {
+        if (err.code === 'MOBILE_APP_ONLY') {
+          await rejectMobileOnlyPhlebo(rawInput);
+          return;
+        }
+        if (err.code === 'ROLE_MISMATCH' && err.details?.assignedRole) {
+          await rejectRoleMismatch(rawInput, err.details.assignedRole as UserRole);
+          return;
+        }
+        if (err.status >= 400 && err.status < 500) {
+          setInlineError(err.message);
+          onShowAlert({ variant: 'error', title: 'Sign In Unsuccessful', message: err.message });
+          return;
+        }
+      }
+
+      if (rawInput.includes('@')) {
+        try {
+          await signInWithEmailAndPassword(auth, rawInput.toLowerCase(), loginPassword);
+          return;
+        } catch (fbRaw: unknown) {
+          const fbErr = fbRaw as { code?: string; message?: string };
+          let msg = fbErr.message || 'Could not sign in with that email and password.';
+          if (
+            fbErr.code === 'auth/configuration-not-found' ||
+            fbErr.code === 'auth/operation-not-allowed'
+          ) {
+            msg =
+              'Password sign-in is not available right now. Please sign in using Google or Email OTP.';
+          } else if (
+            fbErr.code === 'auth/invalid-credential' ||
+            fbErr.code === 'auth/wrong-password' ||
+            fbErr.code === 'auth/user-not-found'
+          ) {
+            msg = `Incorrect email/ID or password for ${rawInput}. Tap "Forgot / Set Password" or sign in with Google / Email OTP.`;
+          }
+          setInlineError(msg);
+          onShowAlert({ variant: 'error', title: 'Sign In Unsuccessful', message: msg });
+          return;
+        }
+      }
+
+      const fallbackMsg =
+        err instanceof Error
+          ? err.message
+          : 'Unable to verify Assigned ID right now. Please try your registered email or Email OTP.';
+      setInlineError(fallbackMsg);
+      onShowAlert({ variant: 'error', title: 'Sign In Unsuccessful', message: fallbackMsg });
     } finally {
       setAuthSubmitting(false);
     }
@@ -628,7 +785,7 @@ export function AuthGateScreen({
 
   function goToForgotView(emailHint?: string) {
     const clean =
-      (emailHint ?? loginEmail).trim().toLowerCase() ||
+      (emailHint ?? loginEmail).trim() ||
       (requiredRole === UserRole.ADMIN ? ADMIN_LOGIN_EMAIL : '');
     setForgotEmail(clean);
     setForgotSent(null);
@@ -657,16 +814,16 @@ export function AuthGateScreen({
     }
   }
 
-  async function handleSendForgotEmail(targetEmail: string) {
-    const normalized = targetEmail.trim().toLowerCase();
+  async function handleSendForgotEmail(targetIdentifier: string) {
+    const cleanInput = targetIdentifier.trim();
     setInlineError(null);
     setInlineSuccess(null);
-    if (!normalized || !normalized.includes('@')) {
-      const msg = 'Please enter your registered email address.';
+    if (!cleanInput) {
+      const msg = 'Please enter your registered email address or Assigned Login ID.';
       setInlineError(msg);
       onShowAlert({
         variant: 'warning',
-        title: 'Email Required',
+        title: 'Email or Login ID Required',
         message: msg,
       });
       return;
@@ -674,52 +831,38 @@ export function AuthGateScreen({
 
     setAuthSubmitting(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Client-Platform': 'web',
-        },
-        body: JSON.stringify({
-          email: normalized,
-          origin: window.location.origin,
-          portalRole: requiredRole,
-          clientType: 'WEB',
-        }),
+      const data = await forgotPasswordApi({
+        identifier: cleanInput,
+        origin: window.location.origin,
+        portalRole: requiredRole,
+        clientType: 'WEB',
       });
+      const assignedRole = data.role || requiredRole;
+      const roleLabel = data.roleLabel || ROLE_LABELS[assignedRole] || 'Partner Account';
+      const targetDisplay = cleanInput.includes('@') ? cleanInput.toLowerCase() : data.maskedEmail;
 
-      const json = await res.json().catch(() => null);
-      if (!res.ok) {
-        const errCode = json?.error?.code;
-        const errMsg =
-          json?.error?.message ||
-          'We could not send a password reset link right now. Please check your email and try again.';
-        setInlineError(errMsg);
-        onShowAlert({
-          variant: 'error',
-          title:
-            errCode === 'USER_NOT_PROVISIONED'
-              ? 'Email Not Added Yet'
-              : errCode === 'ACCOUNT_SUSPENDED'
-              ? 'Account Paused'
-              : 'Unable to Send Reset Link',
-          message: errMsg,
-        });
-        return;
-      }
-
-      const assignedRole = (json?.data?.role as UserRole) || requiredRole;
-      const roleLabel =
-        (json?.data?.roleLabel as string) || ROLE_LABELS[assignedRole] || 'Partner Account';
-
-      setForgotSent({ email: normalized, role: assignedRole, roleLabel });
+      setForgotSent({ identifier: cleanInput, targetDisplay, role: assignedRole, roleLabel });
       setForgotCooldown(60);
       onShowAlert({
         variant: 'success',
         title: 'Password Reset Email Sent',
-        message: `We emailed a secure reset link to ${normalized}. Open the link in your inbox to choose a new password.`,
+        message: `We emailed a secure reset link to ${targetDisplay}. Open the link in your inbox to choose a new password.`,
       });
-    } catch {
+    } catch (err: unknown) {
+      if (err instanceof AuthApiRequestError) {
+        setInlineError(err.message);
+        onShowAlert({
+          variant: 'error',
+          title:
+            err.code === 'USER_NOT_PROVISIONED'
+              ? 'Account Not Added Yet'
+              : err.code === 'ACCOUNT_SUSPENDED'
+              ? 'Account Paused'
+              : 'Unable to Send Reset Link',
+          message: err.message,
+        });
+        return;
+      }
       const msg =
         'Unable to reach the password recovery service right now. Please check your internet connection and try again.';
       setInlineError(msg);
@@ -798,90 +941,57 @@ export function AuthGateScreen({
     e.preventDefault();
     setInlineError(null);
     setInlineSuccess(null);
-    const normalized = otpEmail.trim().toLowerCase();
-    if (!normalized || !normalized.includes('@')) {
-      setInlineError('Please enter your registered email address.');
+    const rawInput = otpEmail.trim();
+    if (!rawInput) {
+      setInlineError('Please enter your registered email address or Assigned Login ID.');
       return;
     }
 
     setAuthSubmitting(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/otp/send`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Client-Platform': 'web',
-        },
-        body: JSON.stringify({
-          email: normalized,
-          portalRole: requiredRole,
-          clientType: 'WEB',
-        }),
+      const data = await sendOtpApi({
+        identifier: rawInput,
+        portalRole: requiredRole,
+        clientType: 'WEB',
       });
-
-      const json = await res.json().catch(() => null);
-      if (!res.ok) {
-        const errCode = json?.error?.code;
-        if (errCode === 'MOBILE_APP_ONLY') {
-          setRoleMismatch({ email: normalized, assignedRole: UserRole.PHLEBOTOMIST });
-          const msg =
-            json?.error?.message ||
-            'Field Phlebotomist accounts can only sign in using the LabSetu Mobile App, not on the website.';
-          setInlineError(msg);
-          onShowAlert({
-            variant: 'error',
-            title: 'Mobile App Only',
-            message: msg,
-          });
-          return;
-        }
-        if (errCode === 'ROLE_MISMATCH' && json?.error?.details?.assignedRole) {
-          const assignedRole = json.error.details.assignedRole as UserRole;
-          setRoleMismatch({ email: normalized, assignedRole });
-          if (assignedRole === UserRole.PHLEBOTOMIST) {
-            const msg =
-              'Field Phlebotomist accounts can only sign in using the LabSetu Mobile App, not on the website.';
-            setInlineError(msg);
-            onShowAlert({
-              variant: 'error',
-              title: 'Mobile App Only',
-              message: msg,
-            });
-            return;
-          }
-          const msg = `${normalized} is registered as "${ROLE_LABELS[assignedRole]}" and cannot open ${portalTitle}.`;
-          setInlineError(msg);
-          onShowAlert({
-            variant: 'error',
-            title: 'Wrong Portal Selected',
-            message: msg,
-            detail: `Your Account Role: ${ROLE_LABELS[assignedRole]}`,
-          });
-          return;
-        }
-        const errMsg = json?.error?.message || 'Unable to send the verification email.';
-        setInlineError(errMsg);
-        onShowAlert({
-          variant: 'error',
-          title:
-            errCode === 'USER_NOT_PROVISIONED'
-              ? 'Email Not Added Yet'
-              : 'Could Not Send OTP',
-          message: errMsg,
-        });
-        return;
-      }
-
       setOtpSent(true);
       setOtpCooldown(60);
-      const deliveryNote = `A 6-digit verification OTP has been sent to ${normalized}. Please check your inbox and spam folder.`;
+      const targetDisplay = rawInput.includes('@') ? rawInput.toLowerCase() : data.maskedEmail;
+      const deliveryNote = `A 6-digit verification OTP has been sent to ${targetDisplay}. Please check your inbox and spam folder.`;
       setInlineSuccess(deliveryNote);
       onShowAlert({
         variant: 'success',
         title: 'OTP Sent to Email',
         message: deliveryNote,
       });
-    } catch {
+    } catch (err: unknown) {
+      if (err instanceof AuthApiRequestError) {
+        if (err.code === 'MOBILE_APP_ONLY') {
+          setRoleMismatch({ email: rawInput, assignedRole: UserRole.PHLEBOTOMIST });
+          setInlineError(err.message);
+          onShowAlert({ variant: 'error', title: 'Mobile App Only', message: err.message });
+          return;
+        }
+        if (err.code === 'ROLE_MISMATCH' && err.details?.assignedRole) {
+          const assignedRole = err.details.assignedRole as UserRole;
+          setRoleMismatch({ email: rawInput, assignedRole });
+          setInlineError(err.message);
+          onShowAlert({
+            variant: 'error',
+            title: assignedRole === UserRole.PHLEBOTOMIST ? 'Mobile App Only' : 'Wrong Portal Selected',
+            message: err.message,
+            detail: `Your Account Role: ${ROLE_LABELS[assignedRole]}`,
+          });
+          return;
+        }
+        setInlineError(err.message);
+        onShowAlert({
+          variant: 'error',
+          title: err.code === 'USER_NOT_PROVISIONED' ? 'Account Not Added Yet' : 'Could Not Send OTP',
+          message: err.message,
+        });
+        return;
+      }
       const msg =
         'Unable to send the verification code right now. Please check your internet connection or try Google / Password sign-in.';
       setInlineError(msg);
@@ -894,47 +1004,22 @@ export function AuthGateScreen({
   async function handleVerifyOtp(e: FormEvent) {
     e.preventDefault();
     setInlineError(null);
-    const normalized = otpEmail.trim().toLowerCase();
-    if (otpCode.trim().length < 6) {
-      setInlineError('Please enter all 6 digits of your OTP.');
+    const rawInput = otpEmail.trim();
+    if (!rawInput || otpCode.trim().length < 6) {
+      setInlineError('Please enter your Email / Login ID and all 6 digits of your OTP.');
       return;
     }
 
     setAuthSubmitting(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/otp/verify`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Client-Platform': 'web',
-        },
-        body: JSON.stringify({
-          email: normalized,
-          otp: otpCode.trim(),
-          portalRole: requiredRole,
-          clientType: 'WEB',
-        }),
+      const data = await verifyOtpApi({
+        identifier: rawInput,
+        otp: otpCode.trim(),
+        portalRole: requiredRole,
+        clientType: 'WEB',
       });
-
-      const json = await res.json().catch(() => null);
-      if (!res.ok) {
-        const errCode = json?.error?.code;
-        if (errCode === 'MOBILE_APP_ONLY') {
-          setRoleMismatch({ email: normalized, assignedRole: UserRole.PHLEBOTOMIST });
-        }
-        const errMsg = json?.error?.message || 'OTP check failed.';
-        setInlineError(errMsg);
-        onShowAlert({
-          variant: 'error',
-          title: errCode === 'MOBILE_APP_ONLY' ? 'Mobile App Only' : 'Invalid OTP',
-          message: errMsg,
-        });
-        return;
-      }
-
-      const customToken = json?.data?.customToken as string | null;
-      if (customToken) {
-        await signInWithCustomToken(auth, customToken);
+      if (data.customToken) {
+        await signInWithCustomToken(auth, data.customToken);
         return;
       }
 
@@ -944,7 +1029,19 @@ export function AuthGateScreen({
         message:
           'Email OTP verified, but we could not finish signing you in. Please try signing in with Google or your password.',
       });
-    } catch {
+    } catch (err: unknown) {
+      if (err instanceof AuthApiRequestError) {
+        if (err.code === 'MOBILE_APP_ONLY') {
+          setRoleMismatch({ email: rawInput, assignedRole: UserRole.PHLEBOTOMIST });
+        }
+        setInlineError(err.message);
+        onShowAlert({
+          variant: 'error',
+          title: err.code === 'MOBILE_APP_ONLY' ? 'Mobile App Only' : 'Invalid OTP',
+          message: err.message,
+        });
+        return;
+      }
       onShowAlert({
         variant: 'error',
         title: 'Verification Error',
@@ -1028,7 +1125,7 @@ export function AuthGateScreen({
                       }}
                     >
                       A secure password setup / reset email has been sent to{' '}
-                      <strong>{forgotSent.email}</strong>.
+                      <strong>{forgotSent.targetDisplay}</strong>.
                     </p>
                     <div style={{ marginTop: '12px' }}>
                       <span className="role-assigned-pill">
@@ -1057,7 +1154,7 @@ export function AuthGateScreen({
                       className="btn-primary btn-full"
                       style={{ justifyContent: 'center' }}
                       disabled={forgotCooldown > 0 || authSubmitting}
-                      onClick={() => void handleSendForgotEmail(forgotSent.email)}
+                      onClick={() => void handleSendForgotEmail(forgotSent.identifier)}
                     >
                       {authSubmitting
                         ? 'Sending Again...'
@@ -1075,7 +1172,7 @@ export function AuthGateScreen({
                           setInlineError(null);
                         }}
                       >
-                        Try Different Email
+                        Try Different Email / ID
                       </button>
                       <button
                         type="button"
@@ -1101,24 +1198,23 @@ export function AuthGateScreen({
                   </div>
 
                   <p className="admin-login-subtitle" style={{ marginBottom: '16px' }}>
-                    Enter the email address added by your LabSetu Admin. We will send you a secure,
-                    single-use link to set a new password.
+                    Enter your registered email address or Assigned Login ID (e.g. LAB-SM-1001). We will send you a secure, single-use link to set a new password.
                   </p>
 
                   {inlineError && <div className="admin-auth-alert error">{inlineError}</div>}
 
                   <div className="form-group">
                     <label className="form-label" htmlFor="portal-forgot-email">
-                      Registered Email Address
+                      Email Address or Assigned Login ID
                     </label>
                     <input
                       id="portal-forgot-email"
-                      type="email"
+                      type="text"
                       className="form-input"
                       value={forgotEmail}
                       onChange={(e) => setForgotEmail(e.target.value)}
-                      placeholder="name@company.com"
-                      autoComplete="email"
+                      placeholder="name@company.com or LAB-SM-1001 / PHL-1001"
+                      autoComplete="username"
                       required
                     />
                   </div>
@@ -1563,7 +1659,7 @@ export function AuthGateScreen({
           </button>
 
           <div className="auth-divider">
-            <span>OR SIGN IN WITH EMAIL</span>
+            <span>OR SIGN IN WITH EMAIL OR ASSIGNED ID</span>
           </div>
 
           <div className="labsetu-auth-tabs">
@@ -1575,7 +1671,7 @@ export function AuthGateScreen({
                 setInlineError(null);
               }}
             >
-              Email &amp; Password
+              Email / ID &amp; Password
             </button>
             <button
               type="button"
@@ -1596,15 +1692,16 @@ export function AuthGateScreen({
             <form onSubmit={(e) => void handlePasswordSignIn(e)}>
               <div className="form-group">
                 <label className="form-label" htmlFor="portal-email">
-                  Email Address
+                  Email Address or Assigned Login ID
                 </label>
                 <input
                   id="portal-email"
-                  type="email"
+                  type="text"
                   className="form-input"
                   value={loginEmail}
                   onChange={(e) => setLoginEmail(e.target.value)}
-                  placeholder="Enter your registered email"
+                  placeholder="name@company.com or LAB-SM-1001 / USR-ADM-1001"
+                  autoComplete="username"
                   required
                 />
               </div>
@@ -1677,15 +1774,16 @@ export function AuthGateScreen({
             >
               <div className="form-group">
                 <label className="form-label" htmlFor="otp-email">
-                  Registered Email Address
+                  Email Address or Assigned Login ID
                 </label>
                 <input
                   id="otp-email"
-                  type="email"
+                  type="text"
                   className="form-input"
                   value={otpEmail}
                   onChange={(e) => setOtpEmail(e.target.value)}
-                  placeholder="Enter your registered email"
+                  placeholder="name@company.com or LAB-SM-1001 / USR-ADM-1001"
+                  autoComplete="username"
                   disabled={otpSent}
                   required
                 />

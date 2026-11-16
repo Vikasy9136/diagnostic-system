@@ -166,7 +166,7 @@ async function main() {
   console.log('');
   console.log(colorize('36', '============================================================'));
   console.log(colorize('1', '  LabSetu Diagnostics — Unified Full-Stack Dev Runner'));
-  console.log(`  Unified Portal:  http://localhost:${PORTAL_PORT}  (Landing + All Roles)`);
+  console.log(`  Unified Portal:  https://localhost:${PORTAL_PORT}  (Landing + All Roles, HTTPS SSL)`);
   console.log(`  Backend API:     http://localhost:${API_PORT}/api/v1`);
   if (RUN_ALL_PORTALS) {
     console.log('  Standalone Labs: http://localhost:3000 | :3001 | :3002');

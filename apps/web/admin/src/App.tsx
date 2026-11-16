@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { UserRole } from '@diagnostic/shared';
 import { signOut } from 'firebase/auth';
 import { auth } from './firebase';
+import { MobileScannerPage } from './components/MobileScannerPage';
 import {
   AuthGateScreen,
   type VerifiedPortalSession,
@@ -59,6 +60,15 @@ export default function App() {
       },
     });
   };
+
+  const isMobileScannerRoute =
+    typeof window !== 'undefined' &&
+    (window.location.pathname.toLowerCase().startsWith('/mobile-scanner') ||
+      window.location.pathname.toLowerCase().startsWith('/scan'));
+
+  if (isMobileScannerRoute) {
+    return <MobileScannerPage />;
+  }
 
   return (
     <>

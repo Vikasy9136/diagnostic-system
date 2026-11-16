@@ -10,65 +10,172 @@ service firebase.storage {
       return request.auth.token.email != null ? request.auth.token.email.lower() : '';
     }
 
-    function hasDirectoryRole(targetRole) {
+    function hasDirectoryEntry() {
       return isAuthenticated()
         && normalizedEmail() != ''
-        && firestore.exists(/databases/(default)/documents/user_directory/$(normalizedEmail()))
-        && firestore.get(/databases/(default)/documents/user_directory/$(normalizedEmail())).data.isActive != false
-        && firestore.get(/databases/(default)/documents/user_directory/$(normalizedEmail())).data.role == targetRole;
+        && firestore.exists(/databases/(default)/documents/user_directory/$(normalizedEmail()));
+    }
+
+    function directoryEntry() {
+      return firestore.get(/databases/(default)/documents/user_directory/$(normalizedEmail())).data;
+    }
+
+    function isDirectoryActive() {
+      return hasDirectoryEntry() && directoryEntry().get('isActive', true) != false;
+    }
+
+    function isAccountActive() {
+      return !hasDirectoryEntry() || isDirectoryActive();
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated()
+        && (
+          (!hasDirectoryEntry() && normalizedEmail() == 'lab.setu.admin@gmail.com')
+          || (
+            isDirectoryActive()
+            && directoryEntry().get('role', '') == 'ADMIN'
+            && (
+              directoryEntry().get('isSuperAdmin', false) == true
+              || directoryEntry().get('adminSubRole', '') == 'SUPER_ADMIN'
+            )
+          )
+        );
     }
 
     function isAdmin() {
       return isAuthenticated()
+        && isAccountActive()
         && (
-          normalizedEmail() == 'lab.setu.admin@gmail.com'
+          isSuperAdmin()
           || request.auth.token.role == 'ADMIN'
-          || hasDirectoryRole('ADMIN')
+          || (isDirectoryActive() && directoryEntry().get('role', '') == 'ADMIN')
         );
     }
 
+    function hasPermission(perm) {
+      return isAdmin()
+        && (
+          isSuperAdmin()
+          || (
+            isDirectoryActive()
+            && directoryEntry().get('permissions', []).hasAny([perm, 'FULL_PLATFORM_CONTROL'])
+          )
+        );
+    }
+
+    function getUserRole() {
+      return isAuthenticated() && isAccountActive()
+        ? (
+            hasDirectoryEntry()
+              ? directoryEntry().get('role', request.auth.token.role)
+              : request.auth.token.role
+          )
+        : null;
+    }
+
     function isSmallLab() {
-      return isAuthenticated()
-        && (request.auth.token.role == 'SMALL_LAB' || hasDirectoryRole('SMALL_LAB'));
+      return isAuthenticated() && getUserRole() == 'SMALL_LAB';
     }
 
     function isLargeLab() {
-      return isAuthenticated()
-        && (request.auth.token.role == 'LARGE_LAB' || hasDirectoryRole('LARGE_LAB'));
+      return isAuthenticated() && getUserRole() == 'LARGE_LAB';
     }
 
-    function isCourierOrLab() {
-      return isAdmin()
-        || (isAuthenticated() && (
-          request.auth.token.role in ['PHLEBOTOMIST', 'SMALL_LAB', 'LARGE_LAB']
-          || hasDirectoryRole('PHLEBOTOMIST')
-          || hasDirectoryRole('SMALL_LAB')
-          || hasDirectoryRole('LARGE_LAB')
-        ));
+    function isPhlebotomist() {
+      return isAuthenticated() && getUserRole() == 'PHLEBOTOMIST';
+    }
+
+    function getLabId() {
+      return hasDirectoryEntry() && directoryEntry().get('labId', null) != null
+        ? directoryEntry().get('labId', null)
+        : request.auth.token.labId;
+    }
+
+    function getPhlebotomistId() {
+      return hasDirectoryEntry() && directoryEntry().get('phlebotomistId', null) != null
+        ? directoryEntry().get('phlebotomistId', null)
+        : request.auth.token.phlebotomistId;
+    }
+
+    function orderExists(orderId) {
+      return firestore.exists(/databases/(default)/documents/orders/$(orderId));
+    }
+
+    function orderDoc(orderId) {
+      return firestore.get(/databases/(default)/documents/orders/$(orderId)).data;
+    }
+
+    function canReadOrder(orderId) {
+      return orderExists(orderId) && (
+        (isSmallLab() && getLabId() != null && (
+          orderDoc(orderId).smallLabId == getLabId()
+          || orderDoc(orderId).targetLabId == getLabId()
+        ))
+        || (isLargeLab() && getLabId() != null && (
+          orderDoc(orderId).targetLabId == getLabId()
+          || orderDoc(orderId).get('targetParentLabId', null) == getLabId()
+        ))
+        || (isPhlebotomist() && getPhlebotomistId() != null && orderDoc(orderId).phlebotomistId == getPhlebotomistId())
+      );
     }
 
     // Diagnostic Reports: reports/{orderId}/{fileName}
+    // Strictly scoped to owning Small/Large Labs or Admins with VIEW_MEDICAL_REPORTS.
     match /reports/{orderId}/{fileName} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin() || isLargeLab() || isSmallLab();
+      allow read: if hasPermission('VIEW_MEDICAL_REPORTS')
+        || (orderExists(orderId) && (
+          (isSmallLab() && getLabId() != null && (
+            orderDoc(orderId).smallLabId == getLabId()
+            || orderDoc(orderId).targetLabId == getLabId()
+          ))
+          || (isLargeLab() && getLabId() != null && (
+            orderDoc(orderId).targetLabId == getLabId()
+            || orderDoc(orderId).get('targetParentLabId', null) == getLabId()
+          ))
+        ));
+      allow write: if request.resource != null
+        && request.resource.size < 15 * 1024 * 1024
+        && (
+          hasPermission('VIEW_MEDICAL_REPORTS')
+          || (orderExists(orderId) && (
+            (isSmallLab() && getLabId() != null && orderDoc(orderId).targetLabId == getLabId())
+            || (isLargeLab() && getLabId() != null && (
+              orderDoc(orderId).targetLabId == getLabId()
+              || orderDoc(orderId).get('targetParentLabId', null) == getLabId()
+            ))
+          ))
+        );
     }
 
     // Phlebotomist Collection Sample Photos: samples/{orderId}/{fileName}
     match /samples/{orderId}/{fileName} {
-      allow read: if isAuthenticated();
-      allow write: if isCourierOrLab();
+      allow read: if isAdmin() || canReadOrder(orderId);
+      allow write: if request.resource != null
+        && request.resource.size < 15 * 1024 * 1024
+        && (isAdmin() || canReadOrder(orderId));
     }
 
     // Custody Handover Digital Signatures: signatures/{orderId}/{fileName}
     match /signatures/{orderId}/{fileName} {
-      allow read: if isAuthenticated();
-      allow write: if isCourierOrLab();
+      allow read: if isAdmin() || canReadOrder(orderId);
+      allow write: if request.resource != null
+        && request.resource.size < 15 * 1024 * 1024
+        && (isAdmin() || canReadOrder(orderId));
     }
 
     // Lab Verification & Compliance KYC Documents: documents/{labId}/{fileName}
+    // Strictly scoped to owning lab or Admin with explicit VIEW_IDENTITY_DOCS / MANAGE_VERIFICATION.
     match /documents/{labId}/{fileName} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin() || isCourierOrLab();
+      allow read: if hasPermission('VIEW_IDENTITY_DOCS')
+        || ((isSmallLab() || isLargeLab()) && getLabId() != null && getLabId() == labId);
+      allow write: if request.resource != null
+        && request.resource.size < 15 * 1024 * 1024
+        && (
+          hasPermission('VIEW_IDENTITY_DOCS')
+          || hasPermission('MANAGE_VERIFICATION')
+          || ((isSmallLab() || isLargeLab()) && getLabId() != null && getLabId() == labId)
+        );
     }
 
     // Deny all other unrestricted access by default

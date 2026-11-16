@@ -1,3 +1,12 @@
+import {
+  type CoreDepartmentId,
+  type FounderRoleCode,
+  type FounderSeatKey,
+  type PermissionCode,
+} from './orgTypes';
+
+export * from './orgTypes';
+
 export enum UserRole {
   ADMIN = 'ADMIN',
   SMALL_LAB = 'SMALL_LAB',
@@ -16,18 +25,33 @@ export type AdminTeamRole =
   | 'SUPER_ADMIN'
   | 'FINANCE_B2B'
   | 'OPS_DISPATCH'
-  | 'CATALOG_LABS';
+  | 'CATALOG_LABS'
+  | 'FINANCE_BUSINESS_HEAD'
+  | 'OPERATIONS_PARTNERSHIPS_HEAD'
+  | 'MARKETING_GROWTH_HEAD'
+  | 'PRODUCT_TECHNOLOGY_HEAD'
+  | 'DEPARTMENT_EMPLOYEE';
 
 export const ADMIN_SUB_ROLE_LABELS: Record<AdminTeamRole, string> = {
   SUPER_ADMIN: 'Super Admin (Full Control)',
   FINANCE_B2B: 'Finance & B2B Margin Team',
   OPS_DISPATCH: 'Operations & Courier Dispatch',
   CATALOG_LABS: 'Lab Onboarding & Catalog Team',
+  FINANCE_BUSINESS_HEAD: 'Head — Finance & Business',
+  OPERATIONS_PARTNERSHIPS_HEAD: 'Head — Operations & Partnerships',
+  MARKETING_GROWTH_HEAD: 'Head — Marketing & Growth',
+  PRODUCT_TECHNOLOGY_HEAD: 'Head — Product & Technology',
+  DEPARTMENT_EMPLOYEE: 'Department Team Member',
 };
 
 export interface UserCustomClaims {
   role: UserRole;
   adminSubRole?: AdminTeamRole;
+  isSuperAdmin?: boolean;
+  founderRoles?: FounderRoleCode[];
+  primaryDepartmentId?: CoreDepartmentId | string;
+  departmentIds?: string[];
+  designationId?: string;
   labId?: string;
   parentLabId?: string;
   phlebotomistId?: string;
@@ -36,25 +60,64 @@ export interface UserCustomClaims {
 export interface UserProfile {
   id: string;
   email: string;
+  userCode?: string;
+  userCodeUpper?: string;
   displayName: string;
   phoneNumber?: string;
   role: UserRole;
   adminSubRole?: AdminTeamRole;
+  isSuperAdmin?: boolean;
+  revokedSuperAdmin?: boolean;
+  founderRoles?: FounderRoleCode[];
+  founderSeatKey?: FounderSeatKey;
+  employeeId?: string;
+  primaryDepartmentId?: CoreDepartmentId | string;
+  departmentIds?: string[];
+  designationId?: string;
+  designationTitle?: string;
+  reportingManagerEmail?: string;
+  reportingManagerName?: string;
+  responsibilities?: string[];
+  permissions?: PermissionCode[];
+  assignedCity?: string;
+  assignedZone?: string;
+  joiningDate?: string;
+  lastLoginAt?: string;
   labId?: string;
   parentLabId?: string;
   phlebotomistId?: string;
   isActive: boolean;
   fcmTokens?: string[];
   createdByAdmin?: boolean;
+  initialPasswordSet?: boolean;
+  initialPasswordUpdatedAt?: string;
+  initialPasswordUpdatedBy?: string;
+  mustChangePassword?: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface CreateManagedUserPayload {
   email: string;
+  userCode?: string;
   displayName: string;
   role: UserRole;
   adminSubRole?: AdminTeamRole;
+  isSuperAdmin?: boolean;
+  founderRoles?: FounderRoleCode[];
+  founderSeatKey?: FounderSeatKey;
+  employeeId?: string;
+  primaryDepartmentId?: string;
+  departmentIds?: string[];
+  designationId?: string;
+  designationTitle?: string;
+  reportingManagerEmail?: string;
+  reportingManagerName?: string;
+  responsibilities?: string[];
+  permissions?: PermissionCode[];
+  assignedCity?: string;
+  assignedZone?: string;
+  joiningDate?: string;
   phoneNumber?: string;
   labId?: string;
   parentLabId?: string;

@@ -1,12 +1,31 @@
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, Auth } from 'firebase/auth';
-import { getFirestore, Firestore } from 'firebase/firestore';
+import {
+  getAuth,
+  GoogleAuthProvider,
+  initializeAuth,
+  type Auth,
+  type Persistence,
+} from 'firebase/auth';
+import * as firebaseAuthNamespace from 'firebase/auth';
+import {
+  initializeFirestore,
+  Firestore,
+  collection,
+  query,
+  where,
+  onSnapshot,
+  addDoc,
+  type Unsubscribe,
+} from 'firebase/firestore';
+import type { KitAllocationRecord } from '@diagnostic/shared';
 import {
   getStorage,
   FirebaseStorage,
   ref,
   uploadBytes,
+  uploadString,
   getDownloadURL,
 } from 'firebase/storage';
 
@@ -66,8 +85,29 @@ export const app: FirebaseApp = !getApps().length
   ? initializeApp(firebaseConfig)
   : getApps()[0];
 
-export const auth: Auth = getAuth(app);
-export const db: Firestore = getFirestore(app);
+const getRnPersistence = (
+  firebaseAuthNamespace as unknown as {
+    getReactNativePersistence?: (storage: typeof AsyncStorage) => Persistence;
+  }
+).getReactNativePersistence;
+
+function resolveFirebaseAuth(firebaseApp: FirebaseApp): Auth {
+  if (Platform.OS !== 'web' && typeof getRnPersistence === 'function') {
+    try {
+      return initializeAuth(firebaseApp, {
+        persistence: getRnPersistence(AsyncStorage),
+      });
+    } catch {
+      return getAuth(firebaseApp);
+    }
+  }
+  return getAuth(firebaseApp);
+}
+
+export const auth: Auth = resolveFirebaseAuth(app);
+export const db: Firestore = initializeFirestore(app, {
+  ignoreUndefinedProperties: true,
+});
 export const storage: FirebaseStorage = getStorage(app);
 
 export const googleProvider = new GoogleAuthProvider();
@@ -81,4 +121,72 @@ export async function uploadPhleboSampleFile(
   await uploadBytes(storageRef, file);
   return getDownloadURL(storageRef);
 }
+
+export async function uploadPhleboSampleBase64(
+  path: string,
+  base64Data: string,
+  contentType: string = 'image/jpeg'
+): Promise<string> {
+  const storageRef = ref(storage, path);
+  const cleanBase64 = base64Data.replace(/^data:image\/\w+;base64,/, '');
+  await uploadString(storageRef, cleanBase64, 'base64', { contentType });
+  return getDownloadURL(storageRef);
+}
+
+/**
+ * Subscribes to collection kits allocated to this phlebotomist from Central Supply
+ */
+export function subscribeMyKitAllocations(
+  phleboId: string,
+  onData: (allocations: KitAllocationRecord[]) => void
+): Unsubscribe {
+  if (!phleboId) {
+    onData([]);
+    return () => {};
+  }
+  const q = query(collection(db, 'kit_allocations'), where('phlebotomistId', '==', phleboId));
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list: KitAllocationRecord[] = [];
+      snap.forEach((doc) => {
+        list.push({ id: doc.id, ...(doc.data() as Omit<KitAllocationRecord, 'id'>) });
+      });
+      list.sort((a, b) => (b.allocatedAt || '').localeCompare(a.allocatedAt || ''));
+      onData(list);
+    },
+    (err) => {
+      console.warn('[firebase] Error subscribing to kit allocations:', err);
+      onData([]);
+    }
+  );
+}
+
+/**
+ * Sends a notification to Admin requesting a restock of diagnostic collection kits
+ */
+export async function requestKitRestock(params: {
+  phleboId: string;
+  phleboName: string;
+  kitCode?: string;
+  kitName?: string;
+  requestedQuantity?: number;
+  notes?: string;
+}) {
+  const now = new Date().toISOString();
+  await addDoc(collection(db, 'notifications'), {
+    title: `Kit Restock Requested: ${params.phleboName}`,
+    message: `${params.phleboName} requested a restock of ${params.kitName || 'collection kits'} (Qty: ${params.requestedQuantity || 10}). ${params.notes ? `Note: ${params.notes}` : ''}`,
+    category: 'SYSTEM_ALERT',
+    priority: 'HIGH',
+    recipientRole: 'ADMIN',
+    channels: ['IN_APP', 'EMAIL'],
+    read: false,
+    emailSent: false,
+    pushSent: false,
+    createdAt: now,
+  });
+}
+
+
 

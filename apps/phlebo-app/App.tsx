@@ -1,28 +1,46 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Image,
+  ActivityIndicator,
+  AppState,
+  type AppStateStatus,
+  BackHandler,
+  DeviceEventEmitter,
   Linking,
   Modal,
   Platform,
-  StyleSheet,
-  Text,
-  View,
-  ScrollView,
-  TouchableOpacity,
-  SafeAreaView,
   StatusBar,
-  TextInput,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  PlusJakartaSans_400Regular,
+  PlusJakartaSans_500Medium,
+  PlusJakartaSans_600SemiBold,
+  PlusJakartaSans_700Bold,
+  PlusJakartaSans_800ExtraBold,
+  useFonts,
+} from '@expo-google-fonts/plus-jakarta-sans';
+import { Ionicons } from '@expo/vector-icons';
+import * as Notifications from 'expo-notifications';
+import * as Location from 'expo-location';
+import * as TaskManager from 'expo-task-manager';
 import {
   calculateHaversineDistanceKm,
+  type CommissionConfig,
   computeDailyVolumeBars,
   type CustodyEvent,
   CustodyEventType,
+  deepCleanFirestorePayload,
+  DEFAULT_COMMISSION_CONFIG,
+  DEFAULT_SUPPORT_CONTACTS,
+  evaluatePointServiceCoverage,
   formatInr,
-  formatOrderStatus,
   isOrderCompleted,
+  type KitAllocationRecord,
   type LiveGeoCoordinate,
-  LOCALITY_GPS_PRESETS,
   NotificationCategory,
   NotificationChannel,
   NotificationPriority,
@@ -32,9 +50,11 @@ import {
   type PhlebotomistProfile,
   type PhlebotomistShiftStatus,
   type PickupOrder,
+  type PlatformNotification,
+  type ServiceZoneRecord,
   type SettlementRecord,
   type SpecimenItem,
-  TUBE_METADATA,
+  type SupportContactsConfig,
   TubeType,
   UserRole,
   validateTubeBarcodeScan,
@@ -44,14 +64,24 @@ import {
   addDoc,
   collection,
   doc,
+  getDoc,
   onSnapshot,
   query,
   runTransaction,
+  setDoc,
   updateDoc,
   where,
+  writeBatch,
   type Unsubscribe,
 } from 'firebase/firestore';
-import { ADMIN_LOGIN_EMAIL, auth, db, uploadPhleboSampleFile } from './firebase';
+import {
+  ADMIN_LOGIN_EMAIL,
+  auth,
+  db,
+  requestKitRestock,
+  subscribeMyKitAllocations,
+  uploadPhleboSampleFile,
+} from './firebase';
 import {
   DynamicAlertModal,
   type DynamicAlertState,
@@ -62,74 +92,294 @@ import {
   PhleboAuthGate,
   type VerifiedPhleboSession,
 } from './components/PhleboAuthGate';
+import { FloatingDispatchOverlay } from './components/FloatingDispatchOverlay';
+import { PhleboDrawer } from './components/PhleboDrawer';
+import { FloatingIconSettingsModal } from './components/FloatingIconSettingsModal';
+import { BRAND_COLORS, BRAND_FONTS, LabSetuLogoMark } from './components/LabSetuBrand';
+import { COMPACT_TEXT_SCALE, rs } from './utils/responsive';
+import {
+  dismissIncomingPickupOverlay,
+  ensureDutyNotificationChannel,
+  getPendingIncomingOrderAction,
+  isNativeSystemOverlayAvailable,
+  openSystemOverlayPermissionSettings,
+  syncFloatingOverlayRuntime,
+  triggerIncomingPickupOverlay,
+  URGENT_DISPATCH_CHANNEL_ID,
+} from './services/floatingOverlayService';
+import {
+  INITIAL_TOAST_BANNER,
+  type ToastBannerState,
+  type ToastBannerVariant,
+  ToastNotificationBanner,
+} from './components/ToastNotificationBanner';
+import {
+  BroadcastDispatchModal,
+  CameraScannerModal,
+  LocationPickerModal,
+  PaymentLinkModal,
+  PhleboKitInventoryModal,
+  PhleboNotificationsModal,
+  PhleboQuickActionsModal,
+} from './components/PhleboModals';
+import {
+  BookingDetailsScreen,
+  BookingRequestsScreen,
+  BookingsHistoryScreen,
+  CollectSampleScreen,
+  CompletedReceiptScreen,
+  DropSampleScreen,
+  EarningsScreen,
+  HelpSupportScreen,
+  KitsAndSuppliesScreen,
+  ProfileScreen,
+  TodayCollectionsScreen,
+  TrainingSopScreen,
+} from './screens';
 import {
   checkPhleboPaymentLinkStatus,
   createPhleboMobilePaymentLink,
   startPhleboWebCheckout,
 } from './services/razorpayMobile';
+import {
+  captureSampleProofPhoto,
+  pickSampleProofFromLibrary,
+} from './services/cameraPhotoService';
+import { COLORS, styles } from './styles/phleboStyles';
+import {
+  type ActivePaymentLinkState,
+  type BookingHistoryFilter,
+  type BottomTab,
+  type CameraModalState,
+  type CompletedReceipt,
+  DEFAULT_FLOATING_ICON_SETTINGS,
+  type EarningRow,
+  type FloatingIconSettings,
+  type OpenPoolEntry,
+  type PhleboMetrics,
+  type RequestTab,
+  type ScreenType,
+  type SpecimenDraftMap,
+  type WebNotificationPermissionState,
+} from './types/phleboTypes';
 
-const COLORS = {
-  primaryTeal: '#0D9488',
-  primaryDark: '#0F766E',
-  accentBlue: '#2563EB',
-  successGreen: '#16A34A',
-  warningAmber: '#F59E0B',
-  errorRed: '#DC2626',
-  background: '#F8FAFC',
-  surfaceCard: '#FFFFFF',
-  textPrimary: '#0F172A',
-  textSecondary: '#64748B',
-  borderLight: '#E2E8F0',
-};
+const FLOATING_SETTINGS_STORAGE_KEY = '@labsetu_floating_icon_settings_v1';
+const DUTY_STATUS_STORAGE_KEY = '@labsetu_phlebo_duty_status_v1';
+import {
+  playPickupAlertChime,
+  startContinuousPickupAlert,
+  stopContinuousPickupAlert,
+} from './utils/phleboHelpers';
 
-type ScreenType =
-  | 'BOOKING_REQUESTS'
-  | 'BOOKING_DETAILS'
-  | 'COLLECT_SAMPLE'
-  | 'DROP_SAMPLE'
-  | 'COMPLETED';
+const PHLEBO_BG_LOCATION_TASK = 'labsetu-phlebo-bg-location';
 
-function formatLabel(value?: string | null): string {
-  if (!value) return '—';
-  return value
-    .replace(/_/g, ' ')
-    .toLowerCase()
-    .replace(/\b\w/g, (ch) => ch.toUpperCase())
-    .replace(/\bEdta\b/g, 'EDTA')
-    .replace(/\bStat\b/g, 'STAT');
+let activeBgLocationSink:
+  | ((lat: number, lng: number, speedKmph?: number, accuracyMeters?: number) => void)
+  | null = null;
+
+if (Platform.OS !== 'web') {
+  try {
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldShowBanner: true,
+        shouldShowList: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
+      }),
+    });
+  } catch {
+    // Ignore notification handler init failures on unsupported runtimes
+  }
+
+  try {
+    if (!TaskManager.isTaskDefined(PHLEBO_BG_LOCATION_TASK)) {
+      TaskManager.defineTask<{ locations?: Location.LocationObject[] }>(
+        PHLEBO_BG_LOCATION_TASK,
+        async ({ data, error }) => {
+          if (error || !data?.locations || data.locations.length === 0) return;
+          const latest = data.locations[data.locations.length - 1];
+          if (!latest?.coords) return;
+          const speedKmph =
+            typeof latest.coords.speed === 'number' && latest.coords.speed >= 0
+              ? Math.round(latest.coords.speed * 3.6)
+              : undefined;
+          const accuracyMeters =
+            typeof latest.coords.accuracy === 'number'
+              ? Math.round(latest.coords.accuracy)
+              : undefined;
+          activeBgLocationSink?.(
+            latest.coords.latitude,
+            latest.coords.longitude,
+            speedKmph,
+            accuracyMeters
+          );
+        }
+      );
+    }
+  } catch {
+    // Ignore TaskManager registration failures outside native task runtimes
+  }
 }
 
-interface CompletedReceipt {
-  orderNumber: string;
-  targetLabName: string;
-  feeInr: number;
-  tempCelsius: number;
-  completedAt: string;
+interface PhleboErrorBoundaryState {
+  hasError: boolean;
+  message: string;
+}
+
+class PhleboErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  PhleboErrorBoundaryState
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, message: '' };
+  }
+
+  static getDerivedStateFromError(error: unknown): PhleboErrorBoundaryState {
+    return {
+      hasError: true,
+      message: error instanceof Error ? error.message : 'Unexpected mobile rendering error.',
+    };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <SafeAreaView style={[styles.root, { justifyContent: 'center', padding: 24 }]}>
+          <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 20, borderWidth: 1, borderColor: '#E2E8F0' }}>
+            <Text style={{ fontSize: 18, fontFamily: BRAND_FONTS.extraBold, color: '#0F172A', marginBottom: 8, includeFontPadding: true }}>
+              LabSetu Partner Recovery
+            </Text>
+            <Text style={{ fontSize: 13, fontFamily: BRAND_FONTS.regular, color: '#475569', marginBottom: 14, includeFontPadding: true }}>
+              {this.state.message}
+            </Text>
+            <TouchableOpacity
+              style={styles.btnPrimary}
+              onPress={() => this.setState({ hasError: false, message: '' })}
+            >
+              <Text style={styles.btnPrimaryText}>Retry Loading App</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <PhleboErrorBoundary>
+        <PhleboAppContent />
+      </PhleboErrorBoundary>
+    </SafeAreaProvider>
+  );
+}
+
+function PhleboAppContent() {
+  const insets = useSafeAreaInsets();
+  const [fontsLoaded, fontError] = useFonts({
+    PlusJakartaSans_400Regular,
+    PlusJakartaSans_500Medium,
+    PlusJakartaSans_600SemiBold,
+    PlusJakartaSans_700Bold,
+    PlusJakartaSans_800ExtraBold,
+  });
+  const [fontWaitExpired, setFontWaitExpired] = useState(false);
+
+  useEffect(() => {
+    if (fontsLoaded || fontError) return;
+    const timer = setTimeout(() => setFontWaitExpired(true), 1600);
+    return () => clearTimeout(timer);
+  }, [fontsLoaded, fontError]);
+
   const [session, setSession] = useState<VerifiedPhleboSession | null>(null);
   const [alertState, setAlertState] = useState<DynamicAlertState>(INITIAL_DYNAMIC_ALERT);
+  const [toastState, setToastState] = useState<ToastBannerState>(INITIAL_TOAST_BANNER);
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('BOOKING_REQUESTS');
-  const [requestTab, setRequestTab] = useState<'new' | 'active' | 'completed'>('new');
-  const [bottomTab, setBottomTab] = useState<'home' | 'bookings' | 'earnings' | 'profile'>('home');
+  const [detailsReturnScreen, setDetailsReturnScreen] = useState<'BOOKING_REQUESTS' | 'TODAYS_COLLECTIONS'>('BOOKING_REQUESTS');
+  const [requestTab, setRequestTab] = useState<RequestTab>('active');
+  const [bottomTab, setBottomTab] = useState<BottomTab>('home');
+  const [drawerVisible, setDrawerVisible] = useState(false);
+  const [floatingSettingsVisible, setFloatingSettingsVisible] = useState(false);
+  const [floatingResetNonce, setFloatingResetNonce] = useState(0);
+  const [floatingSettings, setFloatingSettings] = useState<FloatingIconSettings>(
+    DEFAULT_FLOATING_ICON_SETTINGS
+  );
+  const [localDutyStatus, setLocalDutyStatus] = useState<PhlebotomistShiftStatus>('ONLINE');
+  const [appState, setAppState] = useState<AppStateStatus>(
+    (AppState.currentState as AppStateStatus) || 'active'
+  );
 
-  // Live Cloud Firestore Data States (ZERO hardcoded or dummy data)
+  useEffect(() => {
+    let mounted = true;
+    AsyncStorage.getItem(FLOATING_SETTINGS_STORAGE_KEY)
+      .then((raw) => {
+        if (!mounted || !raw) return;
+        const parsed = JSON.parse(raw) as Partial<FloatingIconSettings>;
+        setFloatingSettings({ ...DEFAULT_FLOATING_ICON_SETTINGS, ...parsed });
+      })
+      .catch(() => {});
+
+    AsyncStorage.getItem(DUTY_STATUS_STORAGE_KEY)
+      .then((raw) => {
+        if (!mounted || !raw) return;
+        if (raw === 'ONLINE' || raw === 'BREAK' || raw === 'OFFLINE') {
+          setLocalDutyStatus(raw);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      setAppState(nextState);
+    });
+    return () => {
+      sub.remove();
+    };
+  }, []);
+
+  const handleNavigateBackHome = useCallback(() => {
+    setBottomTab('home');
+    setCurrentScreen('BOOKING_REQUESTS');
+    setRequestTab('active');
+  }, []);
+
+  const updateFloatingSettings = useCallback((patch: Partial<FloatingIconSettings>) => {
+    setFloatingSettings((prev) => {
+      const next = { ...prev, ...patch };
+      void AsyncStorage.setItem(FLOATING_SETTINGS_STORAGE_KEY, JSON.stringify(next)).catch(
+        () => {}
+      );
+      return next;
+    });
+  }, []);
+
+  // Live Database States
   const [orders, setOrders] = useState<PickupOrder[]>([]);
   const [settlements, setSettlements] = useState<SettlementRecord[]>([]);
   const [payouts, setPayouts] = useState<PayoutRecord[]>([]);
+  const [serviceZones, setServiceZones] = useState<ServiceZoneRecord[]>([]);
+  const [zonesLoaded, setZonesLoaded] = useState(false);
+  const [commissionConfig, setCommissionConfig] = useState<CommissionConfig>(DEFAULT_COMMISSION_CONFIG);
   const [myPhleboProfile, setMyPhleboProfile] = useState<PhlebotomistProfile | null>(null);
+  const [kitAllocations, setKitAllocations] = useState<KitAllocationRecord[]>([]);
+  const [showMySuppliesModal, setShowMySuppliesModal] = useState(false);
+  const [notifications, setNotifications] = useState<PlatformNotification[]>([]);
+  const [showNotificationsModal, setShowNotificationsModal] = useState(false);
+  const [supportContacts, setSupportContacts] = useState<SupportContactsConfig>(DEFAULT_SUPPORT_CONTACTS);
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
 
   // Payment collection & partner payout profile states
   const [collectingOrderId, setCollectingOrderId] = useState<string | null>(null);
-  const [activePaymentLink, setActivePaymentLink] = useState<{
-    orderId: string;
-    orderNumber: string;
-    settlementId: string;
-    paymentLinkId: string;
-    shortUrl: string;
-    amountInr: number;
-  } | null>(null);
+  const [activePaymentLink, setActivePaymentLink] = useState<ActivePaymentLinkState | null>(null);
   const [verifyingLinkPayment, setVerifyingLinkPayment] = useState(false);
 
   const [payoutMethod, setPayoutMethod] = useState<'UPI' | 'BANK_TRANSFER'>('UPI');
@@ -142,40 +392,72 @@ export default function App() {
   // Selected trip & workflow form state
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [otpValue, setOtpValue] = useState<string[]>(['', '', '', '', '']);
-  const [specimenDrafts, setSpecimenDrafts] = useState<
-    Record<string, { barcode: string; usedTube: TubeType }>
-  >({});
+  const [specimenDrafts, setSpecimenDrafts] = useState<SpecimenDraftMap>({});
   const [samplePhotoUrl, setSamplePhotoUrl] = useState('');
+  const [selfiePhotoUrl, setSelfiePhotoUrl] = useState('');
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  const [cameraModal, setCameraModal] = useState<{
-    mode: 'BARCODE' | 'PHOTO';
-    specimenId?: string;
-    specimen?: SpecimenItem;
-  } | null>(null);
+  const [uploadingSelfie, setUploadingSelfie] = useState(false);
+  const [cameraModal, setCameraModal] = useState<CameraModalState | null>(null);
   const [cameraStatusText, setCameraStatusText] = useState('Starting camera...');
   const [pickupTempInput, setPickupTempInput] = useState('4.2');
   const [dropTempInput, setDropTempInput] = useState('4.2');
   const [submittingAction, setSubmittingAction] = useState(false);
   const [lastReceipt, setLastReceipt] = useState<CompletedReceipt | null>(null);
 
-  // Live Rider GPS + Rapido-Style Broadcast Popup State
+  // Live Rider GPS + Admin-Assigned Zone + Live Broadcast State
   const [riderLocation, setRiderLocation] = useState<LiveGeoCoordinate>({
-    latitude: LOCALITY_GPS_PRESETS[0].latitude,
-    longitude: LOCALITY_GPS_PRESETS[0].longitude,
+    latitude: 19.124,
+    longitude: 72.866,
     updatedAt: new Date().toISOString(),
   });
-  const [gpsSourceLabel, setGpsSourceLabel] = useState('Default Zone');
+  const [gpsSourceLabel, setGpsSourceLabel] = useState('Syncing Admin Zone...');
+  const [riderFullAddress, setRiderFullAddress] = useState<string>('');
+  const [showQuickActionsModal, setShowQuickActionsModal] = useState(false);
   const [showLocationPickerModal, setShowLocationPickerModal] = useState(false);
-  const [manualLatInput, setManualLatInput] = useState(String(LOCALITY_GPS_PRESETS[0].latitude));
-  const [manualLngInput, setManualLngInput] = useState(String(LOCALITY_GPS_PRESETS[0].longitude));
+  const manualLiveGpsSyncedRef = useRef(false);
   const [dismissedBroadcastIds, setDismissedBroadcastIds] = useState<string[]>([]);
+  const [broadcastForceOpen, setBroadcastForceOpen] = useState(false);
   const [radiusOnlyFilter, setRadiusOnlyFilter] = useState(false);
+  const [webNotifPerm, setWebNotifPerm] = useState<WebNotificationPermissionState>(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && 'Notification' in window) {
+      return window.Notification.permission;
+    }
+    return Platform.OS === 'web' ? 'unsupported' : 'default';
+  });
+  const alertedBroadcastIdsRef = useRef<Set<string>>(new Set());
+  const activeRingingOrderIdRef = useRef<string | null>(null);
+  const seenHikeMapRef = useRef<Map<string, number>>(new Map());
+  const seenRetryMapRef = useRef<Map<string, number>>(new Map());
+  const lastBarcodeToastRef = useRef<Record<string, string>>({});
 
   // History filter state
-  const [bookingHistoryFilter, setBookingHistoryFilter] = useState<
-    'all' | 'active' | 'completed' | 'scheduled'
-  >('all');
+  const [bookingHistoryFilter, setBookingHistoryFilter] = useState<BookingHistoryFilter>('all');
   const [bookingSearchQuery, setBookingSearchQuery] = useState('');
+
+  const showToast = useCallback(
+    (opts: {
+      variant: ToastBannerVariant;
+      title: string;
+      subtitle?: string;
+      actionLabel?: string;
+      onAction?: () => void;
+    }) => {
+      setToastState({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        visible: true,
+        variant: opts.variant,
+        title: opts.title,
+        subtitle: opts.subtitle,
+        actionLabel: opts.actionLabel,
+        onAction: opts.onAction,
+      });
+    },
+    []
+  );
+
+  const handleDismissToast = useCallback(() => {
+    setToastState((prev) => ({ ...prev, visible: false }));
+  }, []);
 
   const showDynamicAlert = (opts: {
     variant: DynamicAlertVariant;
@@ -210,6 +492,9 @@ export default function App() {
           if (auth.currentUser) {
             await signOut(auth);
           }
+          alertedBroadcastIdsRef.current.clear();
+          lastBarcodeToastRef.current = {};
+          setBroadcastForceOpen(false);
           setSession(null);
           setOrders([]);
           setSettlements([]);
@@ -224,13 +509,38 @@ export default function App() {
     });
   };
 
+  const handleRequestKitRestock = async (kitCode?: string, kitName?: string) => {
+    if (!session?.firebaseUser) return;
+    try {
+      await requestKitRestock({
+        phleboId: effectivePhleboId || session.firebaseUser.uid,
+        phleboName,
+        kitCode,
+        kitName,
+        requestedQuantity: 10,
+        notes: `Urgent field kit restock requested by courier ${phleboName} (${displayCourierId})`,
+      });
+      showToast({
+        variant: 'SUCCESS',
+        title: '📢 Restock Request Sent',
+        subtitle: `Central Supply notified to dispatch ${kitName || 'collection kits'}.`,
+      });
+    } catch (err) {
+      showDynamicAlert({
+        variant: 'error',
+        title: 'Request Failed',
+        message: (err as Error).message || 'Could not send restock request.',
+      });
+    }
+  };
+
   const myPhleboId = session?.profile.phlebotomistId?.trim() || '';
   const phleboName = session?.profile.displayName || '';
   const phleboFirstName = phleboName.split(' ')[0] || 'Courier';
   const phleboInitial = phleboName.charAt(0).toUpperCase() || 'P';
   const phleboEmail = session?.profile.email || '';
 
-  // Subscribe live to Cloud Firestore (`orders`, `phlebotomists`, `settlements`)
+  // Subscribe live to orders, phlebotomist profile, service zones & payout settings
   useEffect(() => {
     if (!session?.firebaseUser) {
       setOrders([]);
@@ -324,10 +634,145 @@ export default function App() {
       );
     }
 
+    // 4. Active operational service zones (100% dynamic from Admin)
+    unsubs.push(
+      onSnapshot(
+        collection(db, 'service_zones'),
+        (snap) => {
+          setZonesLoaded(true);
+          if (snap.empty) {
+            setServiceZones([]);
+            return;
+          }
+          setServiceZones(
+            snap.docs.map((d) => ({
+              id: d.id,
+              ...(d.data() as Omit<ServiceZoneRecord, 'id'>),
+            }))
+          );
+        },
+        () => {
+          setZonesLoaded(true);
+        }
+      )
+    );
+
+    // 5. Instant 30-min payout & broadcast radius settings
+    unsubs.push(
+      onSnapshot(
+        doc(db, 'settings', 'commission'),
+        (snap) => {
+          if (snap.exists()) {
+            setCommissionConfig({
+              ...DEFAULT_COMMISSION_CONFIG,
+              ...(snap.data() as Partial<CommissionConfig>),
+            });
+          }
+        },
+        () => {
+          setCommissionConfig(DEFAULT_COMMISSION_CONFIG);
+        }
+      )
+    );
+
+    // 6. Live Platform Emergency & Dispatch Support Desk Settings
+    unsubs.push(
+      onSnapshot(
+        doc(db, 'settings', 'support'),
+        (snap) => {
+          if (snap.exists()) {
+            setSupportContacts({
+              ...DEFAULT_SUPPORT_CONTACTS,
+              ...(snap.data() as Partial<SupportContactsConfig>),
+            });
+          }
+        },
+        () => {
+          setSupportContacts(DEFAULT_SUPPORT_CONTACTS);
+        }
+      )
+    );
+
+    // 7. Live Phlebotomist In-App Notifications
+    unsubs.push(
+      onSnapshot(
+        collection(db, 'notifications'),
+        (snap) => {
+          const all = snap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<PlatformNotification, 'id'>),
+          }));
+          const filtered = all
+            .filter((n) => {
+              if (n.recipientUid && session?.firebaseUser && n.recipientUid === session.firebaseUser.uid) return true;
+              if (n.recipientRole === UserRole.PHLEBOTOMIST || n.recipientRole === 'ALL') return true;
+              return false;
+            })
+            .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+          setNotifications(filtered);
+        },
+        (err) => {
+          console.warn('Notifications live subscription skipped:', err);
+        }
+      )
+    );
+
     return () => unsubs.forEach((u) => u());
   }, [session?.firebaseUser, myPhleboId, phleboEmail]);
 
   const effectivePhleboId = myPhleboId || myPhleboProfile?.id || '';
+  const displayCourierId =
+    myPhleboProfile?.userCode || session?.profile.userCode || effectivePhleboId || 'ID Pending';
+  const unreadNotifCount = notifications.filter((n) => !n.read).length;
+
+  const handleMarkNotificationRead = async (id: string) => {
+    try {
+      await updateDoc(doc(db, 'notifications', id), { read: true });
+      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+    } catch (err) {
+      console.warn('Failed to mark read:', err);
+    }
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    try {
+      const unread = notifications.filter((n) => !n.read);
+      if (unread.length === 0) return;
+      const batch = writeBatch(db);
+      unread.forEach((n) => {
+        batch.update(doc(db, 'notifications', n.id), { read: true, readAt: new Date().toISOString() });
+      });
+      await batch.commit();
+      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    } catch (err) {
+      console.warn('Failed to mark all read:', err);
+    }
+  };
+
+  const handleClearAllNotifications = async () => {
+    try {
+      if (notifications.length === 0) return;
+      const batch = writeBatch(db);
+      notifications.forEach((n) => {
+        batch.delete(doc(db, 'notifications', n.id));
+      });
+      await batch.commit();
+      setNotifications([]);
+    } catch (err) {
+      console.warn('Failed to clear notifications:', err);
+    }
+  };
+
+  // Keep live ticker: 1-second cadence when unassigned orders exist or alert is active, 15-second cadence otherwise
+  useEffect(() => {
+    if (!session) return;
+    const hasActivePoolOrder = orders.some(
+      (o) => o.status === OrderStatus.READY_FOR_PICKUP && (!o.phlebotomistId || o.phlebotomistId === '')
+    );
+    const tickIntervalMs = hasActivePoolOrder || activeRingingOrderIdRef.current ? 1000 : 15000;
+    const timer = setInterval(() => setNowTick(Date.now()), tickIntervalMs);
+    return () => clearInterval(timer);
+  }, [session, orders]);
 
   // Subscribe live to courier settlements & released payouts
   useEffect(() => {
@@ -367,9 +812,14 @@ export default function App() {
       }
     );
 
+    const unsubKits = subscribeMyKitAllocations(effectivePhleboId, (list) => {
+      setKitAllocations(list);
+    });
+
     return () => {
       unsubSettlements();
       unsubPayouts();
+      unsubKits();
     };
   }, [session?.firebaseUser, effectivePhleboId]);
 
@@ -387,18 +837,38 @@ export default function App() {
     setPayoutIfsc(pp.ifscCode || '');
   }, [myPhleboProfile?.payoutProfile, phleboName]);
 
-  const dutyStatus: PhlebotomistShiftStatus = myPhleboProfile?.status || 'ONLINE';
+  // Sync optimistic local duty status whenever Firestore fleet profile updates
+  useEffect(() => {
+    if (myPhleboProfile?.status) {
+      setLocalDutyStatus(myPhleboProfile.status);
+      void AsyncStorage.setItem(DUTY_STATUS_STORAGE_KEY, myPhleboProfile.status).catch(() => {});
+    }
+  }, [myPhleboProfile?.status]);
+
+  const dutyStatus: PhlebotomistShiftStatus = myPhleboProfile?.status || localDutyStatus;
   const isOnline = dutyStatus === 'ONLINE';
 
-  const openPoolOrders = useMemo(
-    () =>
-      orders.filter(
-        (o) =>
-          o.status === OrderStatus.READY_FOR_PICKUP &&
-          (!o.phlebotomistId || o.phlebotomistId === '')
-      ),
-    [orders]
-  );
+  const isSuspendedForUnsettledFees = useMemo(() => {
+    const due = Number(myPhleboProfile?.pendingPlatformFeeDueInr) || 0;
+    if (due <= 0 || !myPhleboProfile?.unsettledCashSince) return false;
+    const daysSince =
+      (Date.now() - new Date(myPhleboProfile.unsettledCashSince).getTime()) / 86400000;
+    return daysSince >= 15;
+  }, [myPhleboProfile]);
+
+  const openPoolOrders = useMemo(() => {
+    const now = nowTick;
+    return orders.filter((o) => {
+      if (o.status !== OrderStatus.READY_FOR_PICKUP || Boolean(o.phlebotomistId)) {
+        return false;
+      }
+      if (o.broadcastExpiresAt) {
+        return new Date(o.broadcastExpiresAt).getTime() > now;
+      }
+      const createdMs = new Date(o.createdAt).getTime();
+      return now - createdMs < 45000;
+    });
+  }, [orders, nowTick]);
 
   const myAssignedOrders = useMemo(
     () =>
@@ -435,21 +905,123 @@ export default function App() {
     [orders, selectedOrderId]
   );
 
-  // Seed initial GPS coordinates from profile once when loaded
+  // Active real-time document listener on selected order & settlement for instant payment/status sync
   useEffect(() => {
+    if (!selectedOrderId) return;
+    const unsubOrder = onSnapshot(doc(db, 'orders', selectedOrderId), (snap) => {
+      if (snap.exists()) {
+        const latestOrder = { id: snap.id, ...(snap.data() as Omit<PickupOrder, 'id'>) };
+        setOrders((prev) => {
+          const idx = prev.findIndex((o) => o.id === selectedOrderId);
+          if (idx >= 0) {
+            const next = [...prev];
+            next[idx] = latestOrder;
+            return next;
+          }
+          return [latestOrder, ...prev];
+        });
+      }
+    });
+
+    const stlId = `STL-${selectedOrderId.replace('BK-', '')}`;
+    const unsubStl = onSnapshot(doc(db, 'settlements', stlId), (snap) => {
+      if (snap.exists()) {
+        const latestStl = { id: snap.id, ...(snap.data() as Omit<SettlementRecord, 'id'>) };
+        setSettlements((prev) => {
+          const idx = prev.findIndex((s) => s.id === latestStl.id || s.orderId === selectedOrderId);
+          if (idx >= 0) {
+            const next = [...prev];
+            next[idx] = latestStl;
+            return next;
+          }
+          return [latestStl, ...prev];
+        });
+      }
+    });
+
+    return () => {
+      unsubOrder();
+      unsubStl();
+    };
+  }, [selectedOrderId]);
+
+  const assignedAdminZone = useMemo(() => {
+    if (serviceZones.length === 0) return null;
+    if (myPhleboProfile?.assignedZoneId) {
+      const byId = serviceZones.find((z) => z.id === myPhleboProfile.assignedZoneId);
+      if (byId) return byId;
+    }
+    if (myPhleboProfile?.assignedZoneCode) {
+      const codeUpper = myPhleboProfile.assignedZoneCode.trim().toUpperCase();
+      const byCode = serviceZones.find((z) => z.zoneCode.trim().toUpperCase() === codeUpper);
+      if (byCode) return byCode;
+    }
+    const assignedText = (
+      myPhleboProfile?.assignedZoneName ||
+      session?.profile.assignedZone ||
+      ''
+    )
+      .trim()
+      .toLowerCase();
+    if (assignedText) {
+      const byName = serviceZones.find(
+        (z) =>
+          z.name.trim().toLowerCase() === assignedText ||
+          assignedText.includes(z.zoneCode.trim().toLowerCase()) ||
+          assignedText.includes(z.name.trim().toLowerCase())
+      );
+      if (byName) return byName;
+    }
+    return null;
+  }, [
+    serviceZones,
+    myPhleboProfile?.assignedZoneId,
+    myPhleboProfile?.assignedZoneCode,
+    myPhleboProfile?.assignedZoneName,
+    session?.profile.assignedZone,
+  ]);
+
+  // Sync Admin-assigned zone label & initial base coordinates automatically
+  useEffect(() => {
+    const resolvedLabel = assignedAdminZone
+      ? `${assignedAdminZone.zoneCode} • ${assignedAdminZone.name}`
+      : myPhleboProfile?.assignedZoneName
+      ? `${
+          myPhleboProfile.assignedZoneCode ? `${myPhleboProfile.assignedZoneCode} • ` : ''
+        }${myPhleboProfile.assignedZoneName}`
+      : myPhleboProfile?.currentLocation ||
+        (zonesLoaded ? 'Zone Pending (Admin)' : 'Syncing Admin Zone...');
+
+    setGpsSourceLabel(resolvedLabel);
+
+    if (manualLiveGpsSyncedRef.current) return;
+
     if (
       typeof myPhleboProfile?.latitude === 'number' &&
-      typeof myPhleboProfile?.longitude === 'number' &&
-      gpsSourceLabel === 'Default Zone'
+      typeof myPhleboProfile?.longitude === 'number'
     ) {
       setRiderLocation({
         latitude: myPhleboProfile.latitude,
         longitude: myPhleboProfile.longitude,
         updatedAt: myPhleboProfile.updatedAt || new Date().toISOString(),
       });
-      setGpsSourceLabel(myPhleboProfile.currentLocation || 'Assigned Zone');
+    } else if (assignedAdminZone) {
+      setRiderLocation({
+        latitude: assignedAdminZone.centerLatitude,
+        longitude: assignedAdminZone.centerLongitude,
+        updatedAt: assignedAdminZone.updatedAt || new Date().toISOString(),
+      });
     }
-  }, [myPhleboProfile?.latitude, myPhleboProfile?.longitude, myPhleboProfile?.currentLocation, myPhleboProfile?.updatedAt, gpsSourceLabel]);
+  }, [
+    assignedAdminZone,
+    myPhleboProfile?.assignedZoneCode,
+    myPhleboProfile?.assignedZoneName,
+    myPhleboProfile?.currentLocation,
+    myPhleboProfile?.latitude,
+    myPhleboProfile?.longitude,
+    myPhleboProfile?.updatedAt,
+    zonesLoaded,
+  ]);
 
   // Real-time browser GPS watch while On Duty
   useEffect(() => {
@@ -480,6 +1052,43 @@ export default function App() {
       navigator.geolocation.clearWatch(watchId);
     };
   }, [session, isOnline]);
+
+  // Reverse geocode rider location to full proper address (never show raw coordinates)
+  useEffect(() => {
+    let active = true;
+    const resolveAddr = async () => {
+      if (assignedAdminZone?.name) {
+        setRiderFullAddress(`${assignedAdminZone.name}, ${assignedAdminZone.city || 'Diagnostic Zone'}`);
+      }
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?lat=${riderLocation.latitude}&lon=${riderLocation.longitude}&format=json&addressdetails=1`,
+          { headers: { 'Accept-Language': 'en' } }
+        );
+        if (res.ok && active) {
+          const data = await res.json();
+          if (data?.address) {
+            const a = data.address;
+            const parts = [
+              a.suburb || a.neighbourhood || a.road,
+              a.city || a.town || a.county,
+              a.state,
+              a.postcode ? `PIN: ${a.postcode}` : '',
+            ].filter(Boolean);
+            if (parts.length > 0) {
+              setRiderFullAddress(parts.join(', '));
+            }
+          }
+        }
+      } catch {
+        // Fallback to zone
+      }
+    };
+    void resolveAddr();
+    return () => {
+      active = false;
+    };
+  }, [riderLocation.latitude, riderLocation.longitude, assignedAdminZone]);
 
   // Periodically sync rider live GPS to phlebotomists/{id} and active assigned orders
   const activeOrderIdsKey = activeAssignedOrders.map((o) => o.id).join(',');
@@ -529,126 +1138,188 @@ export default function App() {
     activeOrderIdsKey,
   ]);
 
-  // Camera live stream & BarcodeDetector effect when Camera Modal is open (Web)
+  // Register Web Service Worker & native background location tracking while On Duty
   useEffect(() => {
-    if (!cameraModal || Platform.OS !== 'web' || typeof document === 'undefined') return;
-    let cancelled = false;
-    let stream: MediaStream | null = null;
-    let rafTimer: ReturnType<typeof setInterval> | null = null;
+    if (Platform.OS === 'web') {
+      if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
+      void navigator.serviceWorker.register('/sw.js').catch(() => {});
 
-    const initCam = async () => {
-      try {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          setCameraStatusText('Browser camera unavailable — use Manual Input or Quick Test below.');
-          return;
-        }
-        setCameraStatusText('Requesting camera permission...');
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' },
-        });
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-
-        let host = document.getElementById('phlebo-cam-host');
-        if (!host) {
-          await new Promise((r) => setTimeout(r, 80));
-          host = document.getElementById('phlebo-cam-host');
-        }
-        if (!host) return;
-        host.innerHTML = '';
-        const video = document.createElement('video');
-        video.id = 'phlebo-cam-video';
-        video.autoplay = true;
-        video.muted = true;
-        video.playsInline = true;
-        video.srcObject = stream;
-        video.style.width = '100%';
-        video.style.height = '100%';
-        video.style.objectFit = 'cover';
-        host.appendChild(video);
-        await video.play().catch(() => {});
-
-        if (cameraModal.mode === 'PHOTO') {
-          setCameraStatusText('Frame all specimen vials clearly and tap Capture Photo.');
-          return;
-        }
-
-        const BarcodeCtor = (
-          window as unknown as {
-            BarcodeDetector?: new (opts?: { formats?: string[] }) => {
-              detect: (source: HTMLVideoElement) => Promise<Array<{ rawValue?: string }>>;
-            };
+      const onSwMessage = (event: MessageEvent) => {
+        const data = event.data as { type?: string; orderId?: string } | undefined;
+        if (data?.type === 'OPEN_BROADCAST_ORDER') {
+          if (data.orderId) {
+            setDismissedBroadcastIds((prev) => prev.filter((id) => id !== data.orderId));
           }
-        ).BarcodeDetector;
+          setBroadcastForceOpen(true);
+          setBottomTab('home');
+          setSelectedOrderId(null);
+          setCurrentScreen('BOOKING_REQUESTS');
+          setRequestTab('new');
+        }
+      };
 
-        if (!BarcodeCtor) {
-          setCameraStatusText('Live camera active. Enter barcode below if auto-scan is unsupported.');
+      navigator.serviceWorker.addEventListener('message', onSwMessage);
+      return () => {
+        navigator.serviceWorker.removeEventListener('message', onSwMessage);
+      };
+    }
+
+    activeBgLocationSink = (lat, lng, speedKmph, accuracyMeters) => {
+      setRiderLocation({
+        latitude: Number(lat.toFixed(5)),
+        longitude: Number(lng.toFixed(5)),
+        speedKmph,
+        accuracyMeters,
+        updatedAt: new Date().toISOString(),
+      });
+      setGpsSourceLabel('GPS Live (Background)');
+    };
+
+    let cancelled = false;
+    const syncNativeBgTracking = async () => {
+      try {
+        const started = await Location.hasStartedLocationUpdatesAsync(PHLEBO_BG_LOCATION_TASK);
+        if (!session || !isOnline) {
+          if (started) {
+            await Location.stopLocationUpdatesAsync(PHLEBO_BG_LOCATION_TASK);
+          }
           return;
         }
-
-        const detector = new BarcodeCtor({
-          formats: ['code_128', 'code_39', 'ean_13', 'qr_code', 'codabar'],
-        });
-        setCameraStatusText('Point camera at specimen tube barcode...');
-
-        rafTimer = setInterval(() => {
-          void (async () => {
-            try {
-              if (cancelled || video.readyState < 2) return;
-              const found = await detector.detect(video);
-              const val = found?.[0]?.rawValue?.trim();
-              if (val && cameraModal.specimenId) {
-                const targetId = cameraModal.specimenId;
-                setSpecimenDrafts((prev) => ({
-                  ...prev,
-                  [targetId]: {
-                    barcode: val,
-                    usedTube:
-                      prev[targetId]?.usedTube ||
-                      cameraModal.specimen?.tubeType ||
-                      TubeType.SERUM_RED_GOLD,
-                  },
-                }));
-                setCameraModal(null);
-              }
-            } catch {
-              // Frame decode skip
-            }
-          })();
-        }, 450);
-      } catch {
-        if (!cancelled) {
-          setCameraStatusText('Camera permission blocked — upload file or type barcode below.');
+        const fg = await Location.requestForegroundPermissionsAsync();
+        if (fg.status !== 'granted' || cancelled) return;
+        await Location.requestBackgroundPermissionsAsync().catch(() => {});
+        if (cancelled) return;
+        const alreadyStarted = await Location.hasStartedLocationUpdatesAsync(
+          PHLEBO_BG_LOCATION_TASK
+        );
+        if (!alreadyStarted) {
+          await Location.startLocationUpdatesAsync(PHLEBO_BG_LOCATION_TASK, {
+            accuracy: Location.Accuracy.Balanced,
+            timeInterval: 15000,
+            distanceInterval: 25,
+            foregroundService: {
+              notificationTitle: 'LabSetu Partner • On Duty',
+              notificationBody: 'Live 1–5 km pickup radar active for sample bookings.',
+              notificationColor: '#0F766E',
+            },
+          });
         }
+      } catch {
+        // Ignore if native background permission is restricted on emulator/device
       }
     };
 
-    void initCam();
+    void syncNativeBgTracking();
 
     return () => {
       cancelled = true;
-      if (rafTimer) clearInterval(rafTimer);
-      if (stream) {
-        stream.getTracks().forEach((t) => t.stop());
-      }
-      const host = document.getElementById('phlebo-cam-host');
-      if (host) host.innerHTML = '';
+      activeBgLocationSink = null;
+      void Location.hasStartedLocationUpdatesAsync(PHLEBO_BG_LOCATION_TASK)
+        .then((running) => (running ? Location.stopLocationUpdatesAsync(PHLEBO_BG_LOCATION_TASK) : undefined))
+        .catch(() => {});
     };
+  }, [session, isOnline]);
+
+  async function handleRequestBackgroundAlertPermission() {
+    if (Platform.OS === 'web') {
+      if (typeof window === 'undefined' || !('Notification' in window)) {
+        setWebNotifPerm('unsupported');
+        showToast({
+          variant: 'WARNING',
+          title: 'Browser Notifications Unavailable',
+          subtitle: 'In-app toast alerts and floating radar popup remain active while open.',
+        });
+        return;
+      }
+      try {
+        const perm = await window.Notification.requestPermission();
+        setWebNotifPerm(perm);
+        if (perm === 'granted') {
+          showToast({
+            variant: 'SUCCESS',
+            title: 'Background Pickup Alerts Enabled',
+            subtitle: 'You will get pickup alerts even when this window is minimized.',
+          });
+        } else {
+          showToast({
+            variant: 'WARNING',
+            title: 'Browser Alerts Blocked',
+            subtitle: 'Allow notifications in browser settings to receive background pickup popups.',
+          });
+        }
+      } catch {
+        showToast({
+          variant: 'WARNING',
+          title: 'Permission Prompt Dismissed',
+          subtitle: 'You can re-enable browser pickup notifications from site settings.',
+        });
+      }
+      return;
+    }
+
+    try {
+      await ensureDutyNotificationChannel();
+      const res = await Notifications.requestPermissionsAsync();
+      if (res.status === 'granted') {
+        if (Platform.OS === 'android' && isNativeSystemOverlayAvailable()) {
+          showToast({
+            variant: 'SUCCESS',
+            title: 'Alerts & Persistent Duty Bar Active',
+            subtitle:
+              'Also tap "Allow Display Over Other Apps" to draw floating orb over closed/minimized apps.',
+          });
+        } else {
+          showToast({
+            variant: 'SUCCESS',
+            title: 'Background Alerts & Duty Bubble Active',
+            subtitle:
+              'Persistent quick-return bar & 1–5 km pickup alerts stay active when app is minimized.',
+          });
+        }
+      } else {
+        showDynamicAlert({
+          variant: 'warning',
+          title: 'Notification Permission Needed',
+          message:
+            'Allow notifications in Android settings so persistent duty bar & pickup alerts work when the app is minimized.',
+          confirmLabel: 'Open App Settings',
+          cancelLabel: 'Later',
+          onConfirm: () => {
+            void openSystemOverlayPermissionSettings();
+          },
+        });
+      }
+    } catch {
+      // Ignore unsupported simulator prompt error
+    }
+  }
+
+  // Camera status text synchronization when Camera Modal is opened
+  useEffect(() => {
+    if (!cameraModal) return;
+    if (cameraModal.mode === 'PHOTO') {
+      setCameraStatusText('Center all specimen vials clearly and tap Capture Photo.');
+    } else {
+      setCameraStatusText('Align specimen tube barcode within frame to scan.');
+    }
   }, [cameraModal]);
 
-  // Open pool orders annotated with live Haversine distance from rider & 1-5km broadcast match
-  const openPoolWithDistance = useMemo(() => {
+  const defaultBroadcastKm = Math.min(
+    25,
+    Math.max(1, assignedAdminZone?.radiusKm || commissionConfig.defaultBroadcastRadiusKm || 5)
+  );
+
+  // Open pool orders annotated with live Haversine distance from rider & Admin zone radar match
+  const openPoolWithDistance = useMemo<OpenPoolEntry[]>(() => {
     return openPoolOrders
       .map((order) => {
         const distFromRiderKm = calculateHaversineDistanceKm(
           riderLocation.latitude,
           riderLocation.longitude,
-          order.pickupLocation?.latitude ?? LOCALITY_GPS_PRESETS[0].latitude,
-          order.pickupLocation?.longitude ?? LOCALITY_GPS_PRESETS[0].longitude
+          order.pickupLocation?.latitude ?? riderLocation.latitude,
+          order.pickupLocation?.longitude ?? riderLocation.longitude
         );
-        const maxRadiusKm = order.broadcastRadiusKm || 5;
+        const maxRadiusKm = order.broadcastRadiusKm || defaultBroadcastKm;
         return {
           order,
           distFromRiderKm,
@@ -656,54 +1327,393 @@ export default function App() {
           maxRadiusKm,
         };
       })
-      .sort((a, b) => a.distFromRiderKm - b.distFromRiderKm);
-  }, [openPoolOrders, riderLocation.latitude, riderLocation.longitude]);
+      .sort((a, b) => (a.distFromRiderKm ?? 999) - (b.distFromRiderKm ?? 999));
+  }, [openPoolOrders, riderLocation.latitude, riderLocation.longitude, defaultBroadcastKm]);
+
+  const riderCoverage = useMemo(
+    () =>
+      evaluatePointServiceCoverage(
+        serviceZones,
+        riderLocation.latitude,
+        riderLocation.longitude
+      ),
+    [serviceZones, riderLocation.latitude, riderLocation.longitude]
+  );
+
+  // Real-time incoming 1-5km pickup alert watcher (Direct Screen Alert + Continuous Ringing + Background Push)
+  useEffect(() => {
+    const currentPoolIds = new Set(openPoolWithDistance.map((x) => x.order.id));
+
+    // 1. Immediate sound & modal suppression if the active ringing pickup was claimed by another rider, cancelled, or expired
+    if (activeRingingOrderIdRef.current && !currentPoolIds.has(activeRingingOrderIdRef.current)) {
+      const vanishedId = activeRingingOrderIdRef.current;
+      activeRingingOrderIdRef.current = null;
+      stopContinuousPickupAlert();
+      void dismissIncomingPickupOverlay();
+      setBroadcastForceOpen(false);
+
+      const targetOrder = orders.find((o) => o.id === vanishedId);
+      const isExpired = targetOrder?.broadcastExpiresAt
+        ? new Date(targetOrder.broadcastExpiresAt).getTime() <= Date.now()
+        : targetOrder?.createdAt
+        ? Date.now() - new Date(targetOrder.createdAt).getTime() >= 45000
+        : false;
+
+      if (isExpired) {
+        showToast({
+          variant: 'INFO',
+          title: 'Dispatch Window Ended',
+          subtitle: `Pickup request ${vanishedId} dispatch window ended.`,
+        });
+      } else {
+        showToast({
+          variant: 'INFO',
+          title: 'Pickup Claimed by Another Courier',
+          subtitle: `Booking ${vanishedId} was accepted by another rider. Alert dismissed.`,
+        });
+      }
+    }
+
+    for (const seenId of Array.from(alertedBroadcastIdsRef.current)) {
+      if (!currentPoolIds.has(seenId)) {
+        alertedBroadcastIdsRef.current.delete(seenId);
+        seenHikeMapRef.current.delete(seenId);
+        seenRetryMapRef.current.delete(seenId);
+      }
+    }
+
+    if (!session || !isOnline || !effectivePhleboId) return;
+
+    const nearby = openPoolWithDistance.filter((x) => x.inBroadcastRadius);
+
+    // 2. Price Hike or Search Retry detection: if lab bumped incentive or retried search, re-arm alert!
+    for (const x of nearby) {
+      const oId = x.order.id;
+      const prevHike = seenHikeMapRef.current.get(oId) ?? 0;
+      const currHike = x.order.surgeIncentiveInr ?? 0;
+      const prevRetry = seenRetryMapRef.current.get(oId) ?? 0;
+      const currRetry = x.order.searchRetryCount ?? 0;
+
+      if (currHike > prevHike || currRetry > prevRetry) {
+        alertedBroadcastIdsRef.current.delete(oId);
+        setDismissedBroadcastIds((prev) => prev.filter((id) => id !== oId));
+        seenHikeMapRef.current.set(oId, currHike);
+        seenRetryMapRef.current.set(oId, currRetry);
+      }
+    }
+
+    const newlyArrived = nearby.filter((x) => !alertedBroadcastIdsRef.current.has(x.order.id));
+    if (newlyArrived.length === 0) return;
+
+    newlyArrived.forEach((x) => {
+      alertedBroadcastIdsRef.current.add(x.order.id);
+      seenHikeMapRef.current.set(x.order.id, x.order.surgeIncentiveInr ?? 0);
+      seenRetryMapRef.current.set(x.order.id, x.order.searchRetryCount ?? 0);
+    });
+    const lead = newlyArrived[0];
+    activeRingingOrderIdRef.current = lead.order.id;
+
+    // Continuous alert chime & device vibration (45-second window matching lab radar timeout)
+    startContinuousPickupAlert(45);
+
+    const basePay = lead.order.baseCourierFeeInr || (lead.order.courierFeeInr ? (lead.order.courierFeeInr - (lead.order.surgeIncentiveInr || 0)) : 100);
+    const payoutLabel = lead.order.surgeIncentiveInr
+      ? `Earn ${formatInr(lead.order.courierFeeInr || 100)} (${formatInr(basePay)} + ₹${lead.order.surgeIncentiveInr} Surge)`
+      : `Earn ${formatInr(lead.order.courierFeeInr || 100)}`;
+
+    // Trigger outside-app floating pickup modal over other apps
+    void triggerIncomingPickupOverlay({
+      orderId: lead.order.id,
+      orderNumber: lead.order.orderNumber || lead.order.id,
+      pickupLab: lead.order.smallLabName || 'Pickup Lab',
+      pickupAddress:
+        lead.order.pickupLocation?.address ||
+        lead.order.pickupLocation?.pincode ||
+        'Sample Collection Address',
+      targetLab:
+        lead.order.targetLabName ||
+        lead.order.deliveryLocation?.address ||
+        'Testing Lab',
+      distance: `${lead.distFromRiderKm} km away`,
+      payout: payoutLabel,
+      specimens: `${lead.order.specimens?.length || 1} Specimens • Sample Collection`,
+      timeoutSec: 45,
+      surgeIncentive: lead.order.surgeIncentiveInr || 0,
+    });
+
+    showToast({
+      variant: 'ALERT',
+      title:
+        lead.order.surgeIncentiveInr
+          ? `⚡ SURGE +₹${lead.order.surgeIncentiveInr} ADD-ON: ${lead.order.orderNumber}`
+          : newlyArrived.length > 1
+          ? `⚡ ${newlyArrived.length} Live Sample Pickups Nearby`
+          : `⚡ Pickup Request ${lead.distFromRiderKm} km Away • ${lead.order.orderNumber}`,
+      subtitle: `${lead.order.smallLabName} → ${lead.order.targetLabName} • ${payoutLabel}`,
+      actionLabel: 'Open Popup',
+      onAction: () => {
+        stopContinuousPickupAlert();
+        void dismissIncomingPickupOverlay();
+        setDismissedBroadcastIds((prev) => prev.filter((id) => id !== lead.order.id));
+        setBroadcastForceOpen(true);
+        setBottomTab('home');
+        setSelectedOrderId(null);
+        setCurrentScreen('BOOKING_REQUESTS');
+        setRequestTab('active');
+      },
+    });
+
+    const notifTitle = lead.order.surgeIncentiveInr
+      ? `⚡ SURGE +₹${lead.order.surgeIncentiveInr} PICKUP • ${lead.order.orderNumber}`
+      : `⚡ INSTANT PICKUP DISPATCH • ${lead.order.orderNumber}`;
+    const notifBody = `${lead.order.smallLabName} (${lead.distFromRiderKm} km away) → ${lead.order.targetLabName} • ${payoutLabel}`;
+
+    if (Platform.OS === 'web') {
+      if (
+        typeof window !== 'undefined' &&
+        'Notification' in window &&
+        window.Notification.permission === 'granted'
+      ) {
+        if ('serviceWorker' in navigator) {
+          void navigator.serviceWorker
+            .getRegistration()
+            .then((reg) => {
+              const targetWorker = navigator.serviceWorker.controller || reg?.active;
+              if (targetWorker) {
+                targetWorker.postMessage({
+                  type: 'SHOW_PICKUP_NOTIFICATION',
+                  title: notifTitle,
+                  body: notifBody,
+                  tag: `pickup-${lead.order.id}`,
+                  orderId: lead.order.id,
+                });
+                return;
+              }
+              const nativeNotice = new window.Notification(notifTitle, {
+                body: notifBody,
+                tag: `pickup-${lead.order.id}`,
+              });
+              nativeNotice.onclick = () => {
+                window.focus();
+                stopContinuousPickupAlert();
+                void dismissIncomingPickupOverlay();
+                setDismissedBroadcastIds((prev) => prev.filter((id) => id !== lead.order.id));
+                setBroadcastForceOpen(true);
+              };
+            })
+            .catch(() => {});
+        } else {
+          const nativeNotice = new window.Notification(notifTitle, {
+            body: notifBody,
+            tag: `pickup-${lead.order.id}`,
+          });
+          nativeNotice.onclick = () => {
+            window.focus();
+            stopContinuousPickupAlert();
+            void dismissIncomingPickupOverlay();
+            setDismissedBroadcastIds((prev) => prev.filter((id) => id !== lead.order.id));
+            setBroadcastForceOpen(true);
+          };
+        }
+      }
+      return;
+    }
+
+    void Notifications.scheduleNotificationAsync({
+      content: {
+        title: notifTitle,
+        body: notifBody,
+        data: { orderId: lead.order.id, action: 'ACCEPT_ORDER' },
+        sound: 'default',
+        priority: Notifications.AndroidNotificationPriority.MAX,
+      },
+      trigger: Platform.OS === 'android' ? { channelId: URGENT_DISPATCH_CHANNEL_ID } : null,
+    }).catch(() => {});
+  }, [session, isOnline, effectivePhleboId, openPoolWithDistance, showToast]);
+
+  // Sync outside-app floating overlay service / sticky duty notification when minimized or closed
+  const nearbyOpenCount = useMemo(
+    () => openPoolWithDistance.filter((x) => x.inBroadcastRadius).length,
+    [openPoolWithDistance]
+  );
+
+  useEffect(() => {
+    void syncFloatingOverlayRuntime({
+      signedIn: Boolean(session),
+      settings: floatingSettings,
+      isOnline,
+      nearbyCount: nearbyOpenCount,
+      courierId: displayCourierId,
+      appState,
+    });
+  }, [session, floatingSettings, isOnline, nearbyOpenCount, displayCourierId, appState]);
+
+  // Handle tapping sticky duty notification or pickup alert to jump straight into Quick Radar
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data as
+        | { orderId?: string; action?: string }
+        | undefined;
+      stopContinuousPickupAlert();
+      void dismissIncomingPickupOverlay();
+      if (data?.orderId) {
+        if (data.action === 'ACCEPT_ORDER') {
+          const target = openPoolWithDistance.find((x) => x.order.id === data.orderId);
+          if (target) {
+            void handleAcceptPoolOrder(target.order);
+            return;
+          }
+        }
+        setDismissedBroadcastIds((prev) => prev.filter((id) => id !== data.orderId));
+        setBroadcastForceOpen(true);
+        setBottomTab('home');
+        setSelectedOrderId(null);
+        setCurrentScreen('BOOKING_REQUESTS');
+        setRequestTab('active');
+      } else if (data?.action === 'OPEN_RADAR') {
+        setBottomTab('home');
+        setSelectedOrderId(null);
+        setCurrentScreen('BOOKING_REQUESTS');
+      }
+    });
+    return () => {
+      sub.remove();
+    };
+  }, [openPoolWithDistance]);
+
+  // Listen to Outside-App Floating Modal Actions (ACCEPT / DECLINE)
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+
+    const sub = DeviceEventEmitter.addListener(
+      'onIncomingOrderAction',
+      (event: { action?: string; orderId?: string }) => {
+        stopContinuousPickupAlert();
+        void dismissIncomingPickupOverlay();
+
+        if (event?.action === 'ACCEPT' && event.orderId) {
+          const target = openPoolWithDistance.find((x) => x.order.id === event.orderId);
+          if (target) {
+            void handleAcceptPoolOrder(target.order);
+          } else {
+            const found = orders.find((x) => x.id === event.orderId);
+            if (found) {
+              void handleAcceptPoolOrder(found);
+            }
+          }
+        } else if (event?.action === 'DECLINE' && event.orderId) {
+          setDismissedBroadcastIds((prev) =>
+            prev.includes(event.orderId!) ? prev : [...prev, event.orderId!]
+          );
+        }
+      }
+    );
+
+    // Also check if an action was queued before JS context was ready
+    void getPendingIncomingOrderAction().then((pending) => {
+      if (pending?.action === 'ACCEPT' && pending.orderId) {
+        stopContinuousPickupAlert();
+        void dismissIncomingPickupOverlay();
+        const target = openPoolWithDistance.find((x) => x.order.id === pending.orderId);
+        if (target) {
+          void handleAcceptPoolOrder(target.order);
+        } else {
+          const found = orders.find((x) => x.id === pending.orderId);
+          if (found) {
+            void handleAcceptPoolOrder(found);
+          }
+        }
+      }
+    });
+
+    return () => {
+      sub.remove();
+    };
+  }, [openPoolWithDistance, orders]);
 
   const activeBroadcastMatch = useMemo(() => {
     if (
       !session ||
       !isOnline ||
       !effectivePhleboId ||
-      bottomTab !== 'home' ||
-      currentScreen !== 'BOOKING_REQUESTS' ||
-      selectedOrderId ||
-      submittingAction
+      submittingAction ||
+      Boolean(cameraModal) ||
+      Boolean(activePaymentLink) ||
+      showLocationPickerModal ||
+      alertState.isOpen
     ) {
       return null;
     }
-    return (
-      openPoolWithDistance.find(
-        (x) => x.inBroadcastRadius && !dismissedBroadcastIds.includes(x.order.id)
-      ) || null
+
+    const midTaskOnHome =
+      bottomTab === 'home' &&
+      (currentScreen === 'COLLECT_SAMPLE' || currentScreen === 'DROP_SAMPLE');
+
+    if (midTaskOnHome && !broadcastForceOpen) {
+      return null;
+    }
+
+    const undismissed = openPoolWithDistance.find(
+      (x) => x.inBroadcastRadius && !dismissedBroadcastIds.includes(x.order.id)
     );
+    if (undismissed) return undismissed;
+
+    if (broadcastForceOpen) {
+      return openPoolWithDistance.find((x) => x.inBroadcastRadius) || null;
+    }
+
+    return null;
   }, [
     session,
     isOnline,
     effectivePhleboId,
+    submittingAction,
+    cameraModal,
+    activePaymentLink,
+    showLocationPickerModal,
+    alertState.isOpen,
     bottomTab,
     currentScreen,
-    selectedOrderId,
-    submittingAction,
+    broadcastForceOpen,
     openPoolWithDistance,
     dismissedBroadcastIds,
   ]);
 
   // Merge live settlements & payouts with handled orders for accurate earnings computation
-  const earningRows = useMemo(() => {
+  const earningRows = useMemo<EarningRow[]>(() => {
     const stlMap = new Map(settlements.map((s) => [s.orderId, s]));
     const payoutMap = new Map(payouts.map((p) => [p.orderId, p]));
     return myAssignedOrders
       .filter((o) => o.status !== OrderStatus.CANCELLED && o.status !== OrderStatus.REJECTED)
       .map((order) => {
-        const stl = stlMap.get(order.id);
-        const payout = payoutMap.get(order.id);
+        const stl =
+          stlMap.get(order.id) ||
+          stlMap.get(order.orderNumber) ||
+          settlements.find((s) => s.orderId === order.id || s.orderNumber === order.orderNumber);
+        const payout =
+          payoutMap.get(order.id) ||
+          payoutMap.get(order.orderNumber) ||
+          payouts.find((p) => p.orderId === order.id || p.orderNumber === order.orderNumber);
         const amountInr = stl?.phleboPayoutInr ?? payout?.amountInr ?? order.courierFeeInr ?? 0;
+        const customerPaid =
+          order.paymentStatus === 'PAID' ||
+          stl?.paymentStatus === 'PAID' ||
+          order.paymentMethod === 'CASH' ||
+          order.paymentMethod === 'DIRECT_LAB_SETTLEMENT' ||
+          order.collectedByRole === 'PHLEBOTOMIST';
         const settled =
           stl?.phleboPayoutStatus === 'PAID' ||
           stl?.status === 'SETTLED' ||
+          order.paymentMethod === 'CASH' ||
+          order.paymentMethod === 'DIRECT_LAB_SETTLEMENT' ||
+          order.collectedByRole === 'PHLEBOTOMIST' ||
+          customerPaid ||
           Boolean(payout);
-        const payoutRef = stl?.phleboPayoutRef || payout?.referenceId;
-        const customerPaid = order.paymentStatus === 'PAID' || stl?.paymentStatus === 'PAID';
+        const payoutRef =
+          stl?.phleboPayoutRef ||
+          payout?.referenceId ||
+          (order.paymentMethod === 'CASH' ? 'CASH' : undefined);
         const delivered =
           order.status === OrderStatus.DELIVERED_TO_LAB ||
           order.status === OrderStatus.UNDER_ANALYSIS ||
@@ -712,22 +1722,53 @@ export default function App() {
       });
   }, [myAssignedOrders, settlements, payouts]);
 
-  const metrics = useMemo(() => {
+  const isSameLocalDay = useCallback((iso: string | undefined, todayStr: string): boolean => {
+    if (!iso) return false;
+    const d = new Date(iso);
+    return !Number.isNaN(d.getTime()) && d.toDateString() === todayStr;
+  }, []);
+
+  const todayOrders = useMemo(() => {
+    const todayStr = new Date().toDateString();
+    return myAssignedOrders.filter(
+      (o) =>
+        o.status !== OrderStatus.CANCELLED &&
+        o.status !== OrderStatus.REJECTED &&
+        (isSameLocalDay(o.scheduledPickupAt, todayStr) ||
+          isSameLocalDay(o.updatedAt, todayStr) ||
+          isSameLocalDay(o.createdAt, todayStr))
+    );
+  }, [myAssignedOrders, isSameLocalDay]);
+
+  const todayPendingOrders = useMemo(
+    () =>
+      todayOrders.filter(
+        (o) =>
+          !o.actualDeliveredAt &&
+          (o.status === OrderStatus.ASSIGNED_TO_PHLEBO ||
+            o.status === OrderStatus.PICKED_UP ||
+            o.status === OrderStatus.IN_TRANSIT)
+      ),
+    [todayOrders]
+  );
+
+  const metrics = useMemo<PhleboMetrics>(() => {
     const now = new Date();
     const todayStr = now.toDateString();
     const weekAgoMs = now.getTime() - 7 * 86400000;
     const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
     const todayEarnings = earningRows
-      .filter((r) => new Date(r.order.updatedAt || r.order.createdAt).toDateString() === todayStr && r.delivered)
+      .filter((r) => isSameLocalDay(r.order.updatedAt || r.order.createdAt, todayStr) && r.delivered)
       .reduce((sum, r) => sum + r.amountInr, 0);
 
-    const todayOrdersCount = myAssignedOrders.filter(
-      (o) => new Date(o.updatedAt || o.createdAt).toDateString() === todayStr
-    ).length;
+    const todayOrdersCount = todayOrders.length;
 
-    const todayCompletedCount = completedAssignedOrders.filter(
-      (o) => new Date(o.updatedAt || o.createdAt).toDateString() === todayStr
+    const todayCompletedCount = todayOrders.filter(
+      (o) =>
+        o.status === OrderStatus.DELIVERED_TO_LAB ||
+        o.status === OrderStatus.UNDER_ANALYSIS ||
+        isOrderCompleted(o.status)
     ).length;
 
     const weeklyEarnings = earningRows
@@ -771,7 +1812,7 @@ export default function App() {
       pendingPayoutInr,
       weeklyBars,
     };
-  }, [earningRows, myAssignedOrders, completedAssignedOrders]);
+  }, [earningRows, myAssignedOrders, todayOrders, isSameLocalDay]);
 
   const updateOtpDigit = (index: number, value: string) => {
     const clean = value.replace(/\D/g, '').slice(-1);
@@ -800,95 +1841,489 @@ export default function App() {
     void Linking.openURL(url);
   }
 
-  async function applyRiderLocation(lat: number, lng: number, label: string) {
+  async function syncDeviceLiveGps(lat: number, lng: number) {
     const now = new Date().toISOString();
     const cleanLat = Number(lat.toFixed(5));
     const cleanLng = Number(lng.toFixed(5));
+    const cov = evaluatePointServiceCoverage(serviceZones, cleanLat, cleanLng);
+
+    manualLiveGpsSyncedRef.current = true;
     setRiderLocation({
       latitude: cleanLat,
       longitude: cleanLng,
       updatedAt: now,
     });
-    setGpsSourceLabel(label);
-    setManualLatInput(String(cleanLat));
-    setManualLngInput(String(cleanLng));
     setShowLocationPickerModal(false);
+
+    showToast({
+      variant: cov.covered ? 'INFO' : 'WARNING',
+      title: '🛰️ Live Device GPS Synced',
+      subtitle: assignedAdminZone
+        ? `Admin Zone: ${assignedAdminZone.zoneCode} (${assignedAdminZone.name}) • Coordinates updated.`
+        : cov.covered
+        ? `Active Zone ${cov.matchedZone?.zoneCode || ''} • Pickup radar synced.`
+        : cov.message,
+    });
 
     if (effectivePhleboId) {
       try {
         await updateDoc(doc(db, 'phlebotomists', effectivePhleboId), {
           latitude: cleanLat,
           longitude: cleanLng,
-          currentLocation: label,
           updatedAt: now,
         });
       } catch {
-        // Best-effort zone sync
+        // Best-effort GPS telemetry sync
       }
     }
+  }
+
+  function handleQuickScanBarcode(code: string) {
+    setCameraModal(null);
+    const trimmed = code.trim();
+    if (!trimmed) return;
+
+    // Check 1: Does it match an assigned order or open booking?
+    const matchedOrder = orders.find(
+      (o) =>
+        o.orderNumber.toUpperCase() === trimmed.toUpperCase() ||
+        o.id.toUpperCase() === trimmed.toUpperCase() ||
+        (o.specimens || []).some((s) => (s.barcode || '').toUpperCase() === trimmed.toUpperCase())
+    );
+
+    if (matchedOrder) {
+      setSelectedOrderId(matchedOrder.id);
+      if (
+        matchedOrder.status === OrderStatus.ASSIGNED_TO_PHLEBO ||
+        matchedOrder.status === OrderStatus.READY_FOR_PICKUP
+      ) {
+        setCurrentScreen('COLLECT_SAMPLE');
+      } else {
+        setCurrentScreen('BOOKING_DETAILS');
+      }
+      showDynamicAlert({
+        variant: 'success',
+        title: 'Booking Identified',
+        message: `Matched ${matchedOrder.orderNumber} for patient ${matchedOrder.patient.pseudonym}. Collection task opened.`,
+      });
+      return;
+    }
+
+    // Check 2: Pre-Assembled Kit Barcode (LS-KIT-XXXXXX)
+    if (trimmed.toUpperCase().startsWith('LS-KIT') || trimmed.toUpperCase().includes('KIT')) {
+      const kitAlloc = kitAllocations.find(
+        (a) =>
+          a.kitCode.toUpperCase() === trimmed.toUpperCase() ||
+          a.id.toUpperCase() === trimmed.toUpperCase() ||
+          a.kitName.toUpperCase().includes(trimmed.toUpperCase())
+      );
+      showDynamicAlert({
+        variant: 'info',
+        title: 'Pre-Assembled Kit Verified',
+        message: `Kit Serial: ${trimmed}\nSealed Central Warehouse Assembly.\nAllocated to your phlebotomy bag for field collections.`,
+        detail: kitAlloc
+          ? `Kit Type: ${kitAlloc.kitName} (${kitAlloc.kitCode}) • On Hand: ${kitAlloc.quantityOnHand}`
+          : 'Ready for use in upcoming sample collection.',
+      });
+      return;
+    }
+
+    // Check 3: Individual Specimen Tube Barcode (LS-TUBE-XXXXXX)
+    if (trimmed.toUpperCase().startsWith('LS-TUBE') || trimmed.toUpperCase().includes('TUBE')) {
+      showDynamicAlert({
+        variant: 'info',
+        title: 'Vacutainer Tube Serial Verified',
+        message: `Serial: ${trimmed}\nUnique immutable LabSetu Tube tracking serial.`,
+        detail: 'Tube is ready to be linked to test specimen collection.',
+      });
+      return;
+    }
+
+    // Check 4: General diagnostic barcode
+    showDynamicAlert({
+      variant: 'info',
+      title: 'Diagnostic Barcode Scanned',
+      message: `Scanned Code: ${trimmed}\nSymbology: Code 128 / QR Payload`,
+      detail: 'Timestamp: ' + new Date().toLocaleTimeString('en-IN'),
+    });
   }
 
   function updateSpecimenDraft(
     specimenId: string,
     patch: Partial<{ barcode: string; usedTube: TubeType }>
   ) {
-    setSpecimenDrafts((prev) => {
-      const curr = prev[specimenId] || { barcode: '', usedTube: TubeType.SERUM_RED_GOLD };
-      return {
-        ...prev,
-        [specimenId]: {
-          barcode: patch.barcode !== undefined ? patch.barcode : curr.barcode,
-          usedTube: patch.usedTube !== undefined ? patch.usedTube : curr.usedTube,
-        },
-      };
-    });
-  }
-
-  function handleUploadSamplePhotoFromFile(orderId: string) {
-    if (Platform.OS !== 'web' || typeof document === 'undefined') {
-      showDynamicAlert({
-        variant: 'info',
-        title: 'Upload From Device',
-        message: 'Choose a photo using the camera button on mobile web or paste a proof image.',
-      });
+    if (specimenId === 'QUICK_SCAN') {
+      const code = (patch.barcode || '').trim();
+      if (!code) return;
+      handleQuickScanBarcode(code);
       return;
     }
+
+    const curr = specimenDrafts[specimenId] || {
+      barcode: '',
+      usedTube: TubeType.SERUM_RED_GOLD,
+    };
+    const nextEntry = {
+      barcode: patch.barcode !== undefined ? patch.barcode : curr.barcode,
+      usedTube: patch.usedTube !== undefined ? patch.usedTube : curr.usedTube,
+    };
+    const nextDraftsMap = {
+      ...specimenDrafts,
+      [specimenId]: nextEntry,
+    };
+    setSpecimenDrafts(nextDraftsMap);
+
+    const spec = selectedOrder?.specimens.find((s) => s.id === specimenId);
+    if (spec && selectedOrder) {
+      const siblingList = selectedOrder.specimens.map((s) => {
+        const d = nextDraftsMap[s.id];
+        return {
+          ...s,
+          scannedBarcode: d?.barcode?.trim() || '',
+          scannedTubeType: d?.usedTube || s.tubeType,
+        };
+      });
+      const res = validateTubeBarcodeScan({
+        scannedBarcode: nextEntry.barcode,
+        expectedSpecimen: spec,
+        selectedTubeUsed: nextEntry.usedTube,
+        siblingSpecimens: siblingList,
+      });
+
+      const prevStatus = lastBarcodeToastRef.current[specimenId];
+      if (res.status === 'PENDING') {
+        lastBarcodeToastRef.current[specimenId] = 'PENDING';
+      } else if (res.status !== prevStatus) {
+        lastBarcodeToastRef.current[specimenId] = res.status;
+        if (res.status === 'VERIFIED') {
+          showToast({
+            variant: 'SUCCESS',
+            title: `✓ Tube Matched • ${spec.testCode}`,
+            subtitle: res.message,
+          });
+        } else if (res.status === 'MISMATCH') {
+          showToast({
+            variant: 'ALERT',
+            title: `⚠ Tube / Barcode Mismatch • ${spec.testCode}`,
+            subtitle: res.message,
+          });
+        }
+      }
+    }
+  }
+
+  async function handleTakePhotoProofWithCamera(orderId: string, target: 'SAMPLE' | 'SELFIE' = 'SAMPLE') {
+    const isSelfie = target === 'SELFIE';
+    if (isSelfie) {
+      setUploadingSelfie(true);
+    } else {
+      setUploadingPhoto(true);
+    }
+
+    try {
+      const res = await captureSampleProofPhoto(
+        orderId,
+        (localUri) => {
+          if (isSelfie) {
+            setSelfiePhotoUrl(localUri);
+          } else {
+            setSamplePhotoUrl(localUri);
+          }
+        },
+        { captureMode: isSelfie ? 'user' : 'environment', prefix: isSelfie ? 'selfie' : 'snap' }
+      );
+
+      if (res.success && (res.photoUrl || res.localUri)) {
+        const finalUrl = res.photoUrl || res.localUri || '';
+        if (isSelfie) {
+          setSelfiePhotoUrl(finalUrl);
+        } else {
+          setSamplePhotoUrl(finalUrl);
+        }
+
+        if (res.photoUrl) {
+          try {
+            await updateDoc(doc(db, 'orders', orderId), {
+              ...(isSelfie
+                ? { phleboSelfieUrl: res.photoUrl, phleboSelfieCapturedAt: new Date().toISOString() }
+                : { sampleCollectionPhotoUrl: res.photoUrl, sampleProofCapturedAt: new Date().toISOString() }),
+            });
+          } catch {
+            // Non-fatal
+          }
+        }
+        showToast({
+          variant: 'SUCCESS',
+          title: isSelfie ? '🤳 Selfie Captured' : '📸 Sample Photo Captured',
+          subtitle: isSelfie
+            ? 'Phlebotomist site selfie verified and attached.'
+            : 'Collection photo proof saved and linked to this trip.',
+        });
+      } else if (!res.canceled && res.error) {
+        showDynamicAlert({
+          variant: 'error',
+          title: 'Camera Capture Failed',
+          message: res.error,
+        });
+      }
+    } catch (err) {
+      showDynamicAlert({
+        variant: 'error',
+        title: 'Camera Error',
+        message: (err as Error).message || 'Unable to open camera.',
+      });
+    } finally {
+      if (isSelfie) {
+        setUploadingSelfie(false);
+      } else {
+        setUploadingPhoto(false);
+      }
+    }
+  }
+
+  async function handleUploadSamplePhotoFromFile(
+    orderId: string,
+    directFile?: unknown,
+    target: 'SAMPLE' | 'SELFIE' = 'SAMPLE'
+  ) {
+    const isSelfie = target === 'SELFIE';
+    if (isSelfie) {
+      setUploadingSelfie(true);
+    } else {
+      setUploadingPhoto(true);
+    }
+
+    if (directFile && typeof directFile === 'object') {
+      const file = directFile as File;
+      try {
+        if (typeof FileReader !== 'undefined') {
+          const reader = new FileReader();
+          reader.onload = () => {
+            if (reader.result && typeof reader.result === 'string') {
+              if (isSelfie) {
+                setSelfiePhotoUrl(reader.result);
+              } else {
+                setSamplePhotoUrl(reader.result);
+              }
+            }
+          };
+          reader.readAsDataURL(file);
+        }
+        const storagePath = `samples/${orderId}/${isSelfie ? 'selfie' : 'photo'}-${Date.now()}-${file.name || 'proof.jpg'}`;
+        const url = await uploadPhleboSampleFile(storagePath, file);
+        if (isSelfie) {
+          setSelfiePhotoUrl(url);
+        } else {
+          setSamplePhotoUrl(url);
+        }
+        try {
+          await updateDoc(doc(db, 'orders', orderId), {
+            ...(isSelfie
+              ? { phleboSelfieUrl: url, phleboSelfieCapturedAt: new Date().toISOString() }
+              : { sampleCollectionPhotoUrl: url, sampleProofCapturedAt: new Date().toISOString() }),
+          });
+        } catch {
+          // Non-fatal
+        }
+        showToast({
+          variant: 'SUCCESS',
+          title: isSelfie ? '🤳 Selfie Attached' : '📸 Sample Photo Captured',
+          subtitle: isSelfie
+            ? 'Phlebotomist attendance selfie saved.'
+            : 'Collection photo proof saved and linked to this trip.',
+        });
+      } catch (err) {
+        showDynamicAlert({
+          variant: 'error',
+          title: 'Photo Upload Failed',
+          message: (err as Error).message || 'Could not upload photo.',
+        });
+      } finally {
+        if (isSelfie) {
+          setUploadingSelfie(false);
+        } else {
+          setUploadingPhoto(false);
+        }
+      }
+      return;
+    }
+
+    if (Platform.OS !== 'web' || typeof document === 'undefined') {
+      try {
+        const res = await pickSampleProofFromLibrary(orderId, (localUri) => {
+          if (isSelfie) {
+            setSelfiePhotoUrl(localUri);
+          } else {
+            setSamplePhotoUrl(localUri);
+          }
+        });
+        if (res.success && (res.photoUrl || res.localUri)) {
+          const finalUrl = res.photoUrl || res.localUri || '';
+          if (isSelfie) {
+            setSelfiePhotoUrl(finalUrl);
+          } else {
+            setSamplePhotoUrl(finalUrl);
+          }
+          if (res.photoUrl) {
+            try {
+              await updateDoc(doc(db, 'orders', orderId), {
+                ...(isSelfie
+                  ? { phleboSelfieUrl: res.photoUrl, phleboSelfieCapturedAt: new Date().toISOString() }
+                  : { sampleCollectionPhotoUrl: res.photoUrl, sampleProofCapturedAt: new Date().toISOString() }),
+              });
+            } catch {
+              // Non-fatal
+            }
+          }
+          showToast({
+            variant: 'SUCCESS',
+            title: isSelfie ? '🤳 Selfie Uploaded' : '📸 Photo Uploaded',
+            subtitle: isSelfie
+              ? 'Selfie proof verified and linked.'
+              : 'Collection photo proof saved and linked to this trip.',
+          });
+        } else if (!res.canceled && res.error) {
+          showDynamicAlert({
+            variant: 'error',
+            title: 'Upload Failed',
+            message: res.error,
+          });
+        }
+      } catch (err) {
+        showDynamicAlert({
+          variant: 'error',
+          title: 'Upload Error',
+          message: (err as Error).message || 'Unable to pick photo from device.',
+        });
+      } finally {
+        if (isSelfie) {
+          setUploadingSelfie(false);
+        } else {
+          setUploadingPhoto(false);
+        }
+      }
+      return;
+    }
+
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
-    input.setAttribute('capture', 'environment');
+    input.setAttribute('capture', isSelfie ? 'user' : 'environment');
     input.onchange = () => {
       const file = input.files?.[0];
       if (!file) return;
+      if (typeof FileReader !== 'undefined') {
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (reader.result && typeof reader.result === 'string') {
+            if (isSelfie) {
+              setSelfiePhotoUrl(reader.result);
+            } else {
+              setSamplePhotoUrl(reader.result);
+            }
+          }
+        };
+        reader.readAsDataURL(file);
+      }
       void (async () => {
-        setUploadingPhoto(true);
+        if (isSelfie) {
+          setUploadingSelfie(true);
+        } else {
+          setUploadingPhoto(true);
+        }
+        let finalUrl = '';
         try {
           const url = await uploadPhleboSampleFile(
-            `samples/${orderId}/photo-${Date.now()}-${file.name}`,
+            `samples/${orderId}/${isSelfie ? 'selfie' : 'photo'}-${Date.now()}-${file.name}`,
             file
           );
-          setSamplePhotoUrl(url);
-          showDynamicAlert({
-            variant: 'success',
-            title: 'Sample Photo Uploaded',
-            message: 'Specimen tube collection photo saved and linked to this order.',
-          });
-        } catch (err) {
-          showDynamicAlert({
-            variant: 'error',
-            title: 'Photo Upload Failed',
-            message: (err as Error).message || 'Could not upload sample photo.',
-          });
+          if (url) {
+            finalUrl = url;
+            if (isSelfie) {
+              setSelfiePhotoUrl(url);
+            } else {
+              setSamplePhotoUrl(url);
+            }
+          }
+        } catch (uploadErr) {
+          console.warn('Direct storage upload failed, keeping local preview:', uploadErr);
         } finally {
-          setUploadingPhoto(false);
+          if (isSelfie) {
+            setUploadingSelfie(false);
+          } else {
+            setUploadingPhoto(false);
+          }
         }
+
+        if (finalUrl) {
+          try {
+            await updateDoc(doc(db, 'orders', orderId), {
+              ...(isSelfie
+                ? { phleboSelfieUrl: finalUrl, phleboSelfieCapturedAt: new Date().toISOString() }
+                : { sampleCollectionPhotoUrl: finalUrl, sampleProofCapturedAt: new Date().toISOString() }),
+            });
+          } catch {
+            // Non-fatal
+          }
+        }
+        showToast({
+          variant: 'SUCCESS',
+          title: isSelfie ? '🤳 Selfie Attached' : '📸 Sample Photo Attached',
+          subtitle: isSelfie
+            ? 'Phlebotomist site selfie preview ready.'
+            : 'Collection photo proof preview ready and linked.',
+        });
       })();
     };
     input.click();
   }
 
-  function handleCaptureSnapshotFromCam(orderId: string) {
-    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+  function handleCaptureSnapshotFromCam(orderId: string, photoUri?: string) {
+    if (photoUri) {
+      setSamplePhotoUrl(photoUri);
+      setCameraModal(null);
+      void (async () => {
+        setUploadingPhoto(true);
+        let finalUrl = photoUri;
+        try {
+          const resp = await fetch(photoUri);
+          const blob = await resp.blob();
+          const filename = `snap-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}.jpg`;
+          const url = await uploadPhleboSampleFile(
+            `samples/${orderId}/${filename}`,
+            blob
+          );
+          if (url) {
+            finalUrl = url;
+            setSamplePhotoUrl(url);
+          }
+        } catch (uploadErr) {
+          console.warn('Storage upload fallback to data URI:', uploadErr);
+        } finally {
+          setUploadingPhoto(false);
+        }
+
+        try {
+          await updateDoc(doc(db, 'orders', orderId), {
+            sampleCollectionPhotoUrl: finalUrl,
+            sampleProofCapturedAt: new Date().toISOString(),
+          });
+        } catch {
+          // Non-fatal
+        }
+
+        showToast({
+          variant: 'SUCCESS',
+          title: '📸 Sample Photo Captured',
+          subtitle: 'Collection photo proof saved and linked to this trip.',
+        });
+      })();
+      return;
+    }
+    if (Platform.OS !== 'web' || typeof document === 'undefined') {
+      void handleTakePhotoProofWithCamera(orderId);
+      return;
+    }
     const video = document.getElementById('phlebo-cam-video') as HTMLVideoElement | null;
     if (!video || video.videoWidth === 0) {
       handleUploadSamplePhotoFromFile(orderId);
@@ -900,32 +2335,44 @@ export default function App() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUri = canvas.toDataURL('image/jpeg', 0.85);
+    setSamplePhotoUrl(dataUri);
+    setCameraModal(null);
     canvas.toBlob(
       (blob) => {
         if (!blob) return;
         void (async () => {
           setUploadingPhoto(true);
+          let finalUrl = dataUri;
           try {
             const url = await uploadPhleboSampleFile(
               `samples/${orderId}/snap-${Date.now()}.jpg`,
               blob
             );
-            setSamplePhotoUrl(url);
-            setCameraModal(null);
-            showDynamicAlert({
-              variant: 'success',
-              title: 'Camera Photo Saved',
-              message: 'Sample collection proof image captured and uploaded.',
-            });
-          } catch (err) {
-            showDynamicAlert({
-              variant: 'error',
-              title: 'Upload Failed',
-              message: (err as Error).message || 'Could not upload camera photo.',
-            });
+            if (url) {
+              finalUrl = url;
+              setSamplePhotoUrl(url);
+            }
+          } catch (uploadErr) {
+            console.warn('Cloud storage error, using base64 preview:', uploadErr);
           } finally {
             setUploadingPhoto(false);
           }
+
+          try {
+            await updateDoc(doc(db, 'orders', orderId), {
+              sampleCollectionPhotoUrl: finalUrl,
+              sampleProofCapturedAt: new Date().toISOString(),
+            });
+          } catch {
+            // Non-fatal
+          }
+
+          showToast({
+            variant: 'SUCCESS',
+            title: '📸 Camera Photo Saved',
+            subtitle: 'Sample collection proof image captured and uploaded.',
+          });
         })();
       },
       'image/jpeg',
@@ -933,9 +2380,14 @@ export default function App() {
     );
   }
 
-  function openOrderWorkflow(order: PickupOrder) {
+  function openOrderWorkflow(
+    order: PickupOrder,
+    returnTo: 'BOOKING_REQUESTS' | 'TODAYS_COLLECTIONS' = 'BOOKING_REQUESTS'
+  ) {
+    lastBarcodeToastRef.current = {};
+    setDetailsReturnScreen(returnTo);
     setSelectedOrderId(order.id);
-    const nextDrafts: Record<string, { barcode: string; usedTube: TubeType }> = {};
+    const nextDrafts: SpecimenDraftMap = {};
     for (const spec of order.specimens || []) {
       nextDrafts[spec.id] = {
         barcode: spec.scannedBarcode || '',
@@ -944,6 +2396,7 @@ export default function App() {
     }
     setSpecimenDrafts(nextDrafts);
     setSamplePhotoUrl(order.sampleCollectionPhotoUrl || '');
+    setSelfiePhotoUrl(order.phleboSelfieUrl || '');
     setPickupTempInput(String(myPhleboProfile?.chillerTempCelsius ?? 4.2));
     setDropTempInput(
       String(order.arrivalTemperatureCelsius ?? myPhleboProfile?.chillerTempCelsius ?? 4.2)
@@ -961,6 +2414,8 @@ export default function App() {
   }
 
   async function handleAcceptPoolOrder(order: PickupOrder) {
+    stopContinuousPickupAlert();
+    void dismissIncomingPickupOverlay();
     if (!session?.firebaseUser) return;
     if (!effectivePhleboId) {
       showDynamicAlert({
@@ -982,10 +2437,9 @@ export default function App() {
         operatorId: session.firebaseUser.uid,
         operatorName: phleboName,
         operatorRole: UserRole.PHLEBOTOMIST,
-        notes: `Accepted live broadcast by ${phleboName} (${effectivePhleboId})`,
+        notes: `Accepted live broadcast by ${phleboName} (${displayCourierId})`,
       };
 
-      // Atomic Firestore Transaction prevents race conditions across concurrent riders!
       await runTransaction(db, async (tx) => {
         const orderRef = doc(db, 'orders', order.id);
         const snap = await tx.get(orderRef);
@@ -1010,12 +2464,23 @@ export default function App() {
         });
       });
 
+      // Synchronously link courier to settlement record so payouts and ledger sync
+      try {
+        const stlId = `STL-${order.orderNumber.replace('BK-', '')}`;
+        await setDoc(doc(db, 'settlements', stlId), {
+          phlebotomistId: effectivePhleboId,
+          phlebotomistName: phleboName,
+          updatedAt: now,
+        }, { merge: true });
+      } catch {
+        // Non-fatal fallback
+      }
+
       await addDoc(collection(db, 'custody_events'), evt);
 
-      // Notify both Small Lab and Target Reference Lab in real time
       await addDoc(collection(db, 'notifications'), {
         title: `Rider Assigned: ${order.orderNumber}`,
-        message: `${phleboName} (${effectivePhleboId}) accepted pickup at ${order.smallLabName} — live GPS enabled.`,
+        message: `${phleboName} (${displayCourierId}) accepted pickup at ${order.smallLabName} — live GPS enabled.`,
         category: NotificationCategory.PICKUP_ASSIGNED,
         priority: NotificationPriority.HIGH,
         recipientRole: UserRole.SMALL_LAB,
@@ -1031,7 +2496,7 @@ export default function App() {
       if (order.dropType !== 'SELF_DROP' && order.dropType !== 'CUSTOM_ADDRESS' && order.targetLabId) {
         await addDoc(collection(db, 'notifications'), {
           title: `Courier En Route for Collection: ${order.orderNumber}`,
-          message: `${phleboName} (${effectivePhleboId}) claimed pickup from ${order.smallLabName} -> ${order.targetLabName}.`,
+          message: `${phleboName} (${displayCourierId}) claimed pickup from ${order.smallLabName} -> ${order.targetLabName}.`,
           category: NotificationCategory.PICKUP_ASSIGNED,
           priority: NotificationPriority.NORMAL,
           recipientRole: UserRole.LARGE_LAB,
@@ -1045,11 +2510,18 @@ export default function App() {
         });
       }
 
+      setBroadcastForceOpen(false);
+      setBottomTab('home');
       openOrderWorkflow({
         ...order,
         phlebotomistId: effectivePhleboId,
         phlebotomistName: phleboName,
         status: OrderStatus.ASSIGNED_TO_PHLEBO,
+      });
+      showToast({
+        variant: 'SUCCESS',
+        title: `⚡ Pickup Claimed • ${order.orderNumber}`,
+        subtitle: `Head to ${order.smallLabName}. Earn ${formatInr(order.courierFeeInr || 0)} on delivery.`,
       });
     } catch (err) {
       showDynamicAlert({
@@ -1101,10 +2573,10 @@ export default function App() {
               setSelectedOrderId(null);
               setCurrentScreen('BOOKING_REQUESTS');
             }
-            showDynamicAlert({
-              variant: 'info',
-              title: 'Booking Returned to Pool',
-              message: `${order.orderNumber} is back in Open Dispatch Pool.`,
+            showToast({
+              variant: 'INFO',
+              title: `Booking Released • ${order.orderNumber}`,
+              subtitle: 'Returned to the Open Dispatch Pool for nearby riders.',
             });
           } catch (err) {
             showDynamicAlert({
@@ -1122,7 +2594,6 @@ export default function App() {
     if (!session?.firebaseUser) return;
     const numericTemp = Number.parseFloat(pickupTempInput);
 
-    // Build sibling specimens state for complete duplicate / tube mismatch checks
     const siblingList = order.specimens.map((s) => {
       const draft = specimenDrafts[s.id];
       return {
@@ -1175,6 +2646,15 @@ export default function App() {
       return;
     }
 
+    if (!selfiePhotoUrl.trim()) {
+      showDynamicAlert({
+        variant: 'warning',
+        title: 'Phlebotomist Selfie Required',
+        message: 'Take a quick selfie photo at the collection site as attendance and identity proof before confirming collection.',
+      });
+      return;
+    }
+
     if (Number.isNaN(numericTemp)) {
       showDynamicAlert({
         variant: 'warning',
@@ -1199,13 +2679,14 @@ export default function App() {
         operatorName: phleboName,
         operatorRole: UserRole.PHLEBOTOMIST,
         temperatureCelsius: numericTemp,
-        notes: `All ${verifiedSpecimens.length} tubes barcode-verified (${barcodeSummary}) + photo uploaded at ${numericTemp}°C by ${phleboName}`,
+        notes: `All ${verifiedSpecimens.length} tubes barcode-verified (${barcodeSummary}) + sample photo + selfie verified at ${numericTemp}°C by ${phleboName}`,
       };
 
       await updateDoc(doc(db, 'orders', order.id), {
         status: OrderStatus.PICKED_UP,
         specimens: verifiedSpecimens,
         sampleCollectionPhotoUrl: samplePhotoUrl.trim(),
+        phleboSelfieUrl: selfiePhotoUrl.trim(),
         phleboLiveLocation: {
           latitude: riderLocation.latitude,
           longitude: riderLocation.longitude,
@@ -1293,11 +2774,10 @@ export default function App() {
       setDropTempInput(String(numericTemp));
       setCurrentScreen('DROP_SAMPLE');
 
-      showDynamicAlert({
-        variant: numericTemp < 2 || numericTemp > 8 ? 'warning' : 'success',
-        title: 'Tubes Verified & Photo Uploaded',
-        message: `${verifiedSpecimens.length} tube(s) verified & marked Picked Up at ${numericTemp}°C.`,
-        detail: `Navigate to ${order.targetLabName} for 5-digit Handover OTP.`,
+      showToast({
+        variant: numericTemp < 2 || numericTemp > 8 ? 'WARNING' : 'SUCCESS',
+        title: `✓ Tubes Verified • ${order.orderNumber}`,
+        subtitle: `${verifiedSpecimens.length} tube(s) at ${numericTemp}°C. Navigate to ${order.targetLabName}.`,
       });
     } catch (err) {
       showDynamicAlert({
@@ -1319,7 +2799,7 @@ export default function App() {
       showDynamicAlert({
         variant: 'warning',
         title: '5-Digit Handover OTP Required',
-        message: 'Ask the receiving lab / Small Lab coordinator for the 5-digit Handover OTP.',
+        message: 'Ask the receiving lab / Collection Centre coordinator for the 5-digit Handover OTP.',
       });
       return;
     }
@@ -1410,6 +2890,13 @@ export default function App() {
       });
       setOtpValue(['', '', '', '', '']);
       setCurrentScreen('COMPLETED');
+      showToast({
+        variant: 'SUCCESS',
+        title: `⚡ Delivered • ${order.orderNumber}`,
+        subtitle: `${formatInr(order.courierFeeInr || 0)} queued under ${
+          commissionConfig.instantPayoutWindowMinutes || 30
+        }-min instant payout SLA.`,
+      });
     } catch (err) {
       showDynamicAlert({
         variant: 'error',
@@ -1422,35 +2909,78 @@ export default function App() {
   }
 
   async function handleShiftUpdate(nextStatus: PhlebotomistShiftStatus) {
-    if (!effectivePhleboId) {
-      showDynamicAlert({
-        variant: 'warning',
-        title: 'Courier Profile Needed',
-        message: `Ask Platform Admin (${ADMIN_LOGIN_EMAIL}) to assign your Courier ID before changing your duty status.`,
+    setLocalDutyStatus(nextStatus);
+    void AsyncStorage.setItem(DUTY_STATUS_STORAGE_KEY, nextStatus).catch(() => {});
+
+    if (
+      nextStatus === 'ONLINE' &&
+      Platform.OS === 'web' &&
+      typeof window !== 'undefined' &&
+      'Notification' in window &&
+      window.Notification.permission === 'default'
+    ) {
+      void window.Notification.requestPermission()
+        .then((perm) => setWebNotifPerm(perm))
+        .catch(() => {});
+    }
+
+    const showShiftToast = (syncedRemote: boolean) => {
+      showToast({
+        variant: nextStatus === 'ONLINE' ? 'SUCCESS' : nextStatus === 'BREAK' ? 'WARNING' : 'INFO',
+        title:
+          nextStatus === 'ONLINE'
+            ? '🟢 You are Now Online'
+            : nextStatus === 'BREAK'
+            ? '🟡 Break Mode Enabled'
+            : '⚫ You are Now Offline',
+        subtitle:
+          nextStatus === 'ONLINE'
+            ? syncedRemote
+              ? 'Floating pickup radar & 1–5 km live booking popups active.'
+              : 'Online on device • Live 1–5 km broadcast radar active.'
+            : 'Floating radar and live pickup popups paused.',
       });
+    };
+
+    const targetDocId = effectivePhleboId || session?.firebaseUser?.uid || '';
+    if (!targetDocId) {
+      showShiftToast(false);
       return;
     }
 
     try {
-      await updateDoc(doc(db, 'phlebotomists', effectivePhleboId), {
-        status: nextStatus,
-        updatedAt: new Date().toISOString(),
-      });
-      showDynamicAlert({
-        variant: 'success',
-        title: 'Duty Status Updated',
-        message: `Live duty status updated to ${
-          nextStatus === 'ONLINE' ? 'On Duty' : nextStatus === 'BREAK' ? 'On Break' : 'Off Duty'
-        }.`,
-      });
-    } catch (err) {
-      showDynamicAlert({
-        variant: 'warning',
-        title: 'Status Update Blocked',
-        message:
-          (err as Error).message ||
-          'Please ask Platform Admin to finish setting up your courier profile.',
-      });
+      const ref = doc(db, 'phlebotomists', targetDocId);
+      const now = new Date().toISOString();
+      try {
+        await updateDoc(ref, {
+          status: nextStatus,
+          updatedAt: now,
+        });
+      } catch (innerErr: unknown) {
+        const code = (innerErr as { code?: string })?.code || '';
+        const msg = (innerErr as { message?: string })?.message || '';
+        if (code === 'not-found' || msg.includes('No document to update')) {
+          await setDoc(
+            ref,
+            {
+              id: targetDocId,
+              email: phleboEmail,
+              name: phleboName || 'Field Phlebotomist',
+              status: nextStatus,
+              latitude: riderLocation.latitude,
+              longitude: riderLocation.longitude,
+              updatedAt: now,
+            },
+            { merge: true }
+          );
+        } else {
+          throw innerErr;
+        }
+      }
+      showShiftToast(true);
+    } catch {
+      // Keep local duty toggle working seamlessly even if courier Firestore doc is not provisioned yet
+      showShiftToast(false);
     }
   }
 
@@ -1556,6 +3086,11 @@ export default function App() {
         });
 
         if (res.status === 'PAID') {
+          showToast({
+            variant: 'SUCCESS',
+            title: `💳 Payment Verified • ${order.orderNumber}`,
+            subtitle: `${formatInr(payableInr)} settled online (${res.paymentId}).`,
+          });
           showDynamicAlert({
             variant: 'success',
             title: 'Payment Collected',
@@ -1616,6 +3151,11 @@ export default function App() {
         const paidOrderNo = activePaymentLink.orderNumber;
         const paidAmt = activePaymentLink.amountInr;
         setActivePaymentLink(null);
+        showToast({
+          variant: 'SUCCESS',
+          title: `💳 Payment Confirmed • ${paidOrderNo}`,
+          subtitle: `${formatInr(paidAmt)} received online via Razorpay.`,
+        });
         showDynamicAlert({
           variant: 'success',
           title: 'Mobile Payment Confirmed',
@@ -1638,6 +3178,110 @@ export default function App() {
     } finally {
       setVerifyingLinkPayment(false);
     }
+  }
+
+  function handleMarkDirectPayment(
+    order: PickupOrder,
+    method: 'DIRECT_TO_LAB' | 'CASH' | 'UPI_PHLEBO'
+  ) {
+    if (!session?.firebaseUser) return;
+    const payableInr = order.totalAmountInr || order.courierFeeInr || 0;
+
+    let confirmTitle = 'Mark as Paid Directly to Lab?';
+    let confirmMsg = `Confirm that the patient has paid or will pay directly to ${order.smallLabName}? Payment collection will be marked complete for your route and you can proceed with sample collection.`;
+
+    if (method === 'CASH') {
+      confirmTitle = `Confirm Cash Collection (${formatInr(payableInr)})`;
+      confirmMsg = `Confirm that you received ${formatInr(payableInr)} in cash from the patient at ${order.smallLabName}?`;
+    } else if (method === 'UPI_PHLEBO') {
+      confirmTitle = `Confirm UPI Payment (${formatInr(payableInr)})`;
+      confirmMsg = `Confirm that ${formatInr(payableInr)} was received on your UPI QR code for booking ${order.orderNumber}?`;
+    }
+
+    showDynamicAlert({
+      variant: 'confirm',
+      title: confirmTitle,
+      message: confirmMsg,
+      onConfirm: async () => {
+        try {
+          const now = new Date().toISOString();
+          const orderRef = doc(db, 'orders', order.id);
+          const stlId = `STL-${order.id.replace(/^BK-/, '')}`;
+          const stlRef = doc(db, 'settlements', stlId);
+
+          const methodLabel =
+            method === 'DIRECT_TO_LAB'
+              ? 'DIRECT_TO_LAB'
+              : method === 'CASH'
+              ? 'CASH_COLLECTED_BY_PHLEBO'
+              : 'UPI_COLLECTED_BY_PHLEBO';
+
+          const roleLabel = method === 'DIRECT_TO_LAB' ? 'PATIENT_DIRECT_LAB' : 'PHLEBOTOMIST';
+
+          const patch = deepCleanFirestorePayload({
+            paymentStatus: 'PAID',
+            paymentMethod: methodLabel,
+            collectedByRole: roleLabel,
+            ...(method === 'CASH'
+              ? {
+                  cashSettledDirectly: true,
+                  cashPlatformFeePendingInr: 20,
+                  cashPlatformFeeStatus: 'DUE',
+                }
+              : {}),
+            paidAt: now,
+            updatedAt: now,
+          });
+
+          await updateDoc(orderRef, patch);
+          try {
+            await updateDoc(stlRef, patch);
+          } catch {
+            // Non-fatal
+          }
+
+          if (method === 'CASH' && effectivePhleboId) {
+            try {
+              const phRef = doc(db, 'phlebotomists', effectivePhleboId);
+              const phSnap = await getDoc(phRef);
+              const phData = phSnap.exists() ? (phSnap.data() as Record<string, unknown>) : {};
+              const currentDue = Number(phData.pendingPlatformFeeDueInr) || 0;
+              await updateDoc(phRef, {
+                pendingPlatformFeeDueInr: currentDue + 20,
+                ...(!phData.unsettledCashSince ? { unsettledCashSince: now } : {}),
+                updatedAt: now,
+              });
+            } catch {
+              // Non-fatal
+            }
+          }
+
+          showToast({
+            variant: 'SUCCESS',
+            title: `✓ Payment Cleared • ${order.orderNumber}`,
+            subtitle:
+              method === 'DIRECT_TO_LAB'
+                ? 'Patient settled directly with lab'
+                : `${formatInr(payableInr)} collected via ${method}`,
+          });
+
+          showDynamicAlert({
+            variant: 'success',
+            title: 'Payment Recorded',
+            message:
+              method === 'DIRECT_TO_LAB'
+                ? `Booking marked as paid directly to ${order.smallLabName}. You can now proceed to collect the sample.`
+                : `${formatInr(payableInr)} recorded as collected. You can now proceed to collect the sample.`,
+          });
+        } catch (err) {
+          showDynamicAlert({
+            variant: 'error',
+            title: 'Update Error',
+            message: (err as Error).message || 'Could not update payment status.',
+          });
+        }
+      },
+    });
   }
 
   async function handleSavePayoutProfile() {
@@ -1696,13 +3340,13 @@ export default function App() {
         updatedAt: now,
       });
 
-      showDynamicAlert({
-        variant: 'success',
-        title: 'Payout Account Saved',
-        message:
+      showToast({
+        variant: 'SUCCESS',
+        title: '⚡ Instant Payout Account Saved',
+        subtitle:
           payoutMethod === 'UPI'
-            ? `Payouts will be sent to UPI ${upi}.`
-            : `Payouts will be sent to Bank ••••${last4} (${ifsc}).`,
+            ? `30-min payouts will settle to UPI ${upi}.`
+            : `30-min payouts will settle to Bank ••••${last4} (${ifsc}).`,
       });
     } catch (err) {
       showDynamicAlert({
@@ -1715,2117 +3359,250 @@ export default function App() {
     }
   }
 
-  /* =========================================================================
-   * 1. SCREEN 1: BOOKING REQUESTS (LIVE POOL / ACTIVE / COMPLETED)
-   * ========================================================================= */
-  const renderBookingRequestsScreen = () => {
-    const poolEntries = openPoolWithDistance.filter(
-      (x) => !radiusOnlyFilter || x.inBroadcastRadius
-    );
-    const inRadiusCount = openPoolWithDistance.filter((x) => x.inBroadcastRadius).length;
-    const displayedEntries =
-      requestTab === 'new'
-        ? poolEntries
-        : (requestTab === 'active' ? activeAssignedOrders : completedAssignedOrders).map(
-            (order) => ({
-              order,
-              distFromRiderKm: undefined as number | undefined,
-              inBroadcastRadius: false,
-              maxRadiusKm: order.broadcastRadiusKm || 5,
-            })
-          );
+  const handleOpenTrainingSops = useCallback(() => {
+    setCurrentScreen('TRAINING_SOPS');
+  }, []);
 
-    return (
-      <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
-        <View style={styles.heroHeader}>
-          <View style={styles.heroRow}>
-            <View style={styles.profileSection}>
-              <View style={styles.avatarCircle}>
-                <Text style={styles.avatarText}>{phleboInitial}</Text>
-              </View>
-              <View>
-                <Text style={styles.greetingTitle}>Hello, {phleboFirstName}</Text>
-                <Text style={styles.greetingSubtitle}>
-                  Field Phlebotomist • {effectivePhleboId || 'ID Pending'}
-                </Text>
-              </View>
-            </View>
+  const handleOpenHelpSupport = useCallback(() => {
+    setCurrentScreen('HELP_AND_SUPPORT');
+  }, []);
 
-            <TouchableOpacity
-              style={[
-                styles.onlinePill,
-                {
-                  backgroundColor: isOnline
-                    ? '#16A34A'
-                    : dutyStatus === 'BREAK'
-                    ? '#D97706'
-                    : '#64748B',
-                },
-              ]}
-              onPress={() => void handleShiftUpdate(isOnline ? 'OFFLINE' : 'ONLINE')}
-            >
-              <Text style={styles.onlinePillText}>
-                {dutyStatus === 'ONLINE'
-                  ? 'On Duty'
-                  : dutyStatus === 'BREAK'
-                  ? 'On Break'
-                  : 'Off Duty'}
-              </Text>
-            </TouchableOpacity>
-          </View>
+  const handleOpenMySupplies = useCallback(() => {
+    setCurrentScreen('KITS_AND_SUPPLIES');
+  }, []);
 
-          <View style={styles.summaryCard}>
-            <Text style={styles.summaryTitle}>Today&apos;s Live Summary</Text>
-            <View style={styles.summaryMetricsRow}>
-              <View style={styles.summaryMetricCol}>
-                <Text style={styles.metricNumber}>{metrics.todayOrdersCount}</Text>
-                <Text style={styles.metricLabel}>Assigned Today</Text>
-              </View>
-              <View style={styles.summaryDivider} />
-              <View style={styles.summaryMetricCol}>
-                <Text style={styles.metricNumber}>{metrics.todayCompletedCount}</Text>
-                <Text style={styles.metricLabel}>Delivered</Text>
-              </View>
-              <View style={styles.summaryDivider} />
-              <View style={styles.summaryMetricCol}>
-                <Text style={[styles.metricNumber, { color: COLORS.primaryTeal }]}>
-                  {formatInr(metrics.todayEarnings)}
-                </Text>
-                <Text style={styles.metricLabel}>Earned Today</Text>
-              </View>
-            </View>
-          </View>
-        </View>
+  const handleOpenTodayCollections = useCallback(() => {
+    setBottomTab('tasks');
+    setSelectedOrderId(null);
+    setCurrentScreen('TODAYS_COLLECTIONS');
+  }, []);
 
-        <View style={styles.bodyContainer}>
-          <View style={styles.gpsTelemetryBar}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.gpsTelemetryTitle}>
-                📍 {gpsSourceLabel} ({riderLocation.latitude.toFixed(4)},{' '}
-                {riderLocation.longitude.toFixed(4)})
-              </Text>
-              <Text style={styles.gpsTelemetrySub}>
-                {isOnline
-                  ? `Live 1–5 km broadcast radar active • ${inRadiusCount} nearby open request(s)`
-                  : 'Switch On Duty to receive live nearby pickup popups'}
-              </Text>
-            </View>
-            <TouchableOpacity
-              style={styles.gpsPickerBtn}
-              onPress={() => {
-                setManualLatInput(String(riderLocation.latitude));
-                setManualLngInput(String(riderLocation.longitude));
-                setShowLocationPickerModal(true);
-              }}
-            >
-              <Text style={styles.gpsPickerBtnText}>Set Zone / GPS</Text>
-            </TouchableOpacity>
-          </View>
-
-          {!effectivePhleboId ? (
-            <View style={styles.warningBox}>
-              <Text style={styles.warningBoxText}>
-                Your account does not have a Courier ID yet. Ask Platform Admin (
-                {ADMIN_LOGIN_EMAIL}) to assign one under Team &amp; Partner Accounts so you
-                can claim bookings.
-              </Text>
-            </View>
-          ) : null}
-
-          <View style={styles.requestTabsRow}>
-            <TouchableOpacity
-              style={[styles.tabButton, requestTab === 'new' && styles.tabButtonActive]}
-              onPress={() => setRequestTab('new')}
-            >
-              <Text
-                style={[styles.tabButtonText, requestTab === 'new' && styles.tabButtonTextActive]}
-              >
-                Pool ({openPoolOrders.length})
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.tabButton, requestTab === 'active' && styles.tabButtonActive]}
-              onPress={() => setRequestTab('active')}
-            >
-              <Text
-                style={[
-                  styles.tabButtonText,
-                  requestTab === 'active' && styles.tabButtonTextActive,
-                ]}
-              >
-                Active ({activeAssignedOrders.length})
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.tabButton, requestTab === 'completed' && styles.tabButtonActive]}
-              onPress={() => setRequestTab('completed')}
-            >
-              <Text
-                style={[
-                  styles.tabButtonText,
-                  requestTab === 'completed' && styles.tabButtonTextActive,
-                ]}
-              >
-                Completed ({completedAssignedOrders.length})
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {requestTab === 'new' ? (
-            <View style={styles.radiusFilterRow}>
-              <TouchableOpacity
-                style={[styles.radiusFilterChip, !radiusOnlyFilter && styles.radiusFilterChipActive]}
-                onPress={() => setRadiusOnlyFilter(false)}
-              >
-                <Text
-                  style={[
-                    styles.radiusFilterText,
-                    !radiusOnlyFilter && styles.radiusFilterTextActive,
-                  ]}
-                >
-                  All Open Pool ({openPoolWithDistance.length})
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.radiusFilterChip, radiusOnlyFilter && styles.radiusFilterChipActive]}
-                onPress={() => setRadiusOnlyFilter(true)}
-              >
-                <Text
-                  style={[
-                    styles.radiusFilterText,
-                    radiusOnlyFilter && styles.radiusFilterTextActive,
-                  ]}
-                >
-                  🔥 Within 1–5 km Radar ({inRadiusCount})
-                </Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-
-          {displayedEntries.length === 0 ? (
-            <View style={styles.emptyBox}>
-              <Text style={styles.emptyTitle}>
-                {requestTab === 'new'
-                  ? radiusOnlyFilter
-                    ? 'No Open Bookings Within Broadcast Radius'
-                    : 'No Unassigned Pool Bookings'
-                  : requestTab === 'active'
-                  ? 'No Active Trips Right Now'
-                  : 'No Completed Deliveries Yet'}
-              </Text>
-              <Text style={styles.emptySub}>
-                Live pickup orders created by Small Collection Labs sync here automatically.
-              </Text>
-            </View>
-          ) : (
-            displayedEntries.map(({ order, distFromRiderKm, inBroadcastRadius, maxRadiusKm }) => {
-              const isOpenPool = requestTab === 'new';
-              const isInTransit =
-                order.status === OrderStatus.PICKED_UP ||
-                order.status === OrderStatus.IN_TRANSIT;
-              const isPaidOrder = order.paymentStatus === 'PAID';
-              const collectableInr = order.totalAmountInr || order.courierFeeInr || 0;
-              const specimens = order.specimens || [];
-              const dropBadge =
-                order.dropType === 'SELF_DROP'
-                  ? 'Return to Small Lab'
-                  : order.dropType === 'CUSTOM_ADDRESS'
-                  ? 'Custom Drop'
-                  : 'Reference Hub';
-
-              return (
-                <View key={order.id} style={styles.bookingCard}>
-                  <View style={styles.bookingCardTop}>
-                    <View style={{ flex: 1, paddingRight: 8 }}>
-                      <Text style={styles.bookingTitle}>
-                        {isOpenPool ? 'Open Pickup Request' : formatOrderStatus(order.status)}
-                      </Text>
-                      <Text style={styles.bookingId}>
-                        ID: {order.orderNumber} • {order.patient.pseudonym}
-                      </Text>
-
-                      <View style={styles.badgeWrapRow}>
-                        {isOpenPool && distFromRiderKm !== undefined ? (
-                          <View
-                            style={[
-                              styles.distanceBadge,
-                              inBroadcastRadius && styles.distanceBadgeHot,
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.distanceBadgeText,
-                                inBroadcastRadius && styles.distanceBadgeTextHot,
-                              ]}
-                            >
-                              {inBroadcastRadius
-                                ? `🔥 LIVE IN ${maxRadiusKm} KM (${distFromRiderKm} km)`
-                                : `${distFromRiderKm} km from you`}
-                            </Text>
-                          </View>
-                        ) : null}
-
-                        {typeof order.distanceKm === 'number' && order.distanceKm > 0 ? (
-                          <View style={styles.distanceBadge}>
-                            <Text style={styles.distanceBadgeText}>
-                              Route {order.distanceKm} km
-                            </Text>
-                          </View>
-                        ) : null}
-
-                        <View style={styles.distanceBadge}>
-                          <Text style={styles.distanceBadgeText}>{dropBadge}</Text>
-                        </View>
-                      </View>
-                    </View>
-
-                    <View style={{ alignItems: 'flex-end' }}>
-                      <View style={{ flexDirection: 'row', gap: 6, marginBottom: 4 }}>
-                        <View
-                          style={[
-                            styles.pickupTimeBadge,
-                            {
-                              marginBottom: 0,
-                              backgroundColor: isPaidOrder ? '#DCFCE7' : '#FFEDD5',
-                            },
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.pickupTimeText,
-                              { color: isPaidOrder ? '#15803D' : '#C2410C' },
-                            ]}
-                          >
-                            {isPaidOrder ? '✓ Paid' : `Collect ${formatInr(collectableInr)}`}
-                          </Text>
-                        </View>
-                        <View style={[styles.pickupTimeBadge, { marginBottom: 0 }]}>
-                          <Text style={styles.pickupTimeText}>
-                            {formatLabel(order.priority)}
-                          </Text>
-                        </View>
-                      </View>
-                      <Text style={styles.bookingPrice}>
-                        Courier {formatInr(order.courierFeeInr || 0)}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.routeContainer}>
-                    <View style={styles.routeRow}>
-                      <View style={[styles.dotMarker, { backgroundColor: COLORS.primaryTeal }]} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.routePlaceTitle}>{order.smallLabName}</Text>
-                        <Text style={styles.routePlaceSubtitle}>{order.pickupLocation.address}</Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.routeConnectingLine} />
-
-                    <View style={styles.routeRow}>
-                      <View style={[styles.dotMarker, { backgroundColor: COLORS.errorRed }]} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.routePlaceTitle}>{order.targetLabName}</Text>
-                        <Text style={styles.routePlaceSubtitle}>
-                          {order.deliveryLocation.address}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-
-                  <View style={styles.tubePillRow}>
-                    {specimens.map((s) => {
-                      const meta = TUBE_METADATA[s.tubeType] || TUBE_METADATA[TubeType.SERUM_RED_GOLD];
-                      return (
-                        <View
-                          key={s.id}
-                          style={[styles.specimenTagPill, { backgroundColor: meta.bgHex }]}
-                        >
-                          <View style={[styles.tubeColorDot, { backgroundColor: meta.colorHex }]} />
-                          <Text style={[styles.specimenTagText, { color: meta.colorHex }]}>
-                            {s.testCode} • {meta.shortTag}
-                          </Text>
-                        </View>
-                      );
-                    })}
-                  </View>
-
-                  {isOpenPool ? (
-                    <View style={styles.actionsRow}>
-                      <TouchableOpacity
-                        style={[styles.btnPrimary, submittingAction && { opacity: 0.65 }]}
-                        disabled={submittingAction}
-                        onPress={() => void handleAcceptPoolOrder(order)}
-                      >
-                        <Text style={styles.btnPrimaryText}>Accept &amp; Claim Pickup →</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : requestTab === 'active' ? (
-                    <View style={styles.actionsRow}>
-                      {order.status === OrderStatus.ASSIGNED_TO_PHLEBO ? (
-                        <TouchableOpacity
-                          style={styles.btnSecondary}
-                          onPress={() => handleDeclineAssignedOrder(order)}
-                        >
-                          <Text style={styles.btnSecondaryText}>Release</Text>
-                        </TouchableOpacity>
-                      ) : null}
-
-                      {!isPaidOrder && collectableInr >= 1 ? (
-                        <TouchableOpacity
-                          style={[
-                            styles.btnSecondary,
-                            { backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE' },
-                            collectingOrderId === order.id && { opacity: 0.65 },
-                          ]}
-                          disabled={collectingOrderId === order.id}
-                          onPress={() => void handleCollectBookingPayment(order)}
-                        >
-                          <Text style={[styles.btnSecondaryText, { color: '#1D4ED8' }]}>
-                            {collectingOrderId === order.id ? 'Opening...' : '💳 Collect'}
-                          </Text>
-                        </TouchableOpacity>
-                      ) : null}
-
-                      <TouchableOpacity
-                        style={styles.btnPrimary}
-                        onPress={() => openOrderWorkflow(order)}
-                      >
-                        <Text style={styles.btnPrimaryText}>
-                          {isInTransit ? 'Drop & Verify OTP →' : 'Start Pickup →'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <View style={styles.historyCardFooter}>
-                      <Text style={styles.historyCardTemp}>
-                        Delivered {order.arrivalTemperatureCelsius ?? '—'}°C
-                      </Text>
-                      <Text style={styles.historyCardTests}>
-                        {formatOrderStatus(order.status)}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              );
-            })
-          )}
-        </View>
-      </ScrollView>
-    );
-  };
-
-  /* =========================================================================
-   * 2. SCREEN 2: BOOKING DETAILS & ROUTE
-   * ========================================================================= */
-  const renderBookingDetailsScreen = () => {
-    if (!selectedOrder) {
-      return renderBookingRequestsScreen();
+  const handleOpenTodayRoute = useCallback(() => {
+    if (activeAssignedOrders.length > 0) {
+      openOrderWorkflow(activeAssignedOrders[0], 'TODAYS_COLLECTIONS');
+      return;
     }
-    const specimens = selectedOrder.specimens || [];
-    return (
-      <ScrollView style={styles.scrollArea}>
-        <View style={styles.navBarHeader}>
-          <TouchableOpacity onPress={() => setCurrentScreen('BOOKING_REQUESTS')}>
-            <Text style={styles.navBarBackArrow}>←</Text>
-          </TouchableOpacity>
-          <View style={{ flex: 1, alignItems: 'center' }}>
-            <Text style={styles.navBarTitle}>Booking Details</Text>
-            <Text style={styles.navBarSubtitle}>{selectedOrder.orderNumber}</Text>
-          </View>
-          <View style={{ width: 24 }} />
-        </View>
-
-        <View style={styles.bodyContainer}>
-          <View style={styles.timelineCard}>
-            <View style={styles.timelineItem}>
-              <View style={[styles.dotMarker, { backgroundColor: COLORS.primaryTeal }]} />
-              <View style={{ marginLeft: 10, flex: 1 }}>
-                <Text style={styles.timelineLabel}>Pickup Source Lab</Text>
-                <Text style={styles.timelineTitle}>{selectedOrder.smallLabName}</Text>
-                <Text style={styles.timelineSub}>{selectedOrder.pickupLocation.address}</Text>
-              </View>
-            </View>
-
-            <View style={styles.timelineLine} />
-
-            <View style={styles.timelineItem}>
-              <View style={[styles.dotMarker, { backgroundColor: COLORS.accentBlue }]} />
-              <View style={{ marginLeft: 10, flex: 1 }}>
-                <Text style={styles.timelineLabel}>Patient Case</Text>
-                <Text style={styles.timelineTitle}>{selectedOrder.patient.pseudonym}</Text>
-                <Text style={styles.timelineSub}>
-                  {selectedOrder.patient.age} yrs • {formatLabel(selectedOrder.patient.gender)}
-                </Text>
-              </View>
-              {selectedOrder.pickupLocation.contactPhone ? (
-                <TouchableOpacity
-                  style={styles.callCircleBtn}
-                  onPress={() =>
-                    showDynamicAlert({
-                      variant: 'info',
-                      title: 'Collection Lab Contact',
-                      message: `Contact ${selectedOrder.smallLabName} desk before pickup arrival.`,
-                      detail: selectedOrder.pickupLocation.contactPhone,
-                    })
-                  }
-                >
-                  <Text style={{ color: 'white', fontWeight: 'bold' }}>📞</Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
-
-            <View style={styles.timelineLine} />
-
-            <View style={styles.timelineItem}>
-              <View style={[styles.dotMarker, { backgroundColor: COLORS.successGreen }]} />
-              <View style={{ marginLeft: 10, flex: 1 }}>
-                <Text style={styles.timelineLabel}>
-                  {selectedOrder.dropType === 'SELF_DROP'
-                    ? 'Return to Small Lab'
-                    : selectedOrder.dropType === 'CUSTOM_ADDRESS'
-                    ? 'Custom Drop Address'
-                    : 'Drop Reference Hub'}
-                </Text>
-                <Text style={styles.timelineTitle}>{selectedOrder.targetLabName}</Text>
-                <Text style={styles.timelineSub}>{selectedOrder.deliveryLocation.address}</Text>
-              </View>
-            </View>
-
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-              <TouchableOpacity
-                style={styles.navMapButton}
-                onPress={() =>
-                  openDirectionsMap(
-                    selectedOrder.pickupLocation?.latitude,
-                    selectedOrder.pickupLocation?.longitude,
-                    selectedOrder.pickupLocation?.address
-                  )
-                }
-              >
-                <Text style={styles.navMapButtonText}>
-                  🗺️ Navigate to Pickup Lab (Google Maps)
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <View style={styles.infoCard}>
-            <Text style={styles.infoCardLabel}>
-              Required Diagnostic Specimens ({specimens.length})
-            </Text>
-            <View style={{ gap: 8, marginTop: 4 }}>
-              {specimens.map((s) => {
-                const meta = TUBE_METADATA[s.tubeType] || TUBE_METADATA[TubeType.SERUM_RED_GOLD];
-                return (
-                  <View key={s.id} style={styles.detailSpecRow}>
-                    <View style={[styles.tubeColorDot, { backgroundColor: meta.colorHex }]} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.detailSpecTitle}>
-                        {s.testCode} — {s.testName}
-                      </Text>
-                      <Text style={styles.detailSpecSub}>
-                        {meta.label} • Expected Tag: {s.barcode}
-                      </Text>
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-            <View style={{ height: 1, backgroundColor: COLORS.borderLight, marginVertical: 12 }} />
-            <Text style={styles.infoCardLabel}>Courier Fee • Route Distance • Priority</Text>
-            <Text style={[styles.infoCardValue, { color: COLORS.primaryTeal }]}>
-              {formatInr(selectedOrder.courierFeeInr || 0)}
-              {typeof selectedOrder.distanceKm === 'number' && selectedOrder.distanceKm > 0
-                ? ` • ${selectedOrder.distanceKm} km`
-                : ''}
-              {' • '}
-              {formatLabel(selectedOrder.priority)}
-            </Text>
-            <View style={{ height: 1, backgroundColor: COLORS.borderLight, marginVertical: 12 }} />
-            <Text style={styles.infoCardLabel}>Booking Payment Collection</Text>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={styles.infoCardValue}>
-                {formatInr(selectedOrder.totalAmountInr || selectedOrder.courierFeeInr || 0)}
-              </Text>
-              <View
-                style={[
-                  styles.pickupTimeBadge,
-                  {
-                    marginBottom: 0,
-                    backgroundColor: selectedOrder.paymentStatus === 'PAID' ? '#DCFCE7' : '#FFEDD5',
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.pickupTimeText,
-                    { color: selectedOrder.paymentStatus === 'PAID' ? '#15803D' : '#C2410C' },
-                  ]}
-                >
-                  {selectedOrder.paymentStatus === 'PAID'
-                    ? `✓ Paid (${selectedOrder.paymentMethod || 'Online'})`
-                    : 'Payment Due'}
-                </Text>
-              </View>
-            </View>
-          </View>
-
-          {selectedOrder.paymentStatus !== 'PAID' &&
-          (selectedOrder.totalAmountInr || selectedOrder.courierFeeInr || 0) >= 1 ? (
-            <TouchableOpacity
-              style={[
-                styles.ctaButton,
-                { backgroundColor: COLORS.accentBlue, marginBottom: 12 },
-                collectingOrderId === selectedOrder.id && { opacity: 0.65 },
-              ]}
-              disabled={collectingOrderId === selectedOrder.id}
-              onPress={() => void handleCollectBookingPayment(selectedOrder)}
-            >
-              <Text style={styles.ctaButtonText}>
-                {collectingOrderId === selectedOrder.id
-                  ? 'Opening Razorpay Checkout...'
-                  : `💳 Collect ${formatInr(
-                      selectedOrder.totalAmountInr || selectedOrder.courierFeeInr || 0
-                    )} via Razorpay`}
-              </Text>
-            </TouchableOpacity>
-          ) : null}
-
-          <TouchableOpacity
-            style={styles.ctaButton}
-            onPress={() => setCurrentScreen('COLLECT_SAMPLE')}
-          >
-            <Text style={styles.ctaButtonText}>Proceed to Barcode Scan &amp; Photo ✓</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    );
-  };
-
-  /* =========================================================================
-   * 3. SCREEN 3: SAMPLE COLLECTION, TUBE VALIDATION & COLLECTION PHOTO PROOF
-   * ========================================================================= */
-  const renderCollectSampleScreen = () => {
-    if (!selectedOrder) {
-      return renderBookingRequestsScreen();
+    if (todayOrders.length > 0) {
+      handleOpenTodayCollections();
+      return;
     }
+    setShowLocationPickerModal(true);
+  }, [activeAssignedOrders, todayOrders.length, handleOpenTodayCollections]);
 
-    const specimens = selectedOrder.specimens || [];
-    const siblingSpecimens = specimens.map((s) => {
-      const draft = specimenDrafts[s.id];
-      return {
-        ...s,
-        scannedBarcode: draft?.barcode?.trim() || '',
-        scannedTubeType: draft?.usedTube || s.tubeType,
-      };
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !session) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (alertState.isOpen) {
+        setAlertState(INITIAL_DYNAMIC_ALERT);
+        return true;
+      }
+      if (activePaymentLink) {
+        setActivePaymentLink(null);
+        return true;
+      }
+      if (floatingSettingsVisible) {
+        setFloatingSettingsVisible(false);
+        return true;
+      }
+      if (showLocationPickerModal) {
+        setShowLocationPickerModal(false);
+        return true;
+      }
+      if (showQuickActionsModal) {
+        setShowQuickActionsModal(false);
+        return true;
+      }
+      if (cameraModal) {
+        setCameraModal(null);
+        return true;
+      }
+      if (drawerVisible) {
+        setDrawerVisible(false);
+        return true;
+      }
+      if (broadcastForceOpen) {
+        setBroadcastForceOpen(false);
+        return true;
+      }
+      if (bottomTab !== 'home') {
+        handleNavigateBackHome();
+        return true;
+      }
+      if (currentScreen === 'COLLECT_SAMPLE') {
+        setCurrentScreen('BOOKING_DETAILS');
+        return true;
+      }
+      if (currentScreen === 'BOOKING_DETAILS') {
+        setCurrentScreen(detailsReturnScreen);
+        return true;
+      }
+      if (
+        currentScreen === 'DROP_SAMPLE' ||
+        currentScreen === 'TODAYS_COLLECTIONS' ||
+        currentScreen === 'COMPLETED' ||
+        currentScreen === 'KITS_AND_SUPPLIES' ||
+        currentScreen === 'HELP_AND_SUPPORT' ||
+        currentScreen === 'TRAINING_SOPS'
+      ) {
+        setCurrentScreen('BOOKING_REQUESTS');
+        setBottomTab('home');
+        return true;
+      }
+      if (currentScreen === 'BOOKING_REQUESTS' && requestTab !== 'new') {
+        setRequestTab('new');
+        return true;
+      }
+      return false;
     });
+    return () => sub.remove();
+  }, [
+    session,
+    alertState.isOpen,
+    activePaymentLink,
+    floatingSettingsVisible,
+    showLocationPickerModal,
+    cameraModal,
+    drawerVisible,
+    broadcastForceOpen,
+    bottomTab,
+    currentScreen,
+    detailsReturnScreen,
+    requestTab,
+    handleNavigateBackHome,
+  ]);
 
-    const verifiedCount = specimens.filter((s) => {
-      const draft = specimenDrafts[s.id] || {
-        barcode: s.scannedBarcode || '',
-        usedTube: s.scannedTubeType || s.tubeType || TubeType.SERUM_RED_GOLD,
-      };
-      return validateTubeBarcodeScan({
-        scannedBarcode: draft.barcode,
-        expectedSpecimen: s,
-        selectedTubeUsed: draft.usedTube,
-        siblingSpecimens,
-      }).valid;
-    }).length;
+  const showHomeRequestsFallback =
+    currentScreen === 'BOOKING_REQUESTS' ||
+    (!selectedOrder &&
+      (currentScreen === 'BOOKING_DETAILS' ||
+        currentScreen === 'COLLECT_SAMPLE' ||
+        currentScreen === 'DROP_SAMPLE'));
 
+  const usesDeepHeroTop =
+    (bottomTab === 'home' && currentScreen === 'BOOKING_REQUESTS') ||
+    bottomTab === 'earnings' ||
+    bottomTab === 'profile';
+
+  const topSafeBg = !session
+    ? '#FFFFFF'
+    : usesDeepHeroTop
+      ? BRAND_COLORS.navyDeep
+      : BRAND_COLORS.navyPrimary;
+
+  if (!fontsLoaded && !fontError && !fontWaitExpired) {
     return (
-      <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
-        <View style={styles.navBarHeader}>
-          <TouchableOpacity onPress={() => setCurrentScreen('BOOKING_DETAILS')}>
-            <Text style={styles.navBarBackArrow}>←</Text>
-          </TouchableOpacity>
-          <View style={{ flex: 1, alignItems: 'center' }}>
-            <Text style={styles.navBarTitle}>Collect Sample &amp; Verify</Text>
-            <Text style={styles.navBarSubtitle}>
-              {selectedOrder.orderNumber} • {verifiedCount}/{specimens.length} Tubes Verified
-            </Text>
-          </View>
-          <View style={{ width: 24 }} />
-        </View>
-
-        <View style={styles.bodyContainer}>
-          <View style={styles.verifyHintCard}>
-            <Text style={styles.verifyHintTitle}>
-              🧪 Per-Tube Barcode &amp; Vacutainer Validation
-            </Text>
-            <Text style={styles.verifyHintText}>
-              Scan each specimen tube barcode and confirm the physical tube cap color used. Any
-              wrong tube or duplicate barcode conflict is flagged immediately.
-            </Text>
-          </View>
-
-          {specimens.map((spec, idx) => {
-            const draft = specimenDrafts[spec.id] || {
-              barcode: spec.scannedBarcode || '',
-              usedTube: spec.scannedTubeType || spec.tubeType || TubeType.SERUM_RED_GOLD,
-            };
-            const validation = validateTubeBarcodeScan({
-              scannedBarcode: draft.barcode,
-              expectedSpecimen: spec,
-              selectedTubeUsed: draft.usedTube,
-              siblingSpecimens,
-            });
-            const expectedMeta =
-              TUBE_METADATA[validation.expectedTube] || TUBE_METADATA[TubeType.SERUM_RED_GOLD];
-
-            const cardBorderColor =
-              validation.status === 'VERIFIED'
-                ? '#16A34A'
-                : validation.status === 'MISMATCH'
-                ? '#DC2626'
-                : COLORS.borderLight;
-
-            const statusBg =
-              validation.status === 'VERIFIED'
-                ? '#DCFCE7'
-                : validation.status === 'MISMATCH'
-                ? '#FEE2E2'
-                : '#FEF3C7';
-            const statusColor =
-              validation.status === 'VERIFIED'
-                ? '#15803D'
-                : validation.status === 'MISMATCH'
-                ? '#B91C1C'
-                : '#B45309';
-
-            return (
-              <View
-                key={spec.id}
-                style={[styles.specimenVerifyCard, { borderColor: cardBorderColor }]}
-              >
-                <View style={styles.specimenCardTopRow}>
-                  <View style={{ flex: 1, paddingRight: 8 }}>
-                    <Text style={styles.specimenCardTitle}>
-                      #{idx + 1} {spec.testCode} — {spec.testName}
-                    </Text>
-                    <Text style={styles.specimenCardSub}>
-                      Expected: {expectedMeta.label} • Tag: {spec.barcode}
-                    </Text>
-                  </View>
-                  <View style={[styles.pickupTimeBadge, { backgroundColor: statusBg, marginBottom: 0 }]}>
-                    <Text style={[styles.pickupTimeText, { color: statusColor }]}>
-                      {validation.status === 'VERIFIED'
-                        ? '✓ VERIFIED'
-                        : validation.status === 'MISMATCH'
-                        ? '⚠ MISMATCH'
-                        : '⏳ PENDING'}
-                    </Text>
-                  </View>
-                </View>
-
-                <View
-                  style={[
-                    styles.validationBanner,
-                    {
-                      backgroundColor:
-                        validation.status === 'VERIFIED'
-                          ? '#F0FDF4'
-                          : validation.status === 'MISMATCH'
-                          ? '#FEF2F2'
-                          : '#F8FAFC',
-                      borderColor:
-                        validation.status === 'VERIFIED'
-                          ? '#BBF7D0'
-                          : validation.status === 'MISMATCH'
-                          ? '#FECACA'
-                          : COLORS.borderLight,
-                    },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.validationBannerText,
-                      {
-                        color:
-                          validation.status === 'VERIFIED'
-                            ? '#166534'
-                            : validation.status === 'MISMATCH'
-                            ? '#991B1B'
-                            : COLORS.textSecondary,
-                      },
-                    ]}
-                  >
-                    {validation.message}
-                  </Text>
-                </View>
-
-                <Text style={styles.inputLabelSm}>Scanned Barcode</Text>
-                <TextInput
-                  style={styles.fieldInput}
-                  value={draft.barcode}
-                  onChangeText={(txt) => updateSpecimenDraft(spec.id, { barcode: txt })}
-                  placeholder={`Scan or enter ${spec.barcode}`}
-                  autoCapitalize="characters"
-                />
-
-                <View style={styles.scanActionRow}>
-                  <TouchableOpacity
-                    style={styles.scanCamButton}
-                    onPress={() =>
-                      setCameraModal({
-                        mode: 'BARCODE',
-                        specimenId: spec.id,
-                        specimen: spec,
-                      })
-                    }
-                  >
-                    <Text style={styles.scanCamButtonText}>📷 Scan Camera</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.matchTagChip}
-                    onPress={() =>
-                      updateSpecimenDraft(spec.id, {
-                        barcode: spec.barcode,
-                        usedTube: spec.tubeType || TubeType.SERUM_RED_GOLD,
-                      })
-                    }
-                  >
-                    <Text style={styles.matchTagChipText}>Match Barcode ({spec.barcode})</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <Text style={[styles.inputLabelSm, { marginTop: 12 }]}>
-                  Physical Vacutainer / Cap Used
-                </Text>
-                <View style={styles.tubeChipsWrap}>
-                  {(Object.values(TubeType) as TubeType[]).map((t) => {
-                    const meta = TUBE_METADATA[t];
-                    const selected = draft.usedTube === t;
-                    return (
-                      <TouchableOpacity
-                        key={t}
-                        style={[
-                          styles.tubeChip,
-                          selected && {
-                            backgroundColor: meta.bgHex,
-                            borderColor: meta.colorHex,
-                            borderWidth: 1.5,
-                          },
-                        ]}
-                        onPress={() => updateSpecimenDraft(spec.id, { usedTube: t })}
-                      >
-                        <View style={[styles.tubeColorDot, { backgroundColor: meta.colorHex }]} />
-                        <Text
-                          style={[
-                            styles.tubeChipText,
-                            selected && { color: meta.colorHex, fontWeight: '700' },
-                          ]}
-                        >
-                          {meta.shortTag} ({meta.capColorName.replace(' Cap', '')})
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-            );
-          })}
-
-          <View style={styles.photoProofCard}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={styles.specimenCardTitle}>📸 Collected Sample Photo Proof</Text>
-              <View
-                style={[
-                  styles.pickupTimeBadge,
-                  {
-                    marginBottom: 0,
-                    backgroundColor: samplePhotoUrl ? '#DCFCE7' : '#FFEDD5',
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.pickupTimeText,
-                    { color: samplePhotoUrl ? '#15803D' : '#C2410C' },
-                  ]}
-                >
-                  {samplePhotoUrl ? '✓ Uploaded' : 'Mandatory'}
-                </Text>
-              </View>
-            </View>
-            <Text style={[styles.specimenCardSub, { marginTop: 4, marginBottom: 12 }]}>
-              Take or upload a clear photo of all labeled tubes collected at {selectedOrder.smallLabName}.
-            </Text>
-
-            {samplePhotoUrl ? (
-              <View style={{ marginBottom: 12 }}>
-                <Image
-                  source={{ uri: samplePhotoUrl }}
-                  style={styles.samplePhotoPreview}
-                  resizeMode="cover"
-                />
-                <TouchableOpacity
-                  style={{ marginTop: 6, alignSelf: 'flex-end' }}
-                  onPress={() => setSamplePhotoUrl('')}
-                >
-                  <Text style={{ color: COLORS.errorRed, fontSize: 12, fontWeight: '600' }}>
-                    Remove Photo
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            ) : null}
-
-            <View style={styles.actionsRow}>
-              <TouchableOpacity
-                style={[styles.scanCamButton, { flex: 1 }, uploadingPhoto && { opacity: 0.65 }]}
-                disabled={uploadingPhoto}
-                onPress={() => {
-                  if (Platform.OS === 'web') {
-                    setCameraModal({ mode: 'PHOTO' });
-                  } else {
-                    handleUploadSamplePhotoFromFile(selectedOrder.id);
-                  }
-                }}
-              >
-                <Text style={styles.scanCamButtonText}>
-                  {uploadingPhoto ? 'Uploading...' : '📷 Camera Photo'}
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.btnSecondary, uploadingPhoto && { opacity: 0.65 }]}
-                disabled={uploadingPhoto}
-                onPress={() => handleUploadSamplePhotoFromFile(selectedOrder.id)}
-              >
-                <Text style={styles.btnSecondaryText}>📁 Upload Photo File</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <View style={{ width: '100%', marginBottom: 20 }}>
-            <Text style={styles.inputLabelSm}>Chiller Box Temperature (°C)</Text>
-            <TextInput
-              style={styles.fieldInput}
-              value={pickupTempInput}
-              onChangeText={setPickupTempInput}
-              keyboardType="numeric"
-              placeholder="4.2"
-            />
-          </View>
-
-          <TouchableOpacity
-            style={[styles.ctaButton, (submittingAction || uploadingPhoto) && { opacity: 0.65 }]}
-            disabled={submittingAction || uploadingPhoto}
-            onPress={() => void handleConfirmCollection(selectedOrder)}
-          >
-            <Text style={styles.ctaButtonText}>
-              {submittingAction
-                ? 'Saving Verified Specimens...'
-                : `Confirm Pickup (${verifiedCount}/${specimens.length}) & Log Custody ✓`}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    );
-  };
-
-  /* =========================================================================
-   * 4. SCREEN 4: DROP SAMPLE & 5-DIGIT OTP VERIFICATION
-   * ========================================================================= */
-  const renderDropSampleScreen = () => {
-    if (!selectedOrder) {
-      return renderBookingRequestsScreen();
-    }
-    const verifiedSpecCount = (selectedOrder.specimens || []).filter(
-      (s) => s.validationStatus === 'VERIFIED'
-    ).length;
-
-    return (
-      <ScrollView style={styles.scrollArea}>
-        <View style={styles.navBarHeader}>
-          <TouchableOpacity onPress={() => setCurrentScreen('BOOKING_REQUESTS')}>
-            <Text style={styles.navBarBackArrow}>←</Text>
-          </TouchableOpacity>
-          <View style={{ flex: 1, alignItems: 'center' }}>
-            <Text style={styles.navBarTitle}>Drop Sample &amp; OTP</Text>
-            <Text style={styles.navBarSubtitle}>{selectedOrder.orderNumber}</Text>
-          </View>
-          <View style={{ width: 24 }} />
-        </View>
-
-        <View style={styles.bodyContainer}>
-          <View style={styles.dropLabCard}>
-            <Text style={{ fontSize: 36, marginBottom: 8 }}>🏢</Text>
-            <Text style={styles.dropLabTitle}>{selectedOrder.targetLabName}</Text>
-            <Text style={[styles.dropLabSub, { textAlign: 'center' }]}>
-              {selectedOrder.deliveryLocation.address}
-            </Text>
-
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10, justifyContent: 'center' }}>
-              <View style={[styles.distanceBadge, { backgroundColor: '#EFF6FF' }]}>
-                <Text style={[styles.distanceBadgeText, { color: '#1D4ED8' }]}>
-                  {selectedOrder.dropType === 'SELF_DROP'
-                    ? 'Self-Drop to Small Lab'
-                    : selectedOrder.dropType === 'CUSTOM_ADDRESS'
-                    ? 'Custom Drop Address'
-                    : 'Large Lab Reference Hub'}
-                </Text>
-              </View>
-              {selectedOrder.sampleCollectionPhotoUrl ? (
-                <View style={[styles.distanceBadge, { backgroundColor: '#DCFCE7' }]}>
-                  <Text style={[styles.distanceBadgeText, { color: '#15803D' }]}>
-                    ✓ Photo &amp; {verifiedSpecCount}/{(selectedOrder.specimens || []).length} Tubes Verified
-                  </Text>
-                </View>
-              ) : null}
-            </View>
-
-            <TouchableOpacity
-              style={[styles.navMapButton, { marginTop: 12, width: '100%' }]}
-              onPress={() =>
-                openDirectionsMap(
-                  selectedOrder.deliveryLocation?.latitude,
-                  selectedOrder.deliveryLocation?.longitude,
-                  selectedOrder.deliveryLocation?.address
-                )
-              }
-            >
-              <Text style={styles.navMapButtonText}>
-                🗺️ Navigate to Drop Center (Google Maps)
-              </Text>
-            </TouchableOpacity>
-
-            <View
-              style={[
-                styles.pickupTimeBadge,
-                {
-                  marginTop: 12,
-                  marginBottom: 0,
-                  backgroundColor: selectedOrder.paymentStatus === 'PAID' ? '#DCFCE7' : '#FFEDD5',
-                },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.pickupTimeText,
-                  { color: selectedOrder.paymentStatus === 'PAID' ? '#15803D' : '#C2410C' },
-                ]}
-              >
-                {selectedOrder.paymentStatus === 'PAID'
-                  ? `✓ Booking Payment Collected (${formatInr(
-                      selectedOrder.totalAmountInr || selectedOrder.courierFeeInr || 0
-                    )})`
-                  : `Payment Pending (${formatInr(
-                      selectedOrder.totalAmountInr || selectedOrder.courierFeeInr || 0
-                    )})`}
-              </Text>
-            </View>
-            {selectedOrder.paymentStatus !== 'PAID' &&
-            (selectedOrder.totalAmountInr || selectedOrder.courierFeeInr || 0) >= 1 ? (
-              <TouchableOpacity
-                style={[
-                  styles.btnSecondary,
-                  {
-                    marginTop: 10,
-                    paddingHorizontal: 14,
-                    backgroundColor: '#EFF6FF',
-                    borderWidth: 1,
-                    borderColor: '#BFDBFE',
-                    flex: 0,
-                  },
-                ]}
-                disabled={collectingOrderId === selectedOrder.id}
-                onPress={() => void handleCollectBookingPayment(selectedOrder)}
-              >
-                <Text style={[styles.btnSecondaryText, { color: '#1D4ED8' }]}>
-                  {collectingOrderId === selectedOrder.id
-                    ? 'Opening Checkout...'
-                    : '💳 Collect Payment via Razorpay'}
-                </Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-
-          <View style={styles.handoverBanner}>
-            <Text style={styles.handoverCheck}>🔐 Chain-of-Custody Handover</Text>
-            <Text style={styles.handoverSub}>
-              Verify the 5-digit Handover OTP provided for {selectedOrder.orderNumber}
-            </Text>
-          </View>
-
-          <View style={styles.otpBoxesRow}>
-            {otpValue.map((digit, idx) => (
-              <View key={idx} style={styles.otpBox}>
-                <TextInput
-                  style={styles.otpDigit}
-                  value={digit}
-                  maxLength={1}
-                  keyboardType="numeric"
-                  textAlign="center"
-                  onChangeText={(val) => updateOtpDigit(idx, val)}
-                />
-              </View>
-            ))}
-          </View>
-
-          <View style={{ marginTop: 22 }}>
-            <Text style={styles.inputLabelSm}>Arrival Chiller Temperature (°C)</Text>
-            <TextInput
-              style={styles.fieldInput}
-              value={dropTempInput}
-              onChangeText={setDropTempInput}
-              keyboardType="numeric"
-              placeholder="4.2"
-            />
-          </View>
-
-          <TouchableOpacity
-            style={[styles.ctaButton, { marginTop: 22 }, submittingAction && { opacity: 0.65 }]}
-            disabled={submittingAction}
-            onPress={() => void handleConfirmDropOtp(selectedOrder)}
-          >
-            <Text style={styles.ctaButtonText}>
-              {submittingAction ? 'Verifying Handover...' : 'Verify OTP & Confirm Drop ✓'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    );
-  };
-
-  /* =========================================================================
-   * 5. SCREEN 5: BOOKING COMPLETED RECEIPT
-   * ========================================================================= */
-  const renderCompletedScreen = () => (
-    <View style={styles.fullscreenContainer}>
-      <View style={styles.navBarHeader}>
-        <TouchableOpacity onPress={() => setCurrentScreen('BOOKING_REQUESTS')}>
-          <Text style={styles.navBarBackArrow}>←</Text>
-        </TouchableOpacity>
-        <View style={{ flex: 1, alignItems: 'center' }}>
-          <Text style={styles.navBarTitle}>Delivery Logged</Text>
-        </View>
-        <View style={{ width: 24 }} />
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: '#FFFFFF',
+          alignItems: 'center',
+          justifyContent: 'center',
+          paddingTop: insets.top + 24,
+          paddingBottom: insets.bottom + 24,
+          paddingHorizontal: 24,
+        }}
+      >
+        <StatusBar barStyle="dark-content" />
+        <LabSetuLogoMark size={84} />
+        <ActivityIndicator
+          size="small"
+          color={BRAND_COLORS.tealPrimary}
+          style={{ marginTop: 18 }}
+        />
       </View>
-
-      <View style={[styles.bodyContainer, { flex: 1, justifyContent: 'center' }]}>
-        <View style={styles.successCheckCircle}>
-          <Text style={styles.successCheckSymbol}>✓</Text>
-        </View>
-
-        <Text style={styles.successTitle}>Sample Delivered Successfully</Text>
-
-        <View style={styles.receiptCard}>
-          <View style={styles.receiptRow}>
-            <Text style={styles.receiptKey}>Booking ID</Text>
-            <Text style={styles.receiptVal}>{lastReceipt?.orderNumber || '—'}</Text>
-          </View>
-          <View style={styles.receiptDivider} />
-          <View style={styles.receiptRow}>
-            <Text style={styles.receiptKey}>Destination Hub</Text>
-            <Text style={styles.receiptVal}>{lastReceipt?.targetLabName || '—'}</Text>
-          </View>
-          <View style={styles.receiptDivider} />
-          <View style={styles.receiptRow}>
-            <Text style={styles.receiptKey}>Arrival Temp</Text>
-            <Text style={styles.receiptVal}>
-              {lastReceipt ? `${lastReceipt.tempCelsius}°C` : '—'}
-            </Text>
-          </View>
-          <View style={styles.receiptDivider} />
-          <View style={styles.receiptRow}>
-            <Text style={styles.receiptKey}>Courier Payout</Text>
-            <Text style={[styles.receiptVal, { color: COLORS.primaryTeal }]}>
-              {formatInr(lastReceipt?.feeInr || 0)}
-            </Text>
-          </View>
-          <View style={styles.receiptDivider} />
-          <View style={styles.receiptRow}>
-            <Text style={styles.receiptKey}>Completed At</Text>
-            <Text style={styles.receiptVal}>{lastReceipt?.completedAt || '—'}</Text>
-          </View>
-        </View>
-
-        <TouchableOpacity
-          style={[styles.ctaButton, { marginTop: 28 }]}
-          onPress={() => {
-            setBottomTab('earnings');
-            setCurrentScreen('BOOKING_REQUESTS');
-          }}
-        >
-          <Text style={styles.ctaButtonText}>View Live Earnings</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
-  /* =========================================================================
-   * TAB 2: MY BOOKINGS HISTORY (100% LIVE FIRESTORE)
-   * ========================================================================= */
-  const renderBookingsHistoryScreen = () => {
-    const q = bookingSearchQuery.trim().toLowerCase();
-    const filtered = myAssignedOrders.filter((b) => {
-      const isActive =
-        b.status === OrderStatus.PICKED_UP ||
-        b.status === OrderStatus.IN_TRANSIT;
-      const isDone =
-        b.status === OrderStatus.DELIVERED_TO_LAB ||
-        b.status === OrderStatus.UNDER_ANALYSIS ||
-        isOrderCompleted(b.status);
-      const isScheduled = b.status === OrderStatus.ASSIGNED_TO_PHLEBO;
-
-      const matchFilter =
-        bookingHistoryFilter === 'all' ||
-        (bookingHistoryFilter === 'active' && isActive) ||
-        (bookingHistoryFilter === 'completed' && isDone) ||
-        (bookingHistoryFilter === 'scheduled' && isScheduled);
-
-      const matchQuery =
-        !q ||
-        b.orderNumber.toLowerCase().includes(q) ||
-        b.patient.pseudonym.toLowerCase().includes(q) ||
-        b.smallLabName.toLowerCase().includes(q) ||
-        b.specimens.some((s) => s.testCode.toLowerCase().includes(q));
-
-      return matchFilter && matchQuery;
-    });
-
-    const activeCount = myAssignedOrders.filter(
-      (b) => b.status === OrderStatus.PICKED_UP || b.status === OrderStatus.IN_TRANSIT
-    ).length;
-    const completedCount = completedAssignedOrders.length;
-    const scheduledCount = myAssignedOrders.filter(
-      (b) => b.status === OrderStatus.ASSIGNED_TO_PHLEBO
-    ).length;
-
-    return (
-      <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
-        <View style={styles.appHeaderBar}>
-          <Text style={styles.appHeaderTitle}>My Bookings</Text>
-          <Text style={styles.appHeaderSubtitle}>
-            Live collection &amp; handover history
-          </Text>
-        </View>
-
-        <View style={styles.bodyContainer}>
-          <View style={styles.searchBox}>
-            <Text style={{ fontSize: 16, marginRight: 8 }}>🔍</Text>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search by ID, patient, lab, test..."
-              placeholderTextColor={COLORS.textSecondary}
-              value={bookingSearchQuery}
-              onChangeText={setBookingSearchQuery}
-            />
-            {bookingSearchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => setBookingSearchQuery('')}>
-                <Text style={{ color: COLORS.textSecondary, fontSize: 14 }}>✕</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          <View style={styles.requestTabsRow}>
-            {(['all', 'active', 'completed', 'scheduled'] as const).map((key) => (
-              <TouchableOpacity
-                key={key}
-                style={[styles.tabButton, bookingHistoryFilter === key && styles.tabButtonActive]}
-                onPress={() => setBookingHistoryFilter(key)}
-              >
-                <Text
-                  style={[
-                    styles.tabButtonText,
-                    bookingHistoryFilter === key && styles.tabButtonTextActive,
-                  ]}
-                >
-                  {key === 'all'
-                    ? `All (${myAssignedOrders.length})`
-                    : key === 'active'
-                    ? `Transit (${activeCount})`
-                    : key === 'completed'
-                    ? `Done (${completedCount})`
-                    : `Assigned (${scheduledCount})`}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {filtered.length === 0 ? (
-            <View style={styles.emptyBox}>
-              <Text style={styles.emptyTitle}>No Matching Bookings</Text>
-              <Text style={styles.emptySub}>
-                Claim an open booking from Home or adjust filters.
-              </Text>
-            </View>
-          ) : (
-            filtered.map((item) => {
-              const isTransit =
-                item.status === OrderStatus.PICKED_UP ||
-                item.status === OrderStatus.IN_TRANSIT;
-              const isAssigned = item.status === OrderStatus.ASSIGNED_TO_PHLEBO;
-              return (
-                <View key={item.id} style={styles.historyCard}>
-                  <View style={styles.historyCardHeader}>
-                    <View>
-                      <Text style={styles.historyCardId}>{item.orderNumber}</Text>
-                      <Text style={styles.historyCardPatient}>{item.patient.pseudonym}</Text>
-                    </View>
-                    <View style={{ alignItems: 'flex-end' }}>
-                      <Text style={styles.historyCardFee}>
-                        {formatInr(item.courierFeeInr || 0)}
-                      </Text>
-                      <View
-                        style={[
-                          styles.statusPillBadge,
-                          {
-                            backgroundColor: isTransit
-                              ? '#DBEAFE'
-                              : isAssigned
-                              ? '#FEF3C7'
-                              : '#DCFCE7',
-                          },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.statusPillText,
-                            {
-                              color: isTransit
-                                ? '#2563EB'
-                                : isAssigned
-                                ? '#D97706'
-                                : '#16A34A',
-                            },
-                          ]}
-                        >
-                          ● {formatOrderStatus(item.status)}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-
-                  <View style={styles.routeItemRow}>
-                    <View style={[styles.dotMarker, { backgroundColor: COLORS.primaryTeal }]} />
-                    <Text style={styles.routeTextSm}>{item.smallLabName}</Text>
-                  </View>
-                  <View style={[styles.routeItemRow, { marginTop: 4 }]}>
-                    <View style={[styles.dotMarker, { backgroundColor: COLORS.accentBlue }]} />
-                    <Text style={styles.routeTextSm}>{item.targetLabName}</Text>
-                  </View>
-
-                  <View style={styles.historyCardFooter}>
-                    <Text style={styles.historyCardTests}>
-                      🧪 {item.specimens.map((s) => s.testCode).join(', ')}
-                    </Text>
-                    <Text style={styles.historyCardTemp}>
-                      ❄️{' '}
-                      {item.arrivalTemperatureCelsius !== undefined
-                        ? `${item.arrivalTemperatureCelsius}°C`
-                        : 'Awaiting Scan'}
-                    </Text>
-                  </View>
-
-                  {(isTransit || isAssigned) && (
-                    <TouchableOpacity
-                      style={[styles.btnPrimary, { marginTop: 12, paddingVertical: 8 }]}
-                      onPress={() => {
-                        setBottomTab('home');
-                        openOrderWorkflow(item);
-                      }}
-                    >
-                      <Text style={styles.btnPrimaryText}>
-                        {isTransit ? 'Open OTP Handover' : 'Open Collection Workflow'}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              );
-            })
-          )}
-        </View>
-      </ScrollView>
     );
-  };
-
-  /* =========================================================================
-   * TAB 3: EARNINGS & PAYOUTS (100% LIVE FIRESTORE SETTLEMENTS + ORDERS)
-   * ========================================================================= */
-  const renderEarningsScreen = () => {
-    const maxCount = Math.max(1, ...metrics.weeklyBars.map((b) => b.count));
-
-    return (
-      <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
-        <View style={styles.heroHeader}>
-          <Text style={styles.greetingTitle}>Earnings &amp; Settlements</Text>
-          <Text style={styles.greetingSubtitle}>
-            Live trip payouts &amp; settled statements
-          </Text>
-
-          <View style={[styles.summaryCard, { marginTop: 16 }]}>
-            <View
-              style={{
-                flexDirection: 'row',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
-              <View>
-                <Text style={styles.summaryTitle}>PENDING COURIER PAYOUT</Text>
-                <Text style={[styles.metricNumber, { fontSize: 28, color: COLORS.primaryDark }]}>
-                  {formatInr(metrics.pendingPayoutInr)}
-                </Text>
-              </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text style={styles.metricLabel}>Paid Out Total</Text>
-                <Text style={[styles.metricNumber, { fontSize: 16, color: COLORS.successGreen }]}>
-                  {formatInr(metrics.settledInr)}
-                </Text>
-              </View>
-            </View>
-
-            <View
-              style={[styles.summaryDivider, { width: '100%', height: 1, marginVertical: 14 }]}
-            />
-
-            <View style={styles.summaryMetricsRow}>
-              <View style={styles.summaryMetricCol}>
-                <Text style={styles.metricNumber}>{formatInr(metrics.todayEarnings)}</Text>
-                <Text style={styles.metricLabel}>Today</Text>
-              </View>
-              <View style={styles.summaryDivider} />
-              <View style={styles.summaryMetricCol}>
-                <Text style={styles.metricNumber}>{formatInr(metrics.weeklyEarnings)}</Text>
-                <Text style={styles.metricLabel}>7 Days</Text>
-              </View>
-              <View style={styles.summaryDivider} />
-              <View style={styles.summaryMetricCol}>
-                <Text style={styles.metricNumber}>{formatInr(metrics.monthlyEarnings)}</Text>
-                <Text style={styles.metricLabel}>This Month</Text>
-              </View>
-            </View>
-          </View>
-        </View>
-
-        <View style={[styles.bodyContainer, { paddingTop: 48 }]}>
-          <View style={styles.chartCard}>
-            <Text style={styles.sectionHeaderTitle}>Weekly Pickup Volume (Live)</Text>
-            <View style={styles.barChartContainer}>
-              {metrics.weeklyBars.map((bar) => {
-                const heightPct = Math.max(8, Math.round((bar.count / maxCount) * 100));
-                return (
-                  <View key={bar.day} style={styles.chartBarCol}>
-                    <Text style={styles.chartBarAmount}>{bar.count}</Text>
-                    <View style={styles.chartBarTrack}>
-                      <View
-                        style={[
-                          styles.chartBarFill,
-                          {
-                            height: `${heightPct}%`,
-                            backgroundColor: bar.count > 0 ? COLORS.primaryTeal : '#CBD5E1',
-                          },
-                        ]}
-                      />
-                    </View>
-                    <Text style={styles.chartBarDay}>{bar.day}</Text>
-                  </View>
-                );
-              })}
-            </View>
-          </View>
-
-          <Text style={[styles.sectionHeaderTitle, { marginTop: 12, marginBottom: 10 }]}>
-            Trip Settlement Ledger ({earningRows.length})
-          </Text>
-
-          {earningRows.length === 0 ? (
-            <View style={styles.emptyBox}>
-              <Text style={styles.emptyTitle}>No Courier Payouts Yet</Text>
-              <Text style={styles.emptySub}>
-                Claim and deliver sample orders to see live settlement rows.
-              </Text>
-            </View>
-          ) : (
-            earningRows.map(({ order, payoutRef, customerPaid, amountInr, settled, delivered }) => (
-              <View key={order.id} style={styles.tripLedgerRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.tripLedgerId}>{order.orderNumber}</Text>
-                  <Text style={styles.tripLedgerLab}>
-                    {order.smallLabName} → {order.targetLabName}
-                  </Text>
-                  <Text style={styles.tripLedgerBase}>
-                    {settled
-                      ? `Paid Out${payoutRef ? ` • Ref: ${payoutRef}` : ''}`
-                      : delivered && customerPaid
-                      ? 'Delivered & Paid Online • Ready for Payout'
-                      : delivered
-                      ? 'Delivered • Awaiting Customer Payment'
-                      : formatOrderStatus(order.status)}
-                  </Text>
-                </View>
-                <Text style={styles.tripLedgerFee}>{formatInr(amountInr)}</Text>
-              </View>
-            ))
-          )}
-
-          <Text style={[styles.sectionHeaderTitle, { marginTop: 20, marginBottom: 10 }]}>
-            Released Payout Receipts ({payouts.length})
-          </Text>
-
-          {payouts.length === 0 ? (
-            <View style={styles.emptyBox}>
-              <Text style={styles.emptyTitle}>No Payout Transfers Yet</Text>
-              <Text style={styles.emptySub}>
-                Once Admin releases payouts to your UPI or bank account, UTR transfer receipts appear here.
-              </Text>
-            </View>
-          ) : (
-            payouts.map((p) => (
-              <View key={p.id} style={styles.tripLedgerRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.tripLedgerId}>
-                    {p.orderNumber} • {p.mode}
-                  </Text>
-                  <Text style={styles.tripLedgerLab}>{p.destinationSummary}</Text>
-                  <Text style={styles.tripLedgerBase}>
-                    Ref: {p.referenceId} • {new Date(p.createdAt).toLocaleDateString('en-IN')}
-                  </Text>
-                </View>
-                <Text style={styles.tripLedgerFee}>{formatInr(p.amountInr)}</Text>
-              </View>
-            ))
-          )}
-        </View>
-      </ScrollView>
-    );
-  };
-
-  /* =========================================================================
-   * TAB 4: PROFILE & SHIFT / COLD-CHAIN EQUIPMENT (ZERO MOCK DATA)
-   * ========================================================================= */
-  const renderProfileScreen = () => {
-    return (
-      <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
-        <View style={styles.heroHeader}>
-          <View style={{ alignItems: 'center', paddingVertical: 10 }}>
-            <View style={[styles.avatarCircle, { width: 68, height: 68, borderRadius: 34 }]}>
-              <Text style={[styles.avatarText, { fontSize: 26 }]}>{phleboInitial}</Text>
-            </View>
-            <Text style={[styles.greetingTitle, { fontSize: 20, marginTop: 8 }]}>
-              {phleboName}
-            </Text>
-            <Text style={styles.greetingSubtitle}>
-              Courier ID: {effectivePhleboId || 'Not Assigned'} • {phleboEmail}
-            </Text>
-            <View style={[styles.onlinePill, { backgroundColor: '#064E3B', marginTop: 10 }]}>
-              <Text style={styles.onlinePillText}>
-                {myPhleboProfile
-                  ? `★ ${myPhleboProfile.rating.toFixed(1)} (${completedAssignedOrders.length} Delivered)`
-                  : 'Waiting for Courier Profile Setup'}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        <View style={styles.bodyContainer}>
-          <Text style={styles.sectionHeaderTitle}>Duty Status</Text>
-          <View style={styles.shiftSelectorRow}>
-            {(
-              [
-                { status: 'ONLINE', label: '🟢 On Duty', bg: '#DCFCE7', text: '#16A34A' },
-                { status: 'BREAK', label: '🟡 On Break', bg: '#FEF3C7', text: '#D97706' },
-                { status: 'OFFLINE', label: '🔴 Off Duty', bg: '#FEE2E2', text: '#DC2626' },
-              ] as const
-            ).map((s) => (
-              <TouchableOpacity
-                key={s.status}
-                style={[
-                  styles.shiftButton,
-                  dutyStatus === s.status && {
-                    backgroundColor: s.bg,
-                    borderColor: s.text,
-                    borderWidth: 1.5,
-                  },
-                ]}
-                onPress={() => void handleShiftUpdate(s.status)}
-              >
-                <Text
-                  style={[
-                    styles.shiftButtonText,
-                    dutyStatus === s.status && { color: s.text, fontWeight: '700' },
-                  ]}
-                >
-                  {s.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <Text style={[styles.sectionHeaderTitle, { marginTop: 20 }]}>
-            💳 Payout Account Details (UPI / Bank)
-          </Text>
-          <View style={styles.equipmentCard}>
-            <View style={[styles.shiftSelectorRow, { marginBottom: 12 }]}>
-              <TouchableOpacity
-                style={[
-                  styles.shiftButton,
-                  payoutMethod === 'UPI' && {
-                    backgroundColor: '#CCFBF1',
-                    borderColor: COLORS.primaryTeal,
-                    borderWidth: 1.5,
-                  },
-                ]}
-                onPress={() => setPayoutMethod('UPI')}
-              >
-                <Text
-                  style={[
-                    styles.shiftButtonText,
-                    payoutMethod === 'UPI' && { color: COLORS.primaryDark, fontWeight: '700' },
-                  ]}
-                >
-                  UPI ID
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.shiftButton,
-                  payoutMethod === 'BANK_TRANSFER' && {
-                    backgroundColor: '#CCFBF1',
-                    borderColor: COLORS.primaryTeal,
-                    borderWidth: 1.5,
-                  },
-                ]}
-                onPress={() => setPayoutMethod('BANK_TRANSFER')}
-              >
-                <Text
-                  style={[
-                    styles.shiftButtonText,
-                    payoutMethod === 'BANK_TRANSFER' && {
-                      color: COLORS.primaryDark,
-                      fontWeight: '700',
-                    },
-                  ]}
-                >
-                  Bank Account + IFSC
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={{ marginBottom: 10 }}>
-              <Text style={styles.inputLabelSm}>Account Holder Name</Text>
-              <TextInput
-                style={styles.fieldInput}
-                value={payoutAccountName}
-                onChangeText={setPayoutAccountName}
-                placeholder="Full name on UPI / bank"
-              />
-            </View>
-
-            {payoutMethod === 'UPI' ? (
-              <View style={{ marginBottom: 12 }}>
-                <Text style={styles.inputLabelSm}>UPI ID</Text>
-                <TextInput
-                  style={styles.fieldInput}
-                  value={payoutUpiId}
-                  onChangeText={setPayoutUpiId}
-                  autoCapitalize="none"
-                  placeholder="courier@okaxis"
-                />
-              </View>
-            ) : (
-              <>
-                <View style={{ marginBottom: 10 }}>
-                  <Text style={styles.inputLabelSm}>Bank Account Number</Text>
-                  <TextInput
-                    style={styles.fieldInput}
-                    value={payoutBankAccount}
-                    onChangeText={setPayoutBankAccount}
-                    keyboardType="numeric"
-                    placeholder="Enter account number"
-                  />
-                </View>
-                <View style={{ marginBottom: 12 }}>
-                  <Text style={styles.inputLabelSm}>IFSC Code</Text>
-                  <TextInput
-                    style={styles.fieldInput}
-                    value={payoutIfsc}
-                    onChangeText={(txt) => setPayoutIfsc(txt.toUpperCase())}
-                    autoCapitalize="characters"
-                    placeholder="HDFC0001234"
-                  />
-                </View>
-              </>
-            )}
-
-            <TouchableOpacity
-              style={[styles.btnPrimary, savingPayoutProfile && { opacity: 0.65 }]}
-              disabled={savingPayoutProfile}
-              onPress={() => void handleSavePayoutProfile()}
-            >
-              <Text style={styles.btnPrimaryText}>
-                {savingPayoutProfile ? 'Saving Account...' : 'Save Payout Account'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          <Text style={[styles.sectionHeaderTitle, { marginTop: 20 }]}>
-            Assigned Cold-Chain Equipment
-          </Text>
-          <View style={styles.equipmentCard}>
-            <View style={styles.equipmentRow}>
-              <Text style={{ fontSize: 20 }}>🧊</Text>
-              <View style={{ flex: 1, marginLeft: 10 }}>
-                <Text style={styles.equipmentTitle}>
-                  {myPhleboProfile?.coolerBoxId
-                    ? `Smart Chiller Box #${myPhleboProfile.coolerBoxId}`
-                    : 'Cooler Box Not Assigned'}
-                </Text>
-                <Text style={styles.equipmentSub}>
-                  {myPhleboProfile
-                    ? `Temp: ${myPhleboProfile.chillerTempCelsius}°C • Battery: ${myPhleboProfile.batteryPct}%`
-                    : 'Ask Platform Admin to assign equipment under Field Phlebotomists'}
-                </Text>
-              </View>
-            </View>
-
-            <View
-              style={[
-                styles.equipmentRow,
-                { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderColor: COLORS.borderLight },
-              ]}
-            >
-              <Text style={{ fontSize: 20 }}>🏍️</Text>
-              <View style={{ flex: 1, marginLeft: 10 }}>
-                <Text style={styles.equipmentTitle}>Assigned Vehicle</Text>
-                <Text style={styles.equipmentSub}>
-                  {myPhleboProfile?.vehicleInfo || 'Waiting for Vehicle Assignment'}
-                </Text>
-              </View>
-            </View>
-
-            <View
-              style={[
-                styles.equipmentRow,
-                { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderColor: COLORS.borderLight },
-              ]}
-            >
-              <Text style={{ fontSize: 20 }}>📍</Text>
-              <View style={{ flex: 1, marginLeft: 10 }}>
-                <Text style={styles.equipmentTitle}>Coverage Zone &amp; Verification</Text>
-                <Text style={styles.equipmentSub}>
-                  {myPhleboProfile?.currentLocation || 'Unassigned Zone'} •{' '}
-                  {myPhleboProfile?.verified ? 'Verified' : 'Pending Review'}
-                </Text>
-              </View>
-            </View>
-          </View>
-
-          <View style={{ marginTop: 24, gap: 10 }}>
-            <TouchableOpacity style={styles.sosButton} onPress={handleTriggerSos}>
-              <Text style={styles.sosButtonText}>🚨 EMERGENCY COLD-CHAIN SOS</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
-              <Text style={styles.signOutButtonText}>Sign Out ({phleboEmail})</Text>
-            </TouchableOpacity>
-          </View>
-
-          <Text style={styles.versionFootnote}>
-            LabSetu Phlebotomist App • Live Field Operations
-          </Text>
-        </View>
-      </ScrollView>
-    );
-  };
+  }
 
   return (
-    <SafeAreaView style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.primaryDark} />
+    <SafeAreaView
+      edges={session ? ['left', 'right'] : []}
+      style={[
+        styles.root,
+        {
+          backgroundColor: !session ? '#FFFFFF' : COLORS.background,
+        },
+      ]}
+    >
+      <StatusBar barStyle={!session ? 'dark-content' : 'light-content'} />
+      {session && insets.top > 0 ? (
+        <View style={{ height: insets.top, backgroundColor: topSafeBg }} />
+      ) : null}
 
       <DynamicAlertModal
         alertState={alertState}
         onClose={() => setAlertState(INITIAL_DYNAMIC_ALERT)}
       />
 
-      <Modal
-        visible={Boolean(activePaymentLink)}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setActivePaymentLink(null)}
-      >
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: 'rgba(15, 23, 42, 0.58)',
-            justifyContent: 'center',
-            padding: 20,
-          }}
-        >
-          <View
-            style={{
-              backgroundColor: '#FFFFFF',
-              borderRadius: 16,
-              padding: 20,
-              borderWidth: 1,
-              borderColor: COLORS.borderLight,
-            }}
-          >
-            <Text style={{ fontSize: 17, fontWeight: '700', color: COLORS.textPrimary }}>
-              💳 Confirm Mobile Payment
-            </Text>
-            <Text style={{ fontSize: 13, color: COLORS.textSecondary, marginTop: 6 }}>
-              Booking {activePaymentLink?.orderNumber} • Amount:{' '}
-              {formatInr(activePaymentLink?.amountInr || 0)}
-            </Text>
-            <Text style={{ fontSize: 12, color: COLORS.textSecondary, marginTop: 8 }}>
-              Complete the Razorpay checkout in the browser/UPI sheet, then tap Verify &amp; Confirm below to mark this order paid.
-            </Text>
+      <PaymentLinkModal
+        activePaymentLink={activePaymentLink}
+        verifyingLinkPayment={verifyingLinkPayment}
+        onClose={() => setActivePaymentLink(null)}
+        onVerify={() => void handleVerifyActivePaymentLink()}
+        onReopenLink={(url) => void Linking.openURL(url)}
+      />
 
-            <View style={{ marginTop: 16, gap: 10 }}>
-              <TouchableOpacity
-                style={[styles.ctaButton, verifyingLinkPayment && { opacity: 0.65 }]}
-                disabled={verifyingLinkPayment}
-                onPress={() => void handleVerifyActivePaymentLink()}
-              >
-                <Text style={styles.ctaButtonText}>
-                  {verifyingLinkPayment ? 'Checking Razorpay Status...' : 'Check & Confirm Payment ✓'}
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.btnSecondary, { flex: 0, paddingVertical: 12 }]}
-                onPress={() => {
-                  if (activePaymentLink?.shortUrl) {
-                    void Linking.openURL(activePaymentLink.shortUrl);
-                  }
-                }}
-              >
-                <Text style={styles.btnSecondaryText}>Re-open Razorpay Checkout Link</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.btnSecondary, { flex: 0, paddingVertical: 10, backgroundColor: '#F8FAFC' }]}
-                onPress={() => setActivePaymentLink(null)}
-              >
-                <Text style={[styles.btnSecondaryText, { color: COLORS.textSecondary }]}>Close</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Rapido-Style 1–5 KM Live Broadcast Dispatch Modal */}
-      <Modal
-        visible={Boolean(activeBroadcastMatch)}
-        transparent
-        animationType="slide"
-        onRequestClose={() => {
-          if (activeBroadcastMatch) {
-            setDismissedBroadcastIds((prev) =>
-              prev.includes(activeBroadcastMatch.order.id)
-                ? prev
-                : [...prev, activeBroadcastMatch.order.id]
-            );
-          }
+      <BroadcastDispatchModal
+        activeBroadcastMatch={activeBroadcastMatch}
+        riderLocation={riderLocation}
+        submittingAction={submittingAction}
+        onDismissBroadcast={(orderId) => {
+          stopContinuousPickupAlert();
+          void dismissIncomingPickupOverlay();
+          setBroadcastForceOpen(false);
+          setDismissedBroadcastIds((prev) =>
+            prev.includes(orderId) ? prev : [...prev, orderId]
+          );
         }}
-      >
-        {activeBroadcastMatch ? (
-          <View style={styles.modalBackdrop}>
-            <View style={styles.broadcastCard}>
-              <View style={styles.broadcastAlertBadge}>
-                <Text style={styles.broadcastAlertBadgeText}>
-                  ⚡ LIVE BROADCAST • {activeBroadcastMatch.distFromRiderKm} km away (within{' '}
-                  {activeBroadcastMatch.maxRadiusKm} km)
-                </Text>
-              </View>
+        onAcceptPoolOrder={(order) => void handleAcceptPoolOrder(order)}
+        onOpenDirectionsMap={openDirectionsMap}
+      />
 
-              <Text style={styles.broadcastTitle}>
-                Pickup Request • {activeBroadcastMatch.order.orderNumber}
-              </Text>
-              <Text style={styles.broadcastFeeHero}>
-                Earn {formatInr(activeBroadcastMatch.order.courierFeeInr || 0)} •{' '}
-                {formatLabel(activeBroadcastMatch.order.priority)}
-              </Text>
-
-              <View style={styles.routeContainer}>
-                <View style={styles.routeRow}>
-                  <View style={[styles.dotMarker, { backgroundColor: COLORS.primaryTeal }]} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.routePlaceTitle}>
-                      {activeBroadcastMatch.order.smallLabName}
-                    </Text>
-                    <Text style={styles.routePlaceSubtitle}>
-                      {activeBroadcastMatch.order.pickupLocation.address}
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={styles.routeConnectingLine} />
-
-                <View style={styles.routeRow}>
-                  <View style={[styles.dotMarker, { backgroundColor: COLORS.errorRed }]} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.routePlaceTitle}>
-                      {activeBroadcastMatch.order.targetLabName}
-                    </Text>
-                    <Text style={styles.routePlaceSubtitle}>
-                      {activeBroadcastMatch.order.deliveryLocation.address}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-
-              <Text style={styles.broadcastSpecsLine}>
-                {(activeBroadcastMatch.order.specimens || []).length} Tube(s):{' '}
-                {(activeBroadcastMatch.order.specimens || [])
-                  .map(
-                    (s) =>
-                      `${s.testCode} (${(TUBE_METADATA[s.tubeType] || TUBE_METADATA[TubeType.SERUM_RED_GOLD]).shortTag})`
-                  )
-                  .join(', ')}
-                {typeof activeBroadcastMatch.order.distanceKm === 'number' &&
-                activeBroadcastMatch.order.distanceKm > 0
-                  ? ` • Route ${activeBroadcastMatch.order.distanceKm} km`
-                  : ''}
-              </Text>
-
-              <View style={[styles.actionsRow, { marginTop: 16 }]}>
-                <TouchableOpacity
-                  style={styles.btnSecondary}
-                  disabled={submittingAction}
-                  onPress={() =>
-                    setDismissedBroadcastIds((prev) =>
-                      prev.includes(activeBroadcastMatch.order.id)
-                        ? prev
-                        : [...prev, activeBroadcastMatch.order.id]
-                    )
-                  }
-                >
-                  <Text style={styles.btnSecondaryText}>Pass</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.btnPrimary, { flex: 2, backgroundColor: '#16A34A' }]}
-                  disabled={submittingAction}
-                  onPress={() => void handleAcceptPoolOrder(activeBroadcastMatch.order)}
-                >
-                  <Text style={styles.btnPrimaryText}>
-                    {submittingAction ? 'Claiming...' : '⚡ ACCEPT PICKUP NOW'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        ) : null}
-      </Modal>
-
-      {/* GPS & Locality Zone Picker Modal */}
-      <Modal
+      <LocationPickerModal
         visible={showLocationPickerModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowLocationPickerModal(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalCardTitle}>📍 Set Live Rider GPS Location</Text>
-            <Text style={styles.modalCardSub}>
-              Updates 1–5 km broadcast distance checks and Google Maps route origin immediately.
+        riderLocation={riderLocation}
+        assignedAdminZone={assignedAdminZone}
+        myPhleboProfile={myPhleboProfile}
+        serviceZones={serviceZones}
+        zonesLoaded={zonesLoaded}
+        riderCoverage={riderCoverage}
+        onClose={() => setShowLocationPickerModal(false)}
+        onSyncDeviceGps={(lat, lng) => void syncDeviceLiveGps(lat, lng)}
+        onShowAlert={showDynamicAlert}
+      />
+
+      <CameraScannerModal
+        cameraModal={cameraModal}
+        cameraStatusText={cameraStatusText}
+        selectedOrder={selectedOrder}
+        specimenDrafts={specimenDrafts}
+        uploadingPhoto={uploadingPhoto}
+        onClose={() => setCameraModal(null)}
+        onCaptureSnapshot={handleCaptureSnapshotFromCam}
+        onUploadPhotoFile={handleUploadSamplePhotoFromFile}
+        onUpdateSpecimenDraft={updateSpecimenDraft}
+      />
+
+      <Modal visible={isSuspendedForUnsettledFees} transparent animationType="fade">
+        <View style={[styles.modalBackdrop, { padding: 20 }]}>
+          <View style={[styles.modalCard, { alignItems: 'center', padding: 24 }]}>
+            <Ionicons name="warning-outline" size={54} color="#EF4444" style={{ marginBottom: 12 }} />
+            <Text style={{ fontSize: 18, fontWeight: '800', color: '#991B1B', textAlign: 'center', marginBottom: 8 }}>
+              Account Services Restricted
             </Text>
-
+            <Text style={{ fontSize: 13, color: '#475569', textAlign: 'center', lineHeight: 20, marginBottom: 14 }}>
+              You have overdue platform fees of {formatInr(myPhleboProfile?.pendingPlatformFeeDueInr || 0)} pending for more than 15 days from cash collections.
+            </Text>
+            <Text style={{ fontSize: 12, color: '#991B1B', backgroundColor: '#FEF2F2', padding: 12, borderRadius: 8, textAlign: 'center', marginBottom: 16 }}>
+              Route acceptance and sample collection are paused until overdue fees are adjusted against payouts or cleared.
+            </Text>
             <TouchableOpacity
-              style={[styles.scanCamButton, { marginTop: 12, paddingVertical: 11 }]}
-              onPress={() => {
-                if (
-                  Platform.OS !== 'web' ||
-                  typeof navigator === 'undefined' ||
-                  !navigator.geolocation
-                ) {
-                  showDynamicAlert({
-                    variant: 'info',
-                    title: 'Device GPS Unavailable',
-                    message: 'Select a city locality hub or enter coordinates below.',
-                  });
-                  return;
-                }
-                navigator.geolocation.getCurrentPosition(
-                  (pos) => {
-                    void applyRiderLocation(
-                      pos.coords.latitude,
-                      pos.coords.longitude,
-                      'Device Live GPS'
-                    );
-                  },
-                  (err) => {
-                    showDynamicAlert({
-                      variant: 'warning',
-                      title: 'GPS Permission Declined',
-                      message: err.message || 'Select a preset hub below instead.',
-                    });
-                  },
-                  { enableHighAccuracy: true, timeout: 8000 }
-                );
-              }}
+              style={[styles.ctaButton, { width: '100%' }]}
+              onPress={() => setBottomTab('profile')}
             >
-              <Text style={styles.scanCamButtonText}>🛰️ Use Device Live GPS</Text>
+              <Text style={styles.ctaButtonText}>View Payout Account &amp; Ledger</Text>
             </TouchableOpacity>
-
-            <Text style={[styles.inputLabelSm, { marginTop: 14 }]}>Quick Locality Presets</Text>
-            <ScrollView style={{ maxHeight: 170 }} showsVerticalScrollIndicator={false}>
-              <View style={{ gap: 6 }}>
-                {LOCALITY_GPS_PRESETS.map((preset) => (
-                  <TouchableOpacity
-                    key={preset.label}
-                    style={styles.presetLocationRow}
-                    onPress={() =>
-                      void applyRiderLocation(preset.latitude, preset.longitude, preset.label)
-                    }
-                  >
-                    <Text style={styles.presetLocationName}>{preset.label}</Text>
-                    <Text style={styles.presetLocationCoords}>
-                      {preset.latitude.toFixed(4)}, {preset.longitude.toFixed(4)}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </ScrollView>
-
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.inputLabelSm}>Latitude</Text>
-                <TextInput
-                  style={styles.fieldInput}
-                  value={manualLatInput}
-                  onChangeText={setManualLatInput}
-                  keyboardType="numeric"
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.inputLabelSm}>Longitude</Text>
-                <TextInput
-                  style={styles.fieldInput}
-                  value={manualLngInput}
-                  onChangeText={setManualLngInput}
-                  keyboardType="numeric"
-                />
-              </View>
-            </View>
-
-            <View style={[styles.actionsRow, { marginTop: 14 }]}>
-              <TouchableOpacity
-                style={styles.btnSecondary}
-                onPress={() => setShowLocationPickerModal(false)}
-              >
-                <Text style={styles.btnSecondaryText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.btnPrimary}
-                onPress={() => {
-                  const lat = Number.parseFloat(manualLatInput);
-                  const lng = Number.parseFloat(manualLngInput);
-                  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-                    showDynamicAlert({
-                      variant: 'warning',
-                      title: 'Invalid Coordinates',
-                      message: 'Enter valid numeric latitude and longitude values.',
-                    });
-                    return;
-                  }
-                  void applyRiderLocation(lat, lng, 'Custom Coordinates');
-                }}
-              >
-                <Text style={styles.btnPrimaryText}>Save Coordinates</Text>
-              </TouchableOpacity>
-            </View>
           </View>
         </View>
-      </Modal>
-
-      {/* Camera Barcode Scanner & Sample Collection Photo Proof Modal */}
-      <Modal
-        visible={Boolean(cameraModal)}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setCameraModal(null)}
-      >
-        {cameraModal ? (
-          <View style={styles.modalBackdrop}>
-            <View style={styles.modalCard}>
-              <Text style={styles.modalCardTitle}>
-                {cameraModal.mode === 'PHOTO'
-                  ? '📸 Capture Sample Collection Photo'
-                  : `📷 Scan Barcode — ${cameraModal.specimen?.testCode || ''}`}
-              </Text>
-              <Text style={styles.modalCardSub}>{cameraStatusText}</Text>
-
-              <View nativeID="phlebo-cam-host" style={styles.cameraViewport} />
-
-              {cameraModal.mode === 'PHOTO' ? (
-                <View style={{ gap: 10, marginTop: 14 }}>
-                  <TouchableOpacity
-                    style={[styles.ctaButton, uploadingPhoto && { opacity: 0.65 }]}
-                    disabled={uploadingPhoto}
-                    onPress={() => {
-                      if (selectedOrder) {
-                        handleCaptureSnapshotFromCam(selectedOrder.id);
-                      }
-                    }}
-                  >
-                    <Text style={styles.ctaButtonText}>
-                      {uploadingPhoto ? 'Uploading Photo...' : '📸 Capture Photo & Upload'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.btnSecondary}
-                    onPress={() => {
-                      const oid = selectedOrder?.id;
-                      setCameraModal(null);
-                      if (oid) handleUploadSamplePhotoFromFile(oid);
-                    }}
-                  >
-                    <Text style={styles.btnSecondaryText}>📁 Choose Photo File Instead</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : cameraModal.specimenId && cameraModal.specimen ? (
-                <View style={{ marginTop: 12 }}>
-                  <Text style={styles.inputLabelSm}>
-                    {(TUBE_METADATA[cameraModal.specimen.tubeType] || TUBE_METADATA[TubeType.SERUM_RED_GOLD]).label}
-                  </Text>
-                  <TextInput
-                    style={styles.fieldInput}
-                    value={specimenDrafts[cameraModal.specimenId]?.barcode || ''}
-                    onChangeText={(txt) =>
-                      updateSpecimenDraft(cameraModal.specimenId!, { barcode: txt })
-                    }
-                    placeholder={`Expected: ${cameraModal.specimen.barcode}`}
-                    autoCapitalize="characters"
-                  />
-                  <TouchableOpacity
-                    style={[styles.ctaButton, { marginTop: 10 }]}
-                    onPress={() => {
-                      updateSpecimenDraft(cameraModal.specimenId!, {
-                        barcode: cameraModal.specimen!.barcode,
-                        usedTube: cameraModal.specimen!.tubeType || TubeType.SERUM_RED_GOLD,
-                      });
-                      setCameraModal(null);
-                    }}
-                  >
-                    <Text style={styles.ctaButtonText}>
-                      ✓ Match Expected Barcode ({cameraModal.specimen.barcode})
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              ) : null}
-
-              <TouchableOpacity
-                style={[styles.btnSecondary, { flex: 0, marginTop: 12, paddingVertical: 11 }]}
-                onPress={() => setCameraModal(null)}
-              >
-                <Text style={[styles.btnSecondaryText, { color: COLORS.textSecondary }]}>
-                  Close Camera
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        ) : null}
       </Modal>
 
       {!session ? (
@@ -3836,33 +3613,275 @@ export default function App() {
       ) : (
         <>
           <View style={{ flex: 1 }}>
-            {bottomTab === 'home' && (
-              <>
-                {currentScreen === 'BOOKING_REQUESTS' && renderBookingRequestsScreen()}
-                {currentScreen === 'BOOKING_DETAILS' && renderBookingDetailsScreen()}
-                {currentScreen === 'COLLECT_SAMPLE' && renderCollectSampleScreen()}
-                {currentScreen === 'DROP_SAMPLE' && renderDropSampleScreen()}
-                {currentScreen === 'COMPLETED' && renderCompletedScreen()}
-              </>
+            {currentScreen === 'KITS_AND_SUPPLIES' ? (
+              <KitsAndSuppliesScreen
+                allocations={kitAllocations}
+                phleboName={phleboName}
+                courierId={displayCourierId}
+                onBack={handleNavigateBackHome}
+                onRequestRestock={async (kitCode, kitName) => {
+                  await handleRequestKitRestock(kitCode, kitName);
+                }}
+                onOpenScanner={() => {
+                  setCameraStatusText('Align kit or tube barcode within frame');
+                  setCameraModal({ mode: 'BARCODE', specimenId: 'KIT_INSPECTION' });
+                }}
+              />
+            ) : currentScreen === 'HELP_AND_SUPPORT' ? (
+              <HelpSupportScreen
+                phleboName={phleboName}
+                courierId={displayCourierId}
+                phleboPhone={myPhleboProfile?.phone}
+                phleboEmail={myPhleboProfile?.email}
+                activeZoneName={
+                  riderFullAddress ||
+                  (assignedAdminZone
+                    ? `${assignedAdminZone.name} (${assignedAdminZone.city})`
+                    : undefined)
+                }
+                supportContacts={supportContacts}
+                onBack={handleNavigateBackHome}
+                onOpenTrainingSops={handleOpenTrainingSops}
+              />
+            ) : currentScreen === 'TRAINING_SOPS' ? (
+              <TrainingSopScreen
+                onBack={handleNavigateBackHome}
+                onOpenSupplies={handleOpenMySupplies}
+                onOpenHelpSupport={handleOpenHelpSupport}
+              />
+            ) : currentScreen === 'TODAYS_COLLECTIONS' || bottomTab === 'tasks' ? (
+              <TodayCollectionsScreen
+                todayOrders={todayOrders}
+                assignedAdminZone={assignedAdminZone}
+                gpsSourceLabel={gpsSourceLabel}
+                riderFullAddress={riderFullAddress}
+                collectingOrderId={collectingOrderId}
+                onBack={handleNavigateBackHome}
+                onOpenLocationModal={() => setShowLocationPickerModal(true)}
+                onViewOrderDetails={(order) => {
+                  setDetailsReturnScreen('TODAYS_COLLECTIONS');
+                  setSelectedOrderId(order.id);
+                  setCurrentScreen('BOOKING_DETAILS');
+                }}
+                onOpenOrderWorkflow={(order) =>
+                  openOrderWorkflow(order, 'TODAYS_COLLECTIONS')
+                }
+                onCollectBookingPayment={(order) => void handleCollectBookingPayment(order)}
+              />
+            ) : currentScreen === 'BOOKING_DETAILS' && selectedOrder ? (
+              <BookingDetailsScreen
+                order={selectedOrder}
+                riderLocation={riderLocation}
+                collectingOrderId={collectingOrderId}
+                onBack={() => setCurrentScreen(detailsReturnScreen)}
+                onShowAlert={showDynamicAlert}
+                onOpenDirectionsMap={openDirectionsMap}
+                onCollectBookingPayment={(order) => void handleCollectBookingPayment(order)}
+                onMarkDirectPayment={(order, method) => handleMarkDirectPayment(order, method)}
+                onProceedToCollect={() => setCurrentScreen('COLLECT_SAMPLE')}
+                onProceedToDrop={() => setCurrentScreen('DROP_SAMPLE')}
+              />
+            ) : currentScreen === 'COLLECT_SAMPLE' && selectedOrder ? (
+              <CollectSampleScreen
+                order={selectedOrder}
+                specimenDrafts={specimenDrafts}
+                samplePhotoUrl={samplePhotoUrl}
+                selfiePhotoUrl={selfiePhotoUrl}
+                pickupTempInput={pickupTempInput}
+                uploadingPhoto={uploadingPhoto}
+                uploadingSelfie={uploadingSelfie}
+                submittingAction={submittingAction}
+                onBack={() => setCurrentScreen('BOOKING_DETAILS')}
+                onUpdateSpecimenDraft={updateSpecimenDraft}
+                onOpenCameraModal={(modal) => {
+                  if (modal.mode === 'PHOTO') {
+                    setCameraStatusText('Center all specimen vials clearly and tap Capture Photo.');
+                  } else {
+                    setCameraStatusText('Align barcode within the green frame to scan.');
+                  }
+                  setCameraModal(modal);
+                }}
+                onClearSamplePhoto={() => setSamplePhotoUrl('')}
+                onClearSelfiePhoto={() => setSelfiePhotoUrl('')}
+                onTakePhotoWithCamera={handleTakePhotoProofWithCamera}
+                onUploadPhotoFile={handleUploadSamplePhotoFromFile}
+                onChangePickupTemp={setPickupTempInput}
+                onConfirmCollection={(order) => void handleConfirmCollection(order)}
+                onMarkDirectPayment={(order, method) => handleMarkDirectPayment(order, method)}
+                onCollectBookingPayment={(order) => void handleCollectBookingPayment(order)}
+              />
+            ) : currentScreen === 'DROP_SAMPLE' && selectedOrder ? (
+              <DropSampleScreen
+                order={selectedOrder}
+                riderLocation={riderLocation}
+                collectingOrderId={collectingOrderId}
+                otpValue={otpValue}
+                dropTempInput={dropTempInput}
+                submittingAction={submittingAction}
+                onBack={() => setCurrentScreen('BOOKING_REQUESTS')}
+                onOpenDirectionsMap={openDirectionsMap}
+                onCollectBookingPayment={(order) => void handleCollectBookingPayment(order)}
+                onUpdateOtpDigit={updateOtpDigit}
+                onChangeDropTemp={setDropTempInput}
+                onConfirmDropOtp={(order) => void handleConfirmDropOtp(order)}
+              />
+            ) : currentScreen === 'COMPLETED' ? (
+              <CompletedReceiptScreen
+                lastReceipt={lastReceipt}
+                instantPayoutWindowMinutes={commissionConfig.instantPayoutWindowMinutes || 30}
+                onBackToRequests={() => setCurrentScreen('BOOKING_REQUESTS')}
+                onOpenEarnings={() => {
+                  setBottomTab('earnings');
+                  setCurrentScreen('BOOKING_REQUESTS');
+                }}
+              />
+            ) : bottomTab === 'bookings' ? (
+              <BookingsHistoryScreen
+                myAssignedOrders={myAssignedOrders}
+                completedAssignedOrders={completedAssignedOrders}
+                bookingSearchQuery={bookingSearchQuery}
+                bookingHistoryFilter={bookingHistoryFilter}
+                onBack={handleNavigateBackHome}
+                onChangeSearchQuery={setBookingSearchQuery}
+                onSelectHistoryFilter={setBookingHistoryFilter}
+                onOpenOrderWorkflow={(item) => {
+                  setBottomTab('home');
+                  openOrderWorkflow(item);
+                }}
+              />
+            ) : bottomTab === 'earnings' ? (
+              <EarningsScreen
+                metrics={metrics}
+                instantPayoutWindowMinutes={commissionConfig.instantPayoutWindowMinutes || 30}
+                myPhleboProfile={myPhleboProfile}
+                earningRows={earningRows}
+                payouts={payouts}
+                nowTick={nowTick}
+                onBack={handleNavigateBackHome}
+                onGoToProfile={() => setBottomTab('profile')}
+              />
+            ) : bottomTab === 'profile' ? (
+              <ProfileScreen
+                phleboInitial={phleboInitial}
+                phleboName={phleboName}
+                displayCourierId={displayCourierId}
+                phleboEmail={phleboEmail}
+                myPhleboProfile={myPhleboProfile}
+                completedDeliveriesCount={completedAssignedOrders.length}
+                dutyStatus={dutyStatus}
+                isOnline={isOnline}
+                riderCoverage={riderCoverage}
+                webNotifPerm={webNotifPerm}
+                floatingSettings={floatingSettings}
+                payoutMethod={payoutMethod}
+                payoutAccountName={payoutAccountName}
+                payoutUpiId={payoutUpiId}
+                payoutBankAccount={payoutBankAccount}
+                payoutIfsc={payoutIfsc}
+                savingPayoutProfile={savingPayoutProfile}
+                onBack={handleNavigateBackHome}
+                onShiftUpdate={(next) => void handleShiftUpdate(next)}
+                onRequestBackgroundAlertPermission={() =>
+                  void handleRequestBackgroundAlertPermission()
+                }
+                onOpenFloatingSettings={() => setFloatingSettingsVisible(true)}
+                onOpenTrainingSops={handleOpenTrainingSops}
+                onOpenMySupplies={handleOpenMySupplies}
+                kitAllocationsCount={kitAllocations.length}
+                onOpenHelpSupport={handleOpenHelpSupport}
+                onChangePayoutMethod={setPayoutMethod}
+                onChangePayoutAccountName={setPayoutAccountName}
+                onChangePayoutUpiId={setPayoutUpiId}
+                onChangePayoutBankAccount={setPayoutBankAccount}
+                onChangePayoutIfsc={setPayoutIfsc}
+                onSavePayoutProfile={() => void handleSavePayoutProfile()}
+                onTriggerSos={handleTriggerSos}
+                onSignOut={handleSignOut}
+              />
+            ) : (
+              <BookingRequestsScreen
+                phleboInitial={phleboInitial}
+                phleboFirstName={phleboFirstName}
+                displayCourierId={displayCourierId}
+                isOnline={isOnline}
+                dutyStatus={dutyStatus}
+                metrics={metrics}
+                gpsSourceLabel={gpsSourceLabel}
+                riderLocation={riderLocation}
+                riderFullAddress={riderFullAddress}
+                assignedAdminZone={assignedAdminZone}
+                riderCoverage={riderCoverage}
+                todayPendingCount={todayPendingOrders.length}
+                webNotifPerm={webNotifPerm}
+                effectivePhleboId={effectivePhleboId}
+                adminLoginEmail={ADMIN_LOGIN_EMAIL}
+                requestTab={requestTab}
+                radiusOnlyFilter={radiusOnlyFilter}
+                openPoolOrdersCount={openPoolOrders.length}
+                openPoolWithDistance={openPoolWithDistance}
+                activeAssignedOrders={activeAssignedOrders}
+                completedAssignedOrders={completedAssignedOrders}
+                submittingAction={submittingAction}
+                collectingOrderId={collectingOrderId}
+                onShiftUpdate={(next) => void handleShiftUpdate(next)}
+                onOpenLocationPicker={() => setShowLocationPickerModal(true)}
+                onRequestBackgroundAlertPermission={() =>
+                  void handleRequestBackgroundAlertPermission()
+                }
+                onSelectRequestTab={setRequestTab}
+                onSelectRadiusOnlyFilter={setRadiusOnlyFilter}
+                onAcceptPoolOrder={(order) => void handleAcceptPoolOrder(order)}
+                onDeclineAssignedOrder={handleDeclineAssignedOrder}
+                onCollectBookingPayment={(order) => void handleCollectBookingPayment(order)}
+                onOpenOrderWorkflow={(order) => openOrderWorkflow(order, 'BOOKING_REQUESTS')}
+                onOpenDrawer={() => setDrawerVisible(true)}
+                onOpenNotifications={() => {
+                  setShowNotificationsModal(true);
+                }}
+                unreadNotifCount={unreadNotifCount}
+                onOpenTodayCollections={handleOpenTodayCollections}
+                onOpenHistoryTab={() => setBottomTab('bookings')}
+                onOpenTrainingSops={handleOpenTrainingSops}
+                onOpenHelpSupport={handleOpenHelpSupport}
+                onOpenTodayRoute={handleOpenTodayRoute}
+              />
             )}
-            {bottomTab === 'bookings' && renderBookingsHistoryScreen()}
-            {bottomTab === 'earnings' && renderEarningsScreen()}
-            {bottomTab === 'profile' && renderProfileScreen()}
           </View>
 
-          <View style={styles.bottomTabBar}>
+          <View
+            style={[
+              styles.bottomTabBar,
+              {
+                paddingBottom: Math.max(insets.bottom, rs(10)),
+              },
+            ]}
+          >
             <TouchableOpacity
               style={styles.bottomTabItem}
               onPress={() => {
                 setBottomTab('home');
                 setCurrentScreen('BOOKING_REQUESTS');
+                setRequestTab('new');
               }}
             >
-              <Text style={{ fontSize: 18 }}>🏠</Text>
+              <Ionicons
+                name={bottomTab === 'home' && currentScreen === 'BOOKING_REQUESTS' ? 'home' : 'home-outline'}
+                size={21}
+                color={
+                  bottomTab === 'home' && currentScreen === 'BOOKING_REQUESTS'
+                    ? BRAND_COLORS.navyPrimary
+                    : COLORS.textSecondary
+                }
+              />
               <Text
+                maxFontSizeMultiplier={COMPACT_TEXT_SCALE}
                 style={[
                   styles.bottomTabText,
-                  bottomTab === 'home' && { color: COLORS.primaryTeal, fontWeight: '700' },
+                  bottomTab === 'home' &&
+                    currentScreen === 'BOOKING_REQUESTS' && {
+                      color: BRAND_COLORS.navyPrimary,
+                      fontFamily: BRAND_FONTS.bold,
+                    },
                 ]}
               >
                 Home
@@ -3871,43 +3890,101 @@ export default function App() {
 
             <TouchableOpacity
               style={styles.bottomTabItem}
-              onPress={() => setBottomTab('bookings')}
+              onPress={() => {
+                setBottomTab('tasks');
+                setSelectedOrderId(null);
+                setCurrentScreen('TODAYS_COLLECTIONS');
+              }}
             >
-              <Text style={{ fontSize: 18 }}>📋</Text>
+              <Ionicons
+                name={
+                  bottomTab === 'tasks' || currentScreen === 'TODAYS_COLLECTIONS'
+                    ? 'clipboard'
+                    : 'clipboard-outline'
+                }
+                size={21}
+                color={
+                  bottomTab === 'tasks' || currentScreen === 'TODAYS_COLLECTIONS'
+                    ? BRAND_COLORS.navyPrimary
+                    : COLORS.textSecondary
+                }
+              />
               <Text
+                maxFontSizeMultiplier={COMPACT_TEXT_SCALE}
                 style={[
                   styles.bottomTabText,
-                  bottomTab === 'bookings' && { color: COLORS.primaryTeal, fontWeight: '700' },
+                  (bottomTab === 'tasks' || currentScreen === 'TODAYS_COLLECTIONS') && {
+                    color: BRAND_COLORS.navyPrimary,
+                    fontFamily: BRAND_FONTS.bold,
+                  },
                 ]}
               >
-                Bookings
+                Tasks
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.centerFabButton}
+              activeOpacity={0.85}
+              onPress={() => setShowQuickActionsModal(true)}
+            >
+              <Ionicons name="add" size={28} color="#FFFFFF" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.bottomTabItem}
+              onPress={() => {
+                setBottomTab('bookings');
+                setCurrentScreen('BOOKING_REQUESTS');
+              }}
+            >
+              <Ionicons
+                name={bottomTab === 'bookings' ? 'time' : 'time-outline'}
+                size={22}
+                color={
+                  bottomTab === 'bookings'
+                    ? BRAND_COLORS.navyPrimary
+                    : COLORS.textSecondary
+                }
+              />
+              <Text
+                maxFontSizeMultiplier={COMPACT_TEXT_SCALE}
+                style={[
+                  styles.bottomTabText,
+                  bottomTab === 'bookings' && {
+                    color: BRAND_COLORS.navyPrimary,
+                    fontFamily: BRAND_FONTS.bold,
+                  },
+                ]}
+              >
+                History
               </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.bottomTabItem}
-              onPress={() => setBottomTab('earnings')}
+              onPress={() => {
+                setBottomTab('profile');
+                setCurrentScreen('BOOKING_REQUESTS');
+              }}
             >
-              <Text style={{ fontSize: 18 }}>💰</Text>
+              <Ionicons
+                name={bottomTab === 'profile' ? 'person' : 'person-outline'}
+                size={21}
+                color={
+                  bottomTab === 'profile'
+                    ? BRAND_COLORS.navyPrimary
+                    : COLORS.textSecondary
+                }
+              />
               <Text
+                maxFontSizeMultiplier={COMPACT_TEXT_SCALE}
                 style={[
                   styles.bottomTabText,
-                  bottomTab === 'earnings' && { color: COLORS.primaryTeal, fontWeight: '700' },
-                ]}
-              >
-                Earnings
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.bottomTabItem}
-              onPress={() => setBottomTab('profile')}
-            >
-              <Text style={{ fontSize: 18 }}>👤</Text>
-              <Text
-                style={[
-                  styles.bottomTabText,
-                  bottomTab === 'profile' && { color: COLORS.primaryTeal, fontWeight: '700' },
+                  bottomTab === 'profile' && {
+                    color: BRAND_COLORS.navyPrimary,
+                    fontFamily: BRAND_FONTS.bold,
+                  },
                 ]}
               >
                 Profile
@@ -3916,1153 +3993,130 @@ export default function App() {
           </View>
         </>
       )}
+
+      <PhleboDrawer
+        visible={Boolean(session && drawerVisible)}
+        phleboName={phleboName || 'Phlebotomist'}
+        courierId={displayCourierId}
+        isOnline={isOnline}
+        activeTab={bottomTab}
+        currentScreen={currentScreen}
+        pendingCount={activeAssignedOrders.length + openPoolOrders.length}
+        todayPendingCount={todayPendingOrders.length}
+        onClose={() => setDrawerVisible(false)}
+        onNavigateTab={(tab, resetScreen) => {
+          setBottomTab(tab);
+          if (resetScreen) {
+            setSelectedOrderId(null);
+            setCurrentScreen('BOOKING_REQUESTS');
+          }
+        }}
+        onOpenTodayCollections={handleOpenTodayCollections}
+        onOpenFloatingSettings={() => setFloatingSettingsVisible(true)}
+        onOpenTrainingSops={handleOpenTrainingSops}
+        onOpenMySupplies={handleOpenMySupplies}
+        onOpenHelpSupport={handleOpenHelpSupport}
+        onLogout={handleSignOut}
+      />
+
+      <PhleboQuickActionsModal
+        visible={showQuickActionsModal}
+        onClose={() => setShowQuickActionsModal(false)}
+        onOpenScanner={() => {
+          setCameraStatusText('Align kit or tube barcode within green frame');
+          setCameraModal({ mode: 'BARCODE', specimenId: 'QUICK_SCAN' });
+        }}
+        onOpenKitsAndSupplies={handleOpenMySupplies}
+        onOpenTrainingSops={handleOpenTrainingSops}
+        onOpenHelpSupport={handleOpenHelpSupport}
+        onOpenTodayCollections={handleOpenTodayCollections}
+        onRefreshBroadcasts={() => {
+          const firstNearby = openPoolWithDistance.find((x) => x.inBroadcastRadius);
+          if (firstNearby) {
+            setDismissedBroadcastIds((prev) =>
+              prev.filter((id) => id !== firstNearby.order.id)
+            );
+          }
+          setBroadcastForceOpen(true);
+          setBottomTab('home');
+          setCurrentScreen('BOOKING_REQUESTS');
+          setRequestTab('new');
+        }}
+      />
+
+      <PhleboKitInventoryModal
+        visible={showMySuppliesModal}
+        allocations={kitAllocations}
+        phleboName={phleboName || 'Field Phlebotomist'}
+        courierId={displayCourierId}
+        onClose={() => setShowMySuppliesModal(false)}
+        onRequestRestock={handleRequestKitRestock}
+      />
+
+      <PhleboNotificationsModal
+        visible={showNotificationsModal}
+        notifications={notifications}
+        onClose={() => setShowNotificationsModal(false)}
+        onMarkRead={handleMarkNotificationRead}
+        onMarkAllRead={handleMarkAllNotificationsRead}
+        onClearAll={handleClearAllNotifications}
+        onSelectOrder={(orderId) => {
+          setSelectedOrderId(orderId);
+          setCurrentScreen('BOOKING_DETAILS');
+        }}
+      />
+
+      <FloatingIconSettingsModal
+        visible={floatingSettingsVisible}
+        settings={floatingSettings}
+        isOnline={isOnline}
+        webNotifPerm={webNotifPerm}
+        onUpdateSettings={updateFloatingSettings}
+        onResetPosition={() => setFloatingResetNonce((n) => n + 1)}
+        onRequestOverlayPermission={() => void handleRequestBackgroundAlertPermission()}
+        onClose={() => setFloatingSettingsVisible(false)}
+      />
+
+      <FloatingDispatchOverlay
+        visible={Boolean(
+          session &&
+            floatingSettings.enabled &&
+            (floatingSettings.visibilityMode === 'ALWAYS' || isOnline)
+        )}
+        isOnline={isOnline}
+        nearbyOpenCount={openPoolWithDistance.filter((x) => x.inBroadcastRadius).length}
+        gpsLabel={gpsSourceLabel}
+        settings={floatingSettings}
+        resetNonce={floatingResetNonce}
+        onOpenNearbyPool={() => {
+          setBottomTab('home');
+          setSelectedOrderId(null);
+          setCurrentScreen('BOOKING_REQUESTS');
+          setRequestTab('active');
+          const firstNearby = openPoolWithDistance.find((x) => x.inBroadcastRadius);
+          if (firstNearby) {
+            setDismissedBroadcastIds((prev) =>
+              prev.filter((id) => id !== firstNearby.order.id)
+            );
+            setBroadcastForceOpen(true);
+          }
+        }}
+        onOpenTodayCollections={handleOpenTodayCollections}
+        onOpenBroadcastPopup={() => {
+          const firstNearby = openPoolWithDistance.find((x) => x.inBroadcastRadius);
+          if (firstNearby) {
+            setDismissedBroadcastIds((prev) =>
+              prev.filter((id) => id !== firstNearby.order.id)
+            );
+          }
+          setBroadcastForceOpen(true);
+        }}
+        onOpenLocationPicker={() => setShowLocationPickerModal(true)}
+        onOpenFloatingSettings={() => setFloatingSettingsVisible(true)}
+        onChangeDuty={(nextStatus) => void handleShiftUpdate(nextStatus)}
+      />
+
+      <ToastNotificationBanner toast={toastState} onDismiss={handleDismissToast} />
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  scrollArea: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  fullscreenContainer: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  heroHeader: {
-    backgroundColor: COLORS.primaryDark,
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 48,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-  },
-  heroRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  profileSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  avatarCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#064E3B',
-    borderWidth: 2,
-    borderColor: '#34D399',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    color: 'white',
-    fontWeight: '700',
-    fontSize: 18,
-  },
-  greetingTitle: {
-    color: 'white',
-    fontSize: 17,
-    fontWeight: '700',
-  },
-  greetingSubtitle: {
-    color: '#A7F3D0',
-    fontSize: 13,
-  },
-  onlinePill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  onlinePillText: {
-    color: 'white',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  summaryCard: {
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 14,
-    padding: 16,
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    elevation: 4,
-    marginBottom: -32,
-  },
-  summaryTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-    marginBottom: 10,
-  },
-  summaryMetricsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  summaryMetricCol: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  metricNumber: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  metricLabel: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  summaryDivider: {
-    width: 1,
-    height: 28,
-    backgroundColor: COLORS.borderLight,
-  },
-  bodyContainer: {
-    paddingHorizontal: 20,
-    paddingTop: 38,
-    paddingBottom: 24,
-  },
-  warningBox: {
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#FECACA',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 14,
-  },
-  warningBoxText: {
-    color: '#B91C1C',
-    fontSize: 12,
-    fontWeight: '600',
-    lineHeight: 17,
-  },
-  emptyBox: {
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    padding: 24,
-    alignItems: 'center',
-  },
-  emptyTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 4,
-  },
-  emptySub: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-    lineHeight: 18,
-  },
-  requestTabsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 16,
-  },
-  tabButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 20,
-    backgroundColor: '#F1F5F9',
-  },
-  tabButtonActive: {
-    backgroundColor: COLORS.primaryTeal,
-  },
-  tabButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-  },
-  tabButtonTextActive: {
-    color: 'white',
-  },
-  bookingCard: {
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    marginBottom: 14,
-  },
-  bookingCardTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  bookingTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  bookingId: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  pickupTimeBadge: {
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 12,
-    marginBottom: 4,
-  },
-  pickupTimeText: {
-    color: '#B45309',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  bookingPrice: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  routeContainer: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    padding: 12,
-    marginVertical: 10,
-  },
-  routeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  dotMarker: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  routePlaceTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-  },
-  routePlaceSubtitle: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
-  },
-  routeConnectingLine: {
-    width: 2,
-    height: 14,
-    backgroundColor: '#CBD5E1',
-    marginLeft: 4,
-    marginVertical: 2,
-  },
-  testsPreview: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginBottom: 14,
-  },
-  actionsRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  btnSecondary: {
-    flex: 1,
-    backgroundColor: '#F1F5F9',
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  btnSecondaryText: {
-    color: COLORS.textPrimary,
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  btnPrimary: {
-    flex: 1,
-    backgroundColor: COLORS.primaryTeal,
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  btnPrimaryText: {
-    color: 'white',
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  navBarHeader: {
-    backgroundColor: COLORS.primaryDark,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  navBarBackArrow: {
-    color: 'white',
-    fontSize: 22,
-    fontWeight: 'bold',
-  },
-  navBarTitle: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  navBarSubtitle: {
-    color: '#A7F3D0',
-    fontSize: 12,
-  },
-  timelineCard: {
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 14,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    marginBottom: 16,
-  },
-  timelineItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  timelineLabel: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
-    textTransform: 'uppercase',
-    fontWeight: '600',
-  },
-  timelineTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  timelineSub: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-  },
-  timelineLine: {
-    width: 2,
-    height: 20,
-    backgroundColor: '#CBD5E1',
-    marginLeft: 4,
-    marginVertical: 4,
-  },
-  callCircleBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: COLORS.primaryTeal,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  infoCard: {
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    marginBottom: 24,
-  },
-  infoCardLabel: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginBottom: 4,
-  },
-  infoCardValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-  },
-  ctaButton: {
-    backgroundColor: COLORS.primaryTeal,
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: 'center',
-    width: '100%',
-  },
-  ctaButtonText: {
-    color: 'white',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  vialGraphicFrame: {
-    width: 170,
-    height: 150,
-    borderRadius: 20,
-    backgroundColor: '#F0FDFA',
-    borderWidth: 2,
-    borderColor: '#99F6E4',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 20,
-  },
-  barcodeReticle: {
-    width: 100,
-    height: 3,
-    backgroundColor: COLORS.errorRed,
-    marginBottom: 10,
-  },
-  scannedBarcodePill: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: COLORS.primaryDark,
-    backgroundColor: 'white',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  collectTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 6,
-  },
-  collectSubtitle: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-    paddingHorizontal: 16,
-    marginBottom: 20,
-  },
-  inputLabelSm: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: COLORS.textSecondary,
-    marginBottom: 6,
-  },
-  fieldInput: {
-    backgroundColor: 'white',
-    borderWidth: 1.5,
-    borderColor: COLORS.borderLight,
-    borderRadius: 10,
-    padding: 12,
-    fontSize: 15,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-  },
-  dropLabCard: {
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 14,
-    padding: 22,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    marginBottom: 18,
-  },
-  dropLabTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  dropLabSub: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  handoverBanner: {
-    alignItems: 'center',
-    marginBottom: 18,
-  },
-  handoverCheck: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: COLORS.primaryDark,
-  },
-  handoverSub: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 4,
-    textAlign: 'center',
-  },
-  otpBoxesRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 10,
-  },
-  otpBox: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: COLORS.primaryTeal,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  otpDigit: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    width: '100%',
-  },
-  successCheckCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: COLORS.successGreen,
-    alignSelf: 'center',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 20,
-  },
-  successCheckSymbol: {
-    color: 'white',
-    fontSize: 44,
-    fontWeight: 'bold',
-  },
-  successTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    textAlign: 'center',
-    marginBottom: 24,
-  },
-  receiptCard: {
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 14,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-  },
-  receiptRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-  },
-  receiptKey: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-  },
-  receiptVal: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  receiptDivider: {
-    height: 1,
-    backgroundColor: COLORS.borderLight,
-  },
-  bottomTabBar: {
-    height: 60,
-    backgroundColor: 'white',
-    borderTopWidth: 1,
-    borderTopColor: COLORS.borderLight,
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-  },
-  bottomTabItem: {
-    alignItems: 'center',
-  },
-  bottomTabText: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  appHeaderBar: {
-    backgroundColor: COLORS.primaryDark,
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 20,
-  },
-  appHeaderTitle: {
-    color: 'white',
-    fontSize: 20,
-    fontWeight: '700',
-  },
-  appHeaderSubtitle: {
-    color: '#A7F3D0',
-    fontSize: 13,
-    marginTop: 4,
-  },
-  searchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.surfaceCard,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 14,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    color: COLORS.textPrimary,
-  },
-  historyCard: {
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    marginBottom: 12,
-  },
-  historyCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  historyCardId: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  historyCardPatient: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    marginTop: 1,
-  },
-  historyCardFee: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.primaryDark,
-  },
-  statusPillBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 12,
-    marginTop: 3,
-  },
-  statusPillText: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  routeItemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  routeTextSm: {
-    fontSize: 12,
-    color: COLORS.textPrimary,
-    flex: 1,
-  },
-  historyCardFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    borderTopWidth: 1,
-    borderColor: COLORS.borderLight,
-    paddingTop: 8,
-    marginTop: 10,
-  },
-  historyCardTests: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    fontWeight: '500',
-  },
-  historyCardTemp: {
-    fontSize: 12,
-    color: COLORS.successGreen,
-    fontWeight: '600',
-  },
-  sectionHeaderTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 10,
-  },
-  chartCard: {
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    marginBottom: 14,
-  },
-  barChartContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
-    height: 140,
-    paddingTop: 16,
-  },
-  chartBarCol: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  chartBarAmount: {
-    fontSize: 11,
-    color: COLORS.textPrimary,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  chartBarTrack: {
-    width: 20,
-    height: 90,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 6,
-    justifyContent: 'flex-end',
-    overflow: 'hidden',
-  },
-  chartBarFill: {
-    width: '100%',
-    borderRadius: 6,
-  },
-  chartBarDay: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
-    marginTop: 6,
-    fontWeight: '500',
-  },
-  tripLedgerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: COLORS.surfaceCard,
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    marginBottom: 8,
-  },
-  tripLedgerId: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  tripLedgerLab: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  tripLedgerBase: {
-    fontSize: 11,
-    color: COLORS.primaryTeal,
-    marginTop: 2,
-    fontWeight: '600',
-  },
-  tripLedgerFee: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.successGreen,
-  },
-  shiftSelectorRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 14,
-  },
-  shiftButton: {
-    flex: 1,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 10,
-    paddingVertical: 10,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  shiftButtonText: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    fontWeight: '600',
-  },
-  equipmentCard: {
-    backgroundColor: COLORS.surfaceCard,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    borderRadius: 14,
-    padding: 14,
-  },
-  equipmentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  equipmentTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  equipmentSub: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  sosButton: {
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1.5,
-    borderColor: COLORS.errorRed,
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  sosButtonText: {
-    color: COLORS.errorRed,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  signOutButton: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  signOutButtonText: {
-    color: '#475569',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  versionFootnote: {
-    textAlign: 'center',
-    fontSize: 11,
-    color: '#94A3B8',
-    marginTop: 18,
-    marginBottom: 10,
-  },
-  gpsTelemetryBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    backgroundColor: '#F0FDFA',
-    borderWidth: 1,
-    borderColor: '#99F6E4',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 14,
-  },
-  gpsTelemetryTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: COLORS.primaryDark,
-  },
-  gpsTelemetrySub: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  gpsPickerBtn: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: COLORS.primaryTeal,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  gpsPickerBtnText: {
-    color: COLORS.primaryDark,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  radiusFilterRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 14,
-  },
-  radiusFilterChip: {
-    flex: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  radiusFilterChipActive: {
-    backgroundColor: '#CCFBF1',
-    borderColor: COLORS.primaryTeal,
-  },
-  radiusFilterText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-  },
-  radiusFilterTextActive: {
-    color: COLORS.primaryDark,
-    fontWeight: '700',
-  },
-  badgeWrapRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 6,
-  },
-  distanceBadge: {
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  distanceBadgeHot: {
-    backgroundColor: '#FEF3C7',
-    borderWidth: 1,
-    borderColor: '#F59E0B',
-  },
-  distanceBadgeText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-  },
-  distanceBadgeTextHot: {
-    color: '#B45309',
-    fontWeight: '700',
-  },
-  tubePillRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 12,
-  },
-  specimenTagPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  specimenTagText: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  tubeColorDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  navMapButton: {
-    flex: 1,
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    alignItems: 'center',
-  },
-  navMapButtonText: {
-    color: '#1D4ED8',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  detailSpecRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 4,
-  },
-  detailSpecTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  detailSpecSub: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
-    marginTop: 1,
-  },
-  verifyHintCard: {
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 14,
-  },
-  verifyHintTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1E3A8A',
-  },
-  verifyHintText: {
-    fontSize: 12,
-    color: '#1E40AF',
-    marginTop: 4,
-    lineHeight: 17,
-  },
-  specimenVerifyCard: {
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    padding: 14,
-    marginBottom: 14,
-  },
-  specimenCardTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 8,
-  },
-  specimenCardTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  specimenCardSub: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  validationBanner: {
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 10,
-  },
-  validationBannerText: {
-    fontSize: 12,
-    fontWeight: '600',
-    lineHeight: 16,
-  },
-  scanActionRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 8,
-  },
-  scanCamButton: {
-    backgroundColor: COLORS.primaryDark,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  scanCamButtonText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  matchTagChip: {
-    flex: 1,
-    backgroundColor: '#F0FDFA',
-    borderWidth: 1,
-    borderColor: '#99F6E4',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  matchTagChipText: {
-    color: COLORS.primaryDark,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  tubeChipsWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  tubeChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    borderRadius: 8,
-    paddingHorizontal: 9,
-    paddingVertical: 6,
-  },
-  tubeChipText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-  },
-  photoProofCard: {
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    padding: 14,
-    marginBottom: 14,
-  },
-  samplePhotoPreview: {
-    width: '100%',
-    height: 190,
-    borderRadius: 10,
-    backgroundColor: '#E2E8F0',
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.62)',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  modalCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-  },
-  modalCardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  modalCardSub: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 4,
-    lineHeight: 17,
-  },
-  broadcastCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 18,
-    borderWidth: 2,
-    borderColor: '#16A34A',
-  },
-  broadcastAlertBadge: {
-    backgroundColor: '#FEF3C7',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    alignSelf: 'flex-start',
-    marginBottom: 10,
-  },
-  broadcastAlertBadgeText: {
-    color: '#B45309',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  broadcastTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  broadcastFeeHero: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: COLORS.primaryTeal,
-    marginTop: 4,
-  },
-  broadcastSpecsLine: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 4,
-  },
-  presetLocationRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  presetLocationName: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  presetLocationCoords: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
-  },
-  cameraViewport: {
-    width: '100%',
-    height: 220,
-    backgroundColor: '#0F172A',
-    borderRadius: 12,
-    overflow: 'hidden',
-    marginTop: 12,
-  },
-});

@@ -10,6 +10,7 @@
     "apps/phlebo-app"
   ],
   "scripts": {
+    "postinstall": "npm run build:shared && node scripts/patch-node-fetch.mjs",
     "dev": "node scripts/dev.mjs",
     "dev:all": "node scripts/dev.mjs --all",
     "dev:api": "npm --workspace=@diagnostic/api run dev",
@@ -18,6 +19,7 @@
     "dev:large-lab": "npm --workspace=@diagnostic/large-lab run dev",
     "dev:admin": "npm --workspace=@diagnostic/admin run dev",
     "dev:phlebo": "npm --workspace=@diagnostic/phlebo-app run start",
+    "dev:phlebo:tunnel": "npm --workspace=@diagnostic/phlebo-app run start:tunnel",
     "build:shared": "npm --workspace=@diagnostic/shared run build",
     "build:api": "npm --workspace=@diagnostic/api run build",
     "build:functions": "npm --prefix firebase/functions run build",
@@ -25,7 +27,13 @@
     "build:all": "npm run build:shared && npm run build:api && npm run build:web && npm run build:functions",
     "seed:firebase": "npm --workspace=@diagnostic/api run seed:firebase",
     "firebase:deploy": "npm run build:shared && npm --workspace=@diagnostic/portal run build && npm run build:functions && node scripts/deploy-firebase.mjs",
+    "firebase:deploy:all": "node scripts/deploy-firebase.mjs",
+    "firebase:deploy:hosting": "npm --workspace=@diagnostic/portal run build && node scripts/sync-hosting.mjs && firebase deploy --only hosting --project labsetu-diagnostics --config firebase/firebase.json",
     "firebase:deploy:rules": "firebase deploy --only firestore,storage --project labsetu-diagnostics --config firebase/firebase.json",
+    "firebase:deploy:functions": "npm --prefix firebase/functions run build && firebase deploy --only functions --project labsetu-diagnostics --config firebase/firebase.json",
+    "phlebo:build:apk": "npm --workspace=@diagnostic/phlebo-app run build:apk",
+    "phlebo:update": "npm --workspace=@diagnostic/phlebo-app run update:ota",
+    "phlebo:export": "npm --workspace=@diagnostic/phlebo-app run export:web",
     "lint": "npm run lint --workspaces --if-present"
   },
   "keywords": [

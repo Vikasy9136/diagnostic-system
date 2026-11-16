@@ -1,11 +1,20 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { ApiResponse, UserProfile, UserRole } from '@diagnostic/shared';
+import {
+  ApiResponse,
+  UserProfile,
+  UserRole,
+  maskEmailAddress,
+} from '@diagnostic/shared';
 import { AppError } from '../middleware/errorHandler';
 import { AuthenticatedRequest, requireAuth } from '../middleware/auth';
+import { getRequestClientMeta, rateLimitByKey } from '../middleware/rbac';
 import {
-  findProvisionedUserByEmail,
+  exchangeMobileGoogleSession,
+  loginWithIdentifierAndPassword,
+  redeemMobileGoogleCode,
   requestEmailOtp,
   requestPasswordReset,
+  resolveProvisionedUserByIdentifier,
   verifyAndSyncSessionRole,
   verifyEmailOtp,
 } from '../services/user-directory.service';
@@ -20,105 +29,144 @@ function resolveClientPlatform(req: Request): 'WEB' | 'MOBILE' | undefined {
   return undefined;
 }
 
-/**
- * POST /api/v1/auth/otp/send
- * Issues a 6-digit Email OTP exclusively for Admin-provisioned accounts
- */
-authRouter.post('/otp/send', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { email, portalRole } = req.body || {};
-    const clientType = resolveClientPlatform(req);
-    if (!email || typeof email !== 'string') {
-      return next(new AppError('Please enter your email address.', 400, 'BAD_REQUEST'));
+authRouter.post(
+  '/login',
+  rateLimitByKey('pwd_login', 12, 5 * 60 * 1000),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { identifier, email, password, portalRole } = req.body || {};
+      const loginInput = typeof identifier === 'string' && identifier.trim() ? identifier : email;
+      const clientType = resolveClientPlatform(req);
+      if (!loginInput || typeof loginInput !== 'string' || !password || typeof password !== 'string') {
+        return next(new AppError('Login ID / email and password are required.', 400, 'BAD_REQUEST'));
+      }
+      const result = await loginWithIdentifierAndPassword(
+        loginInput,
+        password,
+        portalRole as UserRole | undefined,
+        clientType,
+        getRequestClientMeta(req)
+      );
+      const response: ApiResponse<typeof result> = {
+        success: true,
+        data: result,
+        message: 'Signed in successfully',
+        timestamp: new Date().toISOString(),
+      };
+      return res.json(response);
+    } catch (err) {
+      return next(err);
     }
-
-    const result = await requestEmailOtp(
-      email,
-      portalRole as UserRole | undefined,
-      clientType
-    );
-    const response: ApiResponse<typeof result> = {
-      success: true,
-      data: result,
-      message: `6-digit OTP sent to ${email.trim().toLowerCase()}`,
-      timestamp: new Date().toISOString(),
-    };
-    return res.json(response);
-  } catch (err) {
-    return next(err);
   }
-});
+);
 
-/**
- * POST /api/v1/auth/otp/verify
- * Verifies 6-digit Email OTP and returns a signed login token
- */
-authRouter.post('/otp/verify', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { email, otp, portalRole } = req.body || {};
-    const clientType = resolveClientPlatform(req);
-    if (!email || !otp) {
-      return next(new AppError('Email and 6-digit OTP code are required.', 400, 'BAD_REQUEST'));
+authRouter.post(
+  '/otp/send',
+  rateLimitByKey('otp_send', 8, 5 * 60 * 1000),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { identifier, email, portalRole } = req.body || {};
+      const loginInput = typeof identifier === 'string' && identifier.trim() ? identifier : email;
+      const clientType = resolveClientPlatform(req);
+      if (!loginInput || typeof loginInput !== 'string' || !loginInput.trim()) {
+        return next(
+          new AppError('Please enter your registered email address or Login ID.', 400, 'BAD_REQUEST')
+        );
+      }
+      const result = await requestEmailOtp(
+        loginInput,
+        portalRole as UserRole | undefined,
+        clientType
+      );
+      const response: ApiResponse<typeof result> = {
+        success: true,
+        data: result,
+        message: `6-digit OTP sent to ${result.maskedEmail}`,
+        timestamp: new Date().toISOString(),
+      };
+      return res.json(response);
+    } catch (err) {
+      return next(err);
     }
-
-    const result = await verifyEmailOtp(
-      email,
-      String(otp),
-      portalRole as UserRole | undefined,
-      clientType
-    );
-    const response: ApiResponse<typeof result> = {
-      success: true,
-      data: result,
-      message: 'OTP verified successfully',
-      timestamp: new Date().toISOString(),
-    };
-    return res.json(response);
-  } catch (err) {
-    return next(err);
   }
-});
+);
 
-/**
- * POST /api/v1/auth/forgot-password
- * Issues a custom branded password reset link routed to /reset-password
- */
-authRouter.post('/forgot-password', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { email, origin } = req.body || {};
-    const clientType = resolveClientPlatform(req);
-    if (!email || typeof email !== 'string' || !email.trim().includes('@')) {
-      return next(new AppError('Please enter a valid registered email address.', 400, 'BAD_REQUEST'));
+authRouter.post(
+  '/otp/verify',
+  rateLimitByKey('otp_verify', 12, 5 * 60 * 1000),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { identifier, email, otp, portalRole } = req.body || {};
+      const loginInput = typeof identifier === 'string' && identifier.trim() ? identifier : email;
+      const clientType = resolveClientPlatform(req);
+      if (!loginInput || !otp) {
+        return next(
+          new AppError('Login ID or email and 6-digit OTP code are required.', 400, 'BAD_REQUEST')
+        );
+      }
+      const result = await verifyEmailOtp(
+        loginInput,
+        String(otp),
+        portalRole as UserRole | undefined,
+        clientType,
+        getRequestClientMeta(req)
+      );
+      const response: ApiResponse<typeof result> = {
+        success: true,
+        data: result,
+        message: 'OTP verified successfully',
+        timestamp: new Date().toISOString(),
+      };
+      return res.json(response);
+    } catch (err) {
+      return next(err);
     }
-
-    const headerOrigin =
-      typeof req.headers['x-forwarded-origin'] === 'string'
-        ? req.headers['x-forwarded-origin']
-        : typeof req.headers.origin === 'string'
-        ? req.headers.origin
-        : undefined;
-
-    const result = await requestPasswordReset(
-      email,
-      typeof origin === 'string' ? origin : headerOrigin,
-      clientType
-    );
-    const response: ApiResponse<typeof result> = {
-      success: true,
-      data: result,
-      message: `Password reset link sent to ${email.trim().toLowerCase()}`,
-      timestamp: new Date().toISOString(),
-    };
-    return res.json(response);
-  } catch (err) {
-    return next(err);
   }
-});
+);
 
-/**
- * POST /api/v1/auth/verify-session
- * Verifies signed-in session token against Admin-managed roles
- */
+authRouter.post(
+  '/forgot-password',
+  rateLimitByKey('pwd_reset', 5, 10 * 60 * 1000),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { identifier, email, origin } = req.body || {};
+      const loginInput = typeof identifier === 'string' && identifier.trim() ? identifier : email;
+      const clientType = resolveClientPlatform(req);
+      if (!loginInput || typeof loginInput !== 'string' || !loginInput.trim()) {
+        return next(
+          new AppError('Please enter your registered email address or Login ID.', 400, 'BAD_REQUEST')
+        );
+      }
+      const headerOrigin =
+        typeof req.headers['x-forwarded-origin'] === 'string'
+          ? req.headers['x-forwarded-origin']
+          : typeof req.headers.origin === 'string'
+            ? req.headers.origin
+            : undefined;
+      const meta = getRequestClientMeta(req);
+      const result = await requestPasswordReset(
+        loginInput,
+        typeof origin === 'string' ? origin : headerOrigin,
+        clientType,
+        {
+          email: loginInput.trim().toLowerCase(),
+          ipAddress: meta.ipAddress,
+          userAgent: meta.userAgent,
+        }
+      );
+      const response: ApiResponse<typeof result> = {
+        success: true,
+        data: result,
+        message: `Password reset link sent to ${result.maskedEmail}`,
+        timestamp: new Date().toISOString(),
+      };
+      return res.json(response);
+    } catch (err) {
+      return next(err);
+    }
+  }
+);
+
 authRouter.post(
   '/verify-session',
   requireAuth,
@@ -128,12 +176,12 @@ authRouter.post(
       const email = req.user?.email || (req.body?.email as string | undefined);
       const requiredRole = req.body?.requiredRole as UserRole | undefined;
       const clientType = resolveClientPlatform(req);
-
       const userProfile = await verifyAndSyncSessionRole(
         uid,
         email,
         requiredRole,
-        clientType
+        clientType,
+        getRequestClientMeta(req)
       );
       const response: ApiResponse<UserProfile> = {
         success: true,
@@ -148,34 +196,80 @@ authRouter.post(
   }
 );
 
-/**
- * GET /api/v1/auth/role-check?email=...
- * Public pre-check telling client if email is provisioned (returns only boolean + role label, never secrets)
- */
-authRouter.get('/role-check', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const email = (req.query.email as string) || '';
-    if (!email) {
-      return next(new AppError('Missing query param: email', 400, 'BAD_REQUEST'));
+authRouter.get(
+  '/role-check',
+  rateLimitByKey('role_check', 30, 5 * 60 * 1000),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const loginInput =
+        (typeof req.query.identifier === 'string' && req.query.identifier.trim()) ||
+        (typeof req.query.email === 'string' && req.query.email.trim()) ||
+        '';
+      if (!loginInput) {
+        return next(new AppError('Missing query param: identifier or email', 400, 'BAD_REQUEST'));
+      }
+      const profile = await resolveProvisionedUserByIdentifier(loginInput);
+      const response = {
+        success: true,
+        data: {
+          provisioned: Boolean(profile),
+          role: profile ? profile.role : null,
+          isActive: profile ? profile.isActive : false,
+          maskedEmail: profile ? maskEmailAddress(profile.email) : null,
+        },
+        timestamp: new Date().toISOString(),
+      };
+      return res.json(response);
+    } catch (err) {
+      return next(err);
     }
-
-    const profile = await findProvisionedUserByEmail(email);
-    const response: ApiResponse<{
-      provisioned: boolean;
-      role: UserRole | null;
-      isActive: boolean;
-    }> = {
-      success: true,
-      data: {
-        provisioned: Boolean(profile),
-        role: profile ? profile.role : null,
-        isActive: profile ? profile.isActive : false,
-      },
-      timestamp: new Date().toISOString(),
-    };
-    return res.json(response);
-  } catch (err) {
-    return next(err);
   }
-});
+);
 
+authRouter.post(
+  '/mobile-google-exchange',
+  rateLimitByKey('mobile_google_ex', 25, 5 * 60 * 1000),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return next(
+          new AppError('Google ID token missing in Authorization header.', 401, 'UNAUTHORIZED')
+        );
+      }
+      const idToken = authHeader.slice('Bearer '.length).trim();
+      const requiredRole =
+        (req.body?.requiredRole as UserRole | undefined) || UserRole.PHLEBOTOMIST;
+      const result = await exchangeMobileGoogleSession(
+        idToken,
+        requiredRole,
+        getRequestClientMeta(req)
+      );
+      return res.json({
+        success: true,
+        data: result,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err) {
+      return next(err);
+    }
+  }
+);
+
+authRouter.post(
+  '/mobile-google-redeem',
+  rateLimitByKey('mobile_google_red', 25, 5 * 60 * 1000),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const code = typeof req.body?.code === 'string' ? req.body.code : '';
+      const result = await redeemMobileGoogleCode(code);
+      return res.json({
+        success: true,
+        data: result,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err) {
+      return next(err);
+    }
+  }
+);

@@ -1,12 +1,14 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { UserRole } from '@diagnostic/shared';
 import { config } from '../config/env';
-import { AuthenticatedRequest, optionalAuth, requireAuth, requireRoles } from '../middleware/auth';
+import { optionalAuth, requireAuth } from '../middleware/auth';
+import { AuthenticatedRequest, requirePermissions } from '../middleware/rbac';
 import { AppError } from '../middleware/errorHandler';
 import {
   checkPaymentLink,
   createOrder,
   createPaymentLink,
+  processVerifiedRazorpayWebhook,
   releasePayout,
   verifyPayment,
 } from '../services/razorpay.service';
@@ -18,6 +20,7 @@ paymentsRouter.get('/config', (_req: Request, res: Response) => {
     success: true,
     data: {
       razorpayConfigured: Boolean(config.razorpay.keyId && config.razorpay.keySecret),
+      webhookConfigured: Boolean(config.razorpay.webhookSecret),
       razorpayXEnabled: Boolean(config.razorpay.xAccountNumber),
       keyId: config.razorpay.keyId || null,
     },
@@ -31,12 +34,12 @@ export async function handleCreateOrderRoute(
   next: NextFunction
 ): Promise<void> {
   try {
-    const { amount, amountInr, currency, receipt, bookingId, settlementId, notes } =
+    const { amount, amountInr, currency, receipt, bookingId, settlementId, invoiceId, notes } =
       req.body || {};
 
-    if ((bookingId || settlementId) && !req.user) {
+    if ((bookingId || settlementId || invoiceId) && !req.user) {
       return next(
-        new AppError('Authentication required to pay for a booking invoice.', 401, 'UNAUTHORIZED')
+        new AppError('Authentication required to pay for a booking or subscription invoice.', 401, 'UNAUTHORIZED')
       );
     }
 
@@ -47,6 +50,7 @@ export async function handleCreateOrderRoute(
       receipt,
       bookingId,
       settlementId,
+      invoiceId,
       notes,
       requesterRole: req.user?.role,
       requesterLabId: req.user?.labId,
@@ -80,6 +84,7 @@ export async function handleVerifyPaymentRoute(
       razorpay_signature,
       bookingId,
       settlementId,
+      invoiceId,
       collectedByRole,
       paymentMethod,
     } = req.body || {};
@@ -90,6 +95,7 @@ export async function handleVerifyPaymentRoute(
       razorpay_signature,
       bookingId,
       settlementId,
+      invoiceId,
       collectedByRole:
         collectedByRole ||
         (req.user?.role === UserRole.PHLEBOTOMIST
@@ -118,6 +124,34 @@ export async function handleVerifyPaymentRoute(
 
 paymentsRouter.post('/create-order', optionalAuth, handleCreateOrderRoute);
 paymentsRouter.post('/verify-payment', optionalAuth, handleVerifyPaymentRoute);
+
+paymentsRouter.post(
+  '/webhook',
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const rawBody =
+        req.rawBody && Buffer.isBuffer(req.rawBody)
+          ? req.rawBody
+          : Buffer.from(JSON.stringify(req.body || {}), 'utf8');
+      const signatureHeader = req.headers['x-razorpay-signature'] as string | undefined;
+      const eventIdHeader = req.headers['x-razorpay-event-id'] as string | undefined;
+
+      const result = await processVerifiedRazorpayWebhook({
+        rawBody,
+        signatureHeader,
+        eventIdHeader,
+      });
+
+      res.status(200).json({
+        success: true,
+        data: result,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 paymentsRouter.post(
   '/create-payment-link',
@@ -165,10 +199,10 @@ paymentsRouter.get(
 paymentsRouter.post(
   '/payout',
   requireAuth,
-  requireRoles(UserRole.ADMIN),
+  requirePermissions('CONFIGURE_COMMISSIONS_PAYOUTS'),
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
-      const { settlementId, recipientType, mode, referenceId, notes, forceWithoutCollection } =
+      const { settlementId, recipientType, mode, referenceId, notes, forceWithoutCollection, waiveCourierPayout } =
         req.body || {};
 
       if (!settlementId || !recipientType) {
@@ -184,6 +218,7 @@ paymentsRouter.post(
         referenceId,
         notes,
         forceWithoutCollection: Boolean(forceWithoutCollection),
+        waiveCourierPayout: Boolean(waiveCourierPayout),
         adminEmail: req.user?.email || config.admin.email,
       });
 
@@ -198,4 +233,3 @@ paymentsRouter.post(
     }
   }
 );
-

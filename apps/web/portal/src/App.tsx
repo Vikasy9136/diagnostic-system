@@ -6,6 +6,8 @@ import { LandingPage } from './components/LandingPage';
 import { LoginPage, type VerifiedPortalSession } from './components/LoginPage';
 import { ForgotPasswordPage } from './components/ForgotPasswordPage';
 import { ResetPasswordPage } from './components/ResetPasswordPage';
+import { MobileGoogleAuthPage } from './components/MobileGoogleAuthPage';
+import { MobileScannerPage } from './components/MobileScannerPage';
 import {
   DynamicAlertModal,
   INITIAL_DYNAMIC_ALERT,
@@ -16,7 +18,14 @@ import { AdminDashboard } from './dashboards/AdminDashboard';
 import { SmallLabDashboard } from './dashboards/SmallLabDashboard';
 import { LargeLabDashboard } from './dashboards/LargeLabDashboard';
 
-type RouteView = 'landing' | 'login' | 'forgot-password' | 'reset-password' | 'dashboard';
+type RouteView =
+  | 'landing'
+  | 'login'
+  | 'forgot-password'
+  | 'reset-password'
+  | 'mobile-google-auth'
+  | 'mobile-scanner'
+  | 'dashboard';
 
 const ACTIVE_ROLE_STORAGE_KEY = 'labsetu_active_role';
 
@@ -53,6 +62,22 @@ function parseBrowserRoute(): {
     ? storedRole
     : UserRole.SMALL_LAB;
 
+  if (path.startsWith('/mobile-google-auth')) {
+    return {
+      view: 'mobile-google-auth',
+      role: UserRole.PHLEBOTOMIST,
+      blockedPhleboParam: false,
+      initialEmail,
+    };
+  }
+  if (path.startsWith('/mobile-scanner') || path.startsWith('/scan')) {
+    return {
+      view: 'mobile-scanner',
+      role: UserRole.ADMIN,
+      blockedPhleboParam: false,
+      initialEmail,
+    };
+  }
   if (path.startsWith('/reset-password') || hasOobCode) {
     return {
       view: 'reset-password',
@@ -72,7 +97,37 @@ function parseBrowserRoute(): {
 
   const blockedPhleboParam = queryRole === UserRole.PHLEBOTOMIST;
 
-  if (path.startsWith('/dashboard')) {
+  const isKnownDashboardSubRoute =
+    path.startsWith('/dashboard') ||
+    path.startsWith('/new-booking') ||
+    path.startsWith('/patients') ||
+    path.startsWith('/catalogue') ||
+    path.startsWith('/partner-labs') ||
+    path.startsWith('/bookings') ||
+    path.startsWith('/reports') ||
+    path.startsWith('/payments') ||
+    path.startsWith('/support') ||
+    path.startsWith('/live-ops') ||
+    path.startsWith('/labs') ||
+    path.startsWith('/phlebotomists') ||
+    path.startsWith('/samples') ||
+    path.startsWith('/commission') ||
+    path.startsWith('/zones') ||
+    path.startsWith('/users') ||
+    path.startsWith('/employees') ||
+    path.startsWith('/org-structure') ||
+    path.startsWith('/finance-ops') ||
+    path.startsWith('/marketing-growth') ||
+    path.startsWith('/product-tech') ||
+    path.startsWith('/audit-logs') ||
+    path.startsWith('/analytics') ||
+    path.startsWith('/settings') ||
+    path.startsWith('/incoming') ||
+    path.startsWith('/testing') ||
+    path.startsWith('/rates') ||
+    path.startsWith('/settlements');
+
+  if (isKnownDashboardSubRoute) {
     return { view: 'dashboard', role: resolvedRole, blockedPhleboParam, initialEmail };
   }
   if (path.startsWith('/login')) {
@@ -223,7 +278,12 @@ export function App() {
       }
       setSession(verifiedSession);
       setSelectedRole(verifiedSession.profile.role);
-      navigate(`/dashboard?role=${verifiedSession.profile.role}`, true);
+      const currentPath = window.location.pathname;
+      const targetPath =
+        currentPath.startsWith('/dashboard') && currentPath !== '/'
+          ? currentPath
+          : `/dashboard`;
+      navigate(`${targetPath}?role=${verifiedSession.profile.role}`, true);
     },
     [navigate, showAlert]
   );
@@ -306,6 +366,10 @@ export function App() {
   return (
     <>
       <DynamicAlertModal alertState={alertState} onClose={closeAlert} />
+
+      {routeView === 'mobile-google-auth' && <MobileGoogleAuthPage />}
+
+      {routeView === 'mobile-scanner' && <MobileScannerPage />}
 
       {routeView === 'landing' && <LandingPage onGoToLogin={handleGoToLogin} />}
 

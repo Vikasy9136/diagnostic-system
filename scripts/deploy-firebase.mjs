@@ -39,3 +39,4 @@ run(
   ],
   { FUNCTIONS_DISCOVERY_TIMEOUT: process.env.FUNCTIONS_DISCOVERY_TIMEOUT || '60' }
 );
+

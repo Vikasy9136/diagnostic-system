@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { LABSETU_THEME, ROLE_LABELS, type UserRole } from '@diagnostic/shared';
-import { API_BASE_URL } from '../firebase';
+import { AuthApiRequestError, forgotPasswordApi } from '../services/firestoreService';
 import { type DynamicAlertVariant } from './DynamicAlertModal';
 
 interface ForgotPasswordPageProps {
@@ -18,7 +18,8 @@ interface ForgotPasswordPageProps {
 }
 
 interface SentResetSummary {
-  email: string;
+  identifier: string;
+  targetDisplay: string;
   role: UserRole;
   roleLabel: string;
 }
@@ -51,12 +52,12 @@ export function ForgotPasswordPage({
     return () => clearInterval(timer);
   }, [cooldown]);
 
-  async function submitResetRequest(targetEmail: string) {
-    const normalized = targetEmail.trim().toLowerCase();
-    if (!normalized || !normalized.includes('@')) {
-      const msg = 'Please enter your registered email address.';
+  async function submitResetRequest(targetIdentifier: string) {
+    const cleanInput = targetIdentifier.trim();
+    if (!cleanInput) {
+      const msg = 'Please enter your registered email address or Assigned Login ID.';
       setInlineError(msg);
-      onShowAlert({ variant: 'warning', title: 'Email Required', message: msg });
+      onShowAlert({ variant: 'warning', title: 'Email or Login ID Required', message: msg });
       return;
     }
 
@@ -64,52 +65,38 @@ export function ForgotPasswordPage({
     setSubmitting(true);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Client-Platform': 'web',
-        },
-        body: JSON.stringify({
-          email: normalized,
-          origin: window.location.origin,
-          portalRole: selectedRole,
-          clientType: 'WEB',
-        }),
+      const data = await forgotPasswordApi({
+        identifier: cleanInput,
+        origin: window.location.origin,
+        portalRole: selectedRole,
+        clientType: 'WEB',
       });
+      const assignedRole = data.role || selectedRole || ('SMALL_LAB' as UserRole);
+      const roleLabel = data.roleLabel || ROLE_LABELS[assignedRole] || 'Partner Account';
+      const targetDisplay = cleanInput.includes('@') ? cleanInput.toLowerCase() : data.maskedEmail;
 
-      const json = await res.json().catch(() => null);
-      if (!res.ok) {
-        const errCode = json?.error?.code;
-        const errMsg =
-          json?.error?.message ||
-          'We could not send a password reset link right now. Please check your email and try again.';
-        setInlineError(errMsg);
-        onShowAlert({
-          variant: 'error',
-          title:
-            errCode === 'USER_NOT_PROVISIONED'
-              ? 'Email Not Added Yet'
-              : errCode === 'ACCOUNT_SUSPENDED'
-              ? 'Account Paused'
-              : 'Unable to Send Reset Link',
-          message: errMsg,
-        });
-        return;
-      }
-
-      const assignedRole = (json?.data?.role as UserRole) || selectedRole || ('SMALL_LAB' as UserRole);
-      const roleLabel =
-        (json?.data?.roleLabel as string) || ROLE_LABELS[assignedRole] || 'Partner Account';
-
-      setSentSummary({ email: normalized, role: assignedRole, roleLabel });
+      setSentSummary({ identifier: cleanInput, targetDisplay, role: assignedRole, roleLabel });
       setCooldown(60);
       onShowAlert({
         variant: 'success',
         title: 'Password Reset Email Sent',
-        message: `We emailed a secure reset link to ${normalized}. Open the link in your inbox to choose a new password.`,
+        message: `We emailed a secure reset link to ${targetDisplay}. Open the link in your inbox to choose a new password.`,
       });
-    } catch {
+    } catch (err: unknown) {
+      if (err instanceof AuthApiRequestError) {
+        setInlineError(err.message);
+        onShowAlert({
+          variant: 'error',
+          title:
+            err.code === 'USER_NOT_PROVISIONED'
+              ? 'Account Not Added Yet'
+              : err.code === 'ACCOUNT_SUSPENDED'
+              ? 'Account Paused'
+              : 'Unable to Send Reset Link',
+          message: err.message,
+        });
+        return;
+      }
       const msg =
         'Unable to reach the password recovery service right now. Please check your internet connection and try again.';
       setInlineError(msg);
@@ -186,7 +173,7 @@ export function ForgotPasswordPage({
                     }}
                   >
                     A secure password setup / reset email has been sent to{' '}
-                    <strong>{sentSummary.email}</strong>.
+                    <strong>{sentSummary.targetDisplay}</strong>.
                   </p>
                   <div style={{ marginTop: '12px' }}>
                     <span className="role-assigned-pill">
@@ -214,7 +201,7 @@ export function ForgotPasswordPage({
                     type="button"
                     className="btn-primary btn-full"
                     disabled={cooldown > 0 || submitting}
-                    onClick={() => void submitResetRequest(sentSummary.email)}
+                    onClick={() => void submitResetRequest(sentSummary.identifier)}
                   >
                     {submitting
                       ? 'Sending Again...'
@@ -232,7 +219,7 @@ export function ForgotPasswordPage({
                         setInlineError(null);
                       }}
                     >
-                      Try Different Email
+                      Try Different Email / ID
                     </button>
                     <button
                       type="button"
@@ -253,24 +240,23 @@ export function ForgotPasswordPage({
                 </div>
 
                 <p className="admin-login-subtitle" style={{ marginBottom: '16px' }}>
-                  Enter the email address added by your LabSetu Admin. We will send you a secure,
-                  single-use link to set a new password.
+                  Enter your registered email address or Assigned Login ID (e.g. LAB-SM-1001). We will send you a secure, single-use link to set a new password.
                 </p>
 
                 {inlineError && <div className="admin-auth-alert error">{inlineError}</div>}
 
                 <div className="form-group">
                   <label className="form-label" htmlFor="forgot-email">
-                    Registered Email Address
+                    Email Address or Assigned Login ID
                   </label>
                   <input
                     id="forgot-email"
-                    type="email"
+                    type="text"
                     className="form-input"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="name@company.com"
-                    autoComplete="email"
+                    placeholder="name@company.com or LAB-SM-1001 / PHL-1001"
+                    autoComplete="username"
                     required
                   />
                 </div>

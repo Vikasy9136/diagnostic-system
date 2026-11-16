@@ -1,5 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
-import { UserRole, UserCustomClaims } from '@diagnostic/shared';
+import {
+  PermissionCode,
+  UserRole,
+  resolveEffectivePermissions,
+} from '@diagnostic/shared';
 import { AppError } from './errorHandler';
 import { initializeFirebase } from '../config/firebase';
 import { config } from '../config/env';
@@ -7,10 +11,12 @@ import {
   findProvisionedUserByEmail,
   resolveDevSessionToken,
 } from '../services/user-directory.service';
+import {
+  AuthenticatedRequest,
+  buildAuthenticatedUserFromProfile,
+} from './rbac';
 
-export interface AuthenticatedRequest extends Request {
-  user?: UserCustomClaims & { uid: string; email?: string };
-}
+export type { AuthenticatedRequest };
 
 function decodeUnverifiedJwtPayload(token: string): Record<string, unknown> | null {
   const parts = token.split('.');
@@ -25,9 +31,8 @@ function decodeUnverifiedJwtPayload(token: string): Record<string, unknown> | nu
 
 /**
  * Authentication Middleware
- * Verifies real Firebase ID tokens when Admin SDK is configured;
- * in non-production mock mode (before serviceAccountKey.json), resolves the token's email
- * against the Admin-provisioned directory without skipping role validation.
+ * Verifies Firebase ID tokens in production & connected environments.
+ * Enforces directory `isActive` check immediately even before JWT expires.
  */
 export async function requireAuth(
   req: AuthenticatedRequest,
@@ -43,7 +48,7 @@ export async function requireAuth(
 
     if (auth && !isMockMode) {
       try {
-        const decoded = await auth.verifyIdToken(idToken);
+        const decoded = await auth.verifyIdToken(idToken, true);
         const provisioned = decoded.email
           ? await findProvisionedUserByEmail(decoded.email)
           : null;
@@ -60,12 +65,14 @@ export async function requireAuth(
 
         const isRootAdmin =
           decoded.email?.toLowerCase() === config.admin.email.toLowerCase();
-        const tokenRole =
-          provisioned?.role ||
-          (decoded.role as UserRole | undefined) ||
-          (isRootAdmin ? UserRole.ADMIN : undefined);
+        const built = buildAuthenticatedUserFromProfile(
+          decoded.uid,
+          provisioned,
+          decoded as unknown as Record<string, unknown>,
+          isRootAdmin
+        );
 
-        if (!tokenRole || !Object.values(UserRole).includes(tokenRole)) {
+        if (!built) {
           return next(
             new AppError(
               `Your account (${decoded.email || decoded.uid}) has not been added yet. Please ask LabSetu Admin (${config.admin.email}) to set up your access.`,
@@ -75,30 +82,21 @@ export async function requireAuth(
           );
         }
 
-        req.user = {
-          uid: decoded.uid,
-          email: decoded.email,
-          role: tokenRole,
-          ...(provisioned?.adminSubRole || decoded.adminSubRole
-            ? { adminSubRole: (provisioned?.adminSubRole || decoded.adminSubRole) as UserCustomClaims['adminSubRole'] }
-            : {}),
-          labId: (provisioned?.labId || decoded.labId) as string | undefined,
-          ...(provisioned?.parentLabId || decoded.parentLabId
-            ? { parentLabId: (provisioned?.parentLabId || decoded.parentLabId) as string }
-            : {}),
-          phlebotomistId: (provisioned?.phlebotomistId || decoded.phlebotomistId) as
-            | string
-            | undefined,
-        };
+        req.user = built;
         return next();
       } catch (err) {
         return next(
-          new AppError('Your sign-in session has expired. Please sign in again.', 401, 'UNAUTHORIZED', err)
+          new AppError(
+            'Your sign-in session has expired or been revoked. Please sign in again.',
+            401,
+            'UNAUTHORIZED',
+            err
+          )
         );
       }
     }
 
-    // Local development fallback when Admin SDK serviceAccountKey.json is not yet attached
+    // Local development fallback when Admin SDK serviceAccountKey.json is not attached
     if (isMockMode && config.env !== 'production') {
       const devOtpSession = resolveDevSessionToken(idToken);
       if (devOtpSession) {
@@ -122,15 +120,14 @@ export async function requireAuth(
           );
         }
 
-        req.user = {
-          uid: currentProfile.id || devOtpSession.uid,
-          email: currentProfile.email,
-          role: currentProfile.role,
-          ...(currentProfile.adminSubRole ? { adminSubRole: currentProfile.adminSubRole } : {}),
-          labId: currentProfile.labId,
-          ...(currentProfile.parentLabId ? { parentLabId: currentProfile.parentLabId } : {}),
-          phlebotomistId: currentProfile.phlebotomistId,
-        };
+        const built = buildAuthenticatedUserFromProfile(
+          currentProfile.id || devOtpSession.uid,
+          currentProfile
+        );
+        if (!built) {
+          return next(new AppError('Invalid account configuration.', 403, 'USER_NOT_PROVISIONED'));
+        }
+        req.user = built;
         return next();
       }
 
@@ -163,15 +160,11 @@ export async function requireAuth(
           );
         }
 
-        req.user = {
-          uid,
-          email: provisioned.email,
-          role: provisioned.role,
-          ...(provisioned.adminSubRole ? { adminSubRole: provisioned.adminSubRole } : {}),
-          labId: provisioned.labId,
-          ...(provisioned.parentLabId ? { parentLabId: provisioned.parentLabId } : {}),
-          phlebotomistId: provisioned.phlebotomistId,
-        };
+        const built = buildAuthenticatedUserFromProfile(uid, provisioned, payload);
+        if (!built) {
+          return next(new AppError('Invalid account configuration.', 403, 'USER_NOT_PROVISIONED'));
+        }
+        req.user = built;
         return next();
       }
 
@@ -181,17 +174,44 @@ export async function requireAuth(
     }
   }
 
-  // Mock header strictly limited to explicit API CLI tests in non-production mock mode
+  // Mock header strictly limited to non-production for local dev/test harnesses
   if (
-    isMockMode &&
     config.env !== 'production' &&
     mockRoleHeader &&
     Object.values(UserRole).includes(mockRoleHeader as UserRole)
   ) {
+    const mockEmail =
+      (typeof req.headers['x-mock-email'] === 'string' && req.headers['x-mock-email'].trim().toLowerCase()) ||
+      config.admin.email.toLowerCase();
+    const provisioned = await findProvisionedUserByEmail(mockEmail);
+
+    if (provisioned && provisioned.role === (mockRoleHeader as UserRole)) {
+      if (!provisioned.isActive) {
+        return next(new AppError('Account is currently paused.', 403, 'ACCOUNT_SUSPENDED'));
+      }
+      const built = buildAuthenticatedUserFromProfile(provisioned.id || 'mock-user-123', provisioned);
+      if (built) {
+        req.user = built;
+        return next();
+      }
+    }
+
+    const role = mockRoleHeader as UserRole;
+    const isRootEmail = mockEmail === config.admin.email.toLowerCase();
+    const isSuper = role === UserRole.ADMIN && isRootEmail;
+    const headerPerms = typeof req.headers['x-mock-permissions'] === 'string'
+      ? (req.headers['x-mock-permissions'].split(',').map((s) => s.trim()).filter(Boolean) as PermissionCode[])
+      : [];
+    const effectivePerms = isSuper
+      ? resolveEffectivePermissions({ role: UserRole.ADMIN, isSuperAdmin: true, adminSubRole: 'SUPER_ADMIN' })
+      : headerPerms;
+
     req.user = {
       uid: 'mock-user-123',
-      email: (req.headers['x-mock-email'] as string) || config.admin.email,
-      role: mockRoleHeader as UserRole,
+      email: mockEmail,
+      role,
+      isSuperAdmin: isSuper,
+      permissions: effectivePerms,
       labId: (req.headers['x-mock-lab-id'] as string) || 'LAB-001',
     };
     return next();
@@ -205,15 +225,12 @@ export function optionalAuth(
   res: Response,
   next: NextFunction
 ): Promise<void> | void {
-  if (req.headers.authorization?.startsWith('Bearer ')) {
+  if (req.headers.authorization?.startsWith('Bearer ') || req.headers['x-mock-role']) {
     return requireAuth(req, res, next);
   }
   return next();
 }
 
-/**
- * Role-Based Access Control Middleware
- */
 export function requireRoles(...allowedRoles: UserRole[]) {
   return (req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
     if (!req.user) {
