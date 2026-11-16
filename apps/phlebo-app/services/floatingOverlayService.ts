@@ -19,6 +19,7 @@ export interface IncomingOrderOverlayPayload {
 interface NativeFloatingDispatchOverlayModule {
   canDrawOverlays: () => Promise<boolean>;
   openOverlayPermissionSettings: () => Promise<boolean>;
+  openAppDetailsSettings?: () => Promise<boolean>;
   startOverlay: (options: {
     isOnline: boolean;
     nearbyCount: number;
@@ -144,6 +145,22 @@ export async function openSystemOverlayPermissionSettings(): Promise<{
     return { opened: true, mode: 'app_settings' };
   } catch {
     return { opened: false, mode: 'app_settings' };
+  }
+}
+
+export async function openAppDetailsPermissionSettings(): Promise<boolean> {
+  if (Platform.OS === 'android' && NativeOverlay?.openAppDetailsSettings) {
+    try {
+      return await NativeOverlay.openAppDetailsSettings();
+    } catch {
+      // Fallback below
+    }
+  }
+  try {
+    await Linking.openSettings();
+    return true;
+  } catch {
+    return false;
   }
 }
 

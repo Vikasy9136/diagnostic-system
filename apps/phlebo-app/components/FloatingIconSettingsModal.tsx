@@ -20,6 +20,7 @@ import {
 } from '../types/phleboTypes';
 import {
   getOverlayEnvironmentInfo,
+  openAppDetailsPermissionSettings,
   openSystemOverlayPermissionSettings,
   type OverlayEnvironmentInfo,
 } from '../services/floatingOverlayService';
@@ -384,15 +385,51 @@ export function FloatingIconSettingsModal({
               </Text>
 
               {Platform.OS === 'android' ? (
-                <TouchableOpacity
-                  style={[styles.permBtn, { backgroundColor: BRAND_COLORS.navyPrimary }]}
-                  onPress={() => void openSystemOverlayPermissionSettings()}
-                >
-                  <Ionicons name="layers-outline" size={16} color="#FFFFFF" />
-                  <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.permBtnText}>
-                    Allow Display Over Other Apps (System Settings)
-                  </Text>
-                </TouchableOpacity>
+                <>
+                  <View style={styles.restrictedHelpBox}>
+                    <View style={styles.restrictedHelpHeader}>
+                      <Ionicons name="shield-checkmark" size={17} color="#0D9488" />
+                      <Text style={styles.restrictedHelpTitle}>
+                        Android 13/14/15 Restricted Settings Solution
+                      </Text>
+                    </View>
+                    <Text style={styles.restrictedHelpText}>
+                      यदि &apos;Display over other apps&apos; स्विच बंद (greyed out) है, तो Android sideload security इसे रोक रहा है:
+                    </Text>
+                    <Text style={styles.restrictedStepText}>
+                      1. नीचे <Text style={{ fontWeight: '700' }}>&quot;1. Open App Info&quot;</Text> पर टैप करें।
+                    </Text>
+                    <Text style={styles.restrictedStepText}>
+                      2. ऊपर दाएँ कोने में 3 डॉट्स (<Text style={{ fontWeight: '700' }}>⋮</Text>) पर टैप करें।
+                    </Text>
+                    <Text style={styles.restrictedStepText}>
+                      3. <Text style={{ fontWeight: '700' }}>&quot;Allow restricted settings&quot;</Text> को चालू करें।
+                    </Text>
+                    <Text style={styles.restrictedStepText}>
+                      4. वापस आकर <Text style={{ fontWeight: '700' }}>&quot;2. Open Display Over Other Apps&quot;</Text> को ऑन करें।
+                    </Text>
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.permBtn, { backgroundColor: BRAND_COLORS.navyPrimary, marginBottom: 8 }]}
+                    onPress={() => void openAppDetailsPermissionSettings()}
+                  >
+                    <Ionicons name="information-circle-outline" size={16} color="#FFFFFF" />
+                    <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.permBtnText}>
+                      1. Open App Info (Tap ⋮ for Restricted Settings)
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.permBtn, { backgroundColor: BRAND_COLORS.tealPrimary, marginBottom: 8 }]}
+                    onPress={() => void openSystemOverlayPermissionSettings()}
+                  >
+                    <Ionicons name="layers-outline" size={16} color="#FFFFFF" />
+                    <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.permBtnText}>
+                      2. Open Display Over Other Apps Settings
+                    </Text>
+                  </TouchableOpacity>
+                </>
               ) : null}
 
               <TouchableOpacity style={styles.permBtn} onPress={onRequestOverlayPermission}>
@@ -654,6 +691,44 @@ const styles = StyleSheet.create({
     marginTop: 4,
     lineHeight: lh(rf(11.5), 1.42),
     includeFontPadding: true,
+  },
+  restrictedHelpBox: {
+    backgroundColor: '#F0FDFA',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#99F6E4',
+    padding: rs(10),
+    marginTop: rs(10),
+    marginBottom: rs(6),
+  },
+  restrictedHelpHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  restrictedHelpTitle: {
+    fontSize: rf(12),
+    lineHeight: lh(rf(12)),
+    fontFamily: BRAND_FONTS.bold,
+    color: '#0F766E',
+    includeFontPadding: true,
+  },
+  restrictedHelpText: {
+    fontSize: rf(11),
+    lineHeight: lh(rf(11), 1.35),
+    fontFamily: BRAND_FONTS.medium,
+    color: '#334155',
+    marginBottom: 6,
+    includeFontPadding: true,
+  },
+  restrictedStepText: {
+    fontSize: rf(10.5),
+    lineHeight: lh(rf(10.5), 1.35),
+    fontFamily: BRAND_FONTS.regular,
+    color: '#0F172A',
+    includeFontPadding: true,
+    marginTop: 2,
   },
   permBtn: {
     flexDirection: 'row',

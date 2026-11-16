@@ -41,6 +41,7 @@ export interface ProfileScreenProps {
   onOpenMySupplies?: () => void;
   kitAllocationsCount?: number;
   onOpenHelpSupport?: () => void;
+  onCheckForUpdates?: () => void;
   onChangePayoutMethod: (method: 'UPI' | 'BANK_TRANSFER') => void;
   onChangePayoutAccountName: (val: string) => void;
   onChangePayoutUpiId: (val: string) => void;
@@ -77,6 +78,7 @@ export function ProfileScreen({
   onOpenMySupplies,
   kitAllocationsCount = 0,
   onOpenHelpSupport,
+  onCheckForUpdates,
   onChangePayoutMethod,
   onChangePayoutAccountName,
   onChangePayoutUpiId,
@@ -277,7 +279,7 @@ export function ProfileScreen({
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.menuGroupRow, { borderBottomWidth: 0 }]}
+            style={styles.menuGroupRow}
             onPress={onOpenHelpSupport}
             activeOpacity={0.75}
           >
@@ -293,6 +295,30 @@ export function ProfileScreen({
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color={BRAND_COLORS.muted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.menuGroupRow, { borderBottomWidth: 0 }]}
+            onPress={onCheckForUpdates}
+            activeOpacity={0.75}
+          >
+            <View style={[styles.menuRowIconWrap, { backgroundColor: '#F0FDF4' }]}>
+              <Ionicons name="cloud-download-outline" size={18} color="#16A34A" />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.menuRowTitle}>
+                In-App Updates &amp; Release
+              </Text>
+              <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.menuRowSub}>
+                Check for OTA updates and self-update inside app
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <View style={{ backgroundColor: '#DCFCE7', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#15803D' }}>Check</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={BRAND_COLORS.muted} />
+            </View>
           </TouchableOpacity>
         </View>
 

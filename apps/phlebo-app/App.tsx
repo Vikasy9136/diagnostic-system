@@ -25,6 +25,7 @@ import {
 } from '@expo-google-fonts/plus-jakarta-sans';
 import { Ionicons } from '@expo/vector-icons';
 import * as Notifications from 'expo-notifications';
+import * as Updates from 'expo-updates';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import {
@@ -445,6 +446,9 @@ function PhleboAppContent() {
       actionLabel?: string;
       onAction?: () => void;
     }) => {
+      if (opts.variant === 'ALERT' || opts.variant === 'SUCCESS') {
+        playPickupAlertChime();
+      }
       setToastState({
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         visible: true,
@@ -482,6 +486,79 @@ function PhleboAppContent() {
       onConfirm: opts.onConfirm,
     });
   };
+
+  const handleCheckForUpdates = useCallback(
+    async (interactive = false) => {
+      try {
+        if (__DEV__ || !Updates.isEnabled) {
+          if (interactive) {
+            showToast({
+              variant: 'INFO',
+              title: 'Development Mode',
+              subtitle: 'Self-update checking is active in installed Preview/Production builds.',
+            });
+          }
+          return;
+        }
+
+        if (interactive) {
+          showToast({
+            variant: 'INFO',
+            title: 'Checking for updates...',
+            subtitle: 'Connecting to LabSetu release servers.',
+          });
+        }
+
+        const check = await Updates.checkForUpdateAsync();
+        if (check.isAvailable) {
+          showToast({
+            variant: 'INFO',
+            title: 'Downloading update...',
+            subtitle: 'Please wait while new app bundle is fetched.',
+          });
+          await Updates.fetchUpdateAsync();
+          showDynamicAlert({
+            variant: 'confirm',
+            title: '🚀 New Update Ready',
+            message:
+              'A new version of LabSetu Partner has been downloaded. Restart the app now to apply changes?',
+            confirmLabel: 'Restart & Update Now',
+            cancelLabel: 'Later',
+            onConfirm: async () => {
+              try {
+                await Updates.reloadAsync();
+              } catch {
+                // Reload fallback
+              }
+            },
+          });
+        } else if (interactive) {
+          showToast({
+            variant: 'SUCCESS',
+            title: 'App is Up to Date',
+            subtitle: 'You are running the latest LabSetu Partner release (v1.0.0).',
+          });
+        }
+      } catch (err: any) {
+        if (interactive) {
+          showToast({
+            variant: 'WARNING',
+            title: 'Update Check Incomplete',
+            subtitle: err?.message || 'Could not verify updates. Check internet connection.',
+          });
+        }
+      }
+    },
+    [showToast]
+  );
+
+  // Background auto-check for updates on app startup
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void handleCheckForUpdates(false);
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [handleCheckForUpdates]);
 
   const handleSignOut = () => {
     showDynamicAlert({
@@ -3830,6 +3907,7 @@ function PhleboAppContent() {
                 onOpenMySupplies={handleOpenMySupplies}
                 kitAllocationsCount={kitAllocations.length}
                 onOpenHelpSupport={handleOpenHelpSupport}
+                onCheckForUpdates={() => void handleCheckForUpdates(true)}
                 onChangePayoutMethod={setPayoutMethod}
                 onChangePayoutAccountName={setPayoutAccountName}
                 onChangePayoutUpiId={setPayoutUpiId}

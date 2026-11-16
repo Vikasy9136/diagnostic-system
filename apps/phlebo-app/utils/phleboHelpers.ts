@@ -19,8 +19,33 @@ export function formatLabel(value?: string | null): string {
 let activeAlertTimeout: any = null;
 let activeWebBookingAudio: any = null;
 let activeWebNotifAudio: any = null;
+let activeExpoBookingPlayer: any = null;
+let activeExpoNotifPlayer: any = null;
+
+function playAudioViaExpo(assetRequire: any, isLoop = false): any {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { createAudioPlayer } = require('expo-audio');
+    const player = createAudioPlayer(assetRequire);
+    if (player) {
+      if (isLoop) {
+        player.loop = true;
+      }
+      player.play();
+      return player;
+    }
+  } catch {
+    // Ignore expo-audio module loading errors if native module not ready
+  }
+  return null;
+}
 
 export function playPickupAlertChime(): void {
+  // Light haptic pulse
+  try {
+    Vibration.vibrate(150);
+  } catch {}
+
   if (Platform.OS === 'web') {
     if (typeof window === 'undefined' || typeof Audio === 'undefined') return;
     try {
@@ -35,9 +60,31 @@ export function playPickupAlertChime(): void {
     return;
   }
 
+  // 1. Try native Kotlin overlay/chime module first
   if (Platform.OS === 'android') {
-    void playNativeNotificationChime();
+    void playNativeNotificationChime().then((handled) => {
+      if (!handled) {
+        // 2. Fallback to expo-audio bundled asset
+        try {
+          if (!activeExpoNotifPlayer) {
+            activeExpoNotifPlayer = playAudioViaExpo(
+              require('../assets/sounds/notification_alert.wav'),
+              false
+            );
+          } else {
+            activeExpoNotifPlayer.seekTo?.(0);
+            activeExpoNotifPlayer.play?.();
+          }
+        } catch {}
+      }
+    });
+    return;
   }
+
+  // iOS / Other platforms fallback
+  try {
+    playAudioViaExpo(require('../assets/sounds/notification_alert.wav'), false);
+  } catch {}
 }
 
 /**
@@ -70,7 +117,27 @@ export function startContinuousPickupAlert(timeoutSeconds = 45): void {
       }
     }
   } else if (Platform.OS === 'android') {
-    void playNativeBookingRingtone();
+    void playNativeBookingRingtone().then((handled) => {
+      if (!handled) {
+        try {
+          if (!activeExpoBookingPlayer) {
+            activeExpoBookingPlayer = playAudioViaExpo(
+              require('../assets/sounds/booking_alert.wav'),
+              true
+            );
+          } else {
+            activeExpoBookingPlayer.play?.();
+          }
+        } catch {}
+      }
+    });
+  } else {
+    try {
+      activeExpoBookingPlayer = playAudioViaExpo(
+        require('../assets/sounds/booking_alert.wav'),
+        true
+      );
+    } catch {}
   }
 
   // 3. Safety auto-stop after timeout
@@ -99,6 +166,13 @@ export function stopContinuousPickupAlert(): void {
     } catch {}
   } else if (Platform.OS === 'android') {
     void stopNativeBookingRingtone();
+  }
+
+  if (activeExpoBookingPlayer) {
+    try {
+      activeExpoBookingPlayer.pause?.();
+      activeExpoBookingPlayer.seekTo?.(0);
+    } catch {}
   }
 }
 

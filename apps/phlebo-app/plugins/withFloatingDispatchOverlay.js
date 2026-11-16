@@ -153,6 +153,16 @@ class FloatingDispatchOverlayService : Service() {
     return START_STICKY
   }
 
+  override fun onTaskRemoved(rootIntent: Intent?) {
+    super.onTaskRemoved(rootIntent)
+    if (!currentOnline) {
+      stopAlertSound()
+      detachIncomingModal()
+      detachFloatingBubble()
+      stopSelf()
+    }
+  }
+
   override fun onDestroy() {
     super.onDestroy()
     stopAlertSound()
@@ -927,6 +937,7 @@ function buildOverlayModuleKotlin(packageName) {
 import android.content.Intent
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -987,6 +998,22 @@ class FloatingDispatchOverlayModule(
       promise.resolve(true)
     } catch (e: Exception) {
       promise.reject("OVERLAY_SETTINGS_ERR", e.message, e)
+    }
+  }
+
+  @ReactMethod
+  fun openAppDetailsSettings(promise: Promise) {
+    try {
+      val intent = Intent(
+        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+        Uri.parse("package:" + reactCtx.packageName)
+      ).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
+      reactCtx.startActivity(intent)
+      promise.resolve(true)
+    } catch (e: Exception) {
+      promise.reject("APP_DETAILS_ERR", e.message, e)
     }
   }
 
@@ -1127,7 +1154,20 @@ class FloatingDispatchOverlayModule(
         }
         promise.resolve(true)
       } else {
-        promise.resolve(false)
+        val alertUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+          ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+          ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+        nativeBookingPlayer = MediaPlayer.create(reactCtx, alertUri)?.apply {
+          isLooping = true
+          setAudioAttributes(
+            AudioAttributes.Builder()
+              .setUsage(AudioAttributes.USAGE_ALARM)
+              .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+              .build()
+          )
+          start()
+        }
+        promise.resolve(nativeBookingPlayer != null)
       }
     } catch (e: Exception) {
       promise.resolve(false)
@@ -1168,7 +1208,23 @@ class FloatingDispatchOverlayModule(
         }
         promise.resolve(true)
       } else {
-        promise.resolve(false)
+        val notifUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+        val player = MediaPlayer.create(reactCtx, notifUri)?.apply {
+          isLooping = false
+          setAudioAttributes(
+            AudioAttributes.Builder()
+              .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+              .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+              .build()
+          )
+          setOnCompletionListener { mp ->
+            try {
+              mp.release()
+            } catch (_: Exception) {}
+          }
+          start()
+        }
+        promise.resolve(player != null)
       }
     } catch (e: Exception) {
       promise.resolve(false)
