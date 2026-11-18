@@ -109,6 +109,7 @@ class FloatingDispatchOverlayService : Service() {
         val pickupLab = intent.getStringExtra(EXTRA_PICKUP_LAB) ?: "Pickup Lab"
         val pickupAddr = intent.getStringExtra(EXTRA_PICKUP_ADDRESS) ?: "Sample Collection Address"
         val targetLab = intent.getStringExtra(EXTRA_TARGET_LAB) ?: "Testing Lab"
+        val targetAddr = intent.getStringExtra(EXTRA_TARGET_ADDRESS) ?: ""
         val distance = intent.getStringExtra(EXTRA_DISTANCE) ?: "Nearby"
         val payout = intent.getStringExtra(EXTRA_PAYOUT) ?: "Earn ₹100"
         val specimens = intent.getStringExtra(EXTRA_SPECIMENS) ?: "1 Test • Standard"
@@ -125,6 +126,7 @@ class FloatingDispatchOverlayService : Service() {
             pickupLab = pickupLab,
             pickupAddr = pickupAddr,
             targetLab = targetLab,
+            targetAddr = targetAddr,
             distance = distance,
             payout = payout,
             specimens = specimens,
@@ -184,7 +186,7 @@ class FloatingDispatchOverlayService : Service() {
   }
 
   /* =========================================================================
-   * 1. Incoming Pickup Floating Modal Card Over Other Apps
+   * 1. Incoming Pickup Floating Modal Card Over Other Apps (Rapido Captain Style)
    * ========================================================================= */
   private fun showIncomingOrderModal(
     orderId: String,
@@ -192,6 +194,7 @@ class FloatingDispatchOverlayService : Service() {
     pickupLab: String,
     pickupAddr: String,
     targetLab: String,
+    targetAddr: String,
     distance: String,
     payout: String,
     specimens: String,
@@ -210,26 +213,26 @@ class FloatingDispatchOverlayService : Service() {
       setPadding(pad, pad, pad, pad)
       val bg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
-        cornerRadius = dp(20).toFloat()
-        setColor(Color.parseColor("#0F172A")) // Deep dark slate
-        setStroke(dp(2), Color.parseColor("#0D9488")) // Teal border
+        cornerRadius = dp(24).toFloat()
+        setColor(Color.parseColor("#090D16")) // Ultra deep obsidian slate
+        setStroke(dp(2), Color.parseColor("#10B981")) // Bright emerald border
       }
       background = bg
-      elevation = dp(24).toFloat()
+      elevation = dp(28).toFloat()
     }
 
-    // Top Header Row: Pulse pill & Countdown Badge
+    // 1. Top Header Row: Pulse pill & Countdown Badge
     val topRow = LinearLayout(this).apply {
       orientation = LinearLayout.HORIZONTAL
       gravity = Gravity.CENTER_VERTICAL
     }
 
     val liveBadge = TextView(this).apply {
-      text = "⚡ NEW SAMPLE PICKUP"
+      text = "⚡ NEW PICKUP REQUEST"
       setTextColor(Color.parseColor("#10B981"))
       textSize = 12f
       typeface = Typeface.DEFAULT_BOLD
-      setPadding(dp(8), dp(4), dp(8), dp(4))
+      setPadding(dp(10), dp(5), dp(10), dp(5))
       background = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(8).toFloat()
@@ -243,11 +246,11 @@ class FloatingDispatchOverlayService : Service() {
     topRow.addView(spacerTop, spacerTopLp)
 
     val timerBadge = TextView(this).apply {
-      text = "\${timeoutSec}s"
+      text = "⏱ \${timeoutSec}s"
       setTextColor(Color.parseColor("#F59E0B"))
-      textSize = 13f
+      textSize = 13.5f
       typeface = Typeface.DEFAULT_BOLD
-      setPadding(dp(10), dp(4), dp(10), dp(4))
+      setPadding(dp(10), dp(5), dp(10), dp(5))
       background = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(8).toFloat()
@@ -280,7 +283,7 @@ class FloatingDispatchOverlayService : Service() {
         topMargin = dp(8)
       }
       val surgeText = TextView(this).apply {
-        text = "⚡ +₹\${surgeIncentive} PRICE HIKE ADD-ON INCLUDED"
+        text = "⚡ +₹\${surgeIncentive} SURGE HIKE INCLUDED"
         setTextColor(Color.parseColor("#FBBF24"))
         textSize = 11.5f
         typeface = Typeface.DEFAULT_BOLD
@@ -289,59 +292,83 @@ class FloatingDispatchOverlayService : Service() {
       root.addView(surgeBanner, surgeLp)
     }
 
-    // Animated / Colored Timer Line
-    val timerBar = View(this).apply {
-      background = GradientDrawable().apply {
+    // 2. Price Hero Box (Rapido Big Earnings Banner)
+    val priceBox = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      val padH = dp(14)
+      val padV = dp(10)
+      setPadding(padH, padV, padH, padV)
+      val bg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
-        cornerRadius = dp(2).toFloat()
-        setColor(Color.parseColor("#0D9488"))
+        cornerRadius = dp(14).toFloat()
+        setColor(Color.parseColor("#062A24")) // Soft deep emerald tint
+        setStroke(dp(1), Color.parseColor("#0D9488"))
       }
+      background = bg
     }
-    val barLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(3)).apply {
-      topMargin = dp(8)
-      bottomMargin = dp(10)
+    val priceBoxLp = LinearLayout.LayoutParams(
+      LinearLayout.LayoutParams.MATCH_PARENT,
+      LinearLayout.LayoutParams.WRAP_CONTENT
+    ).apply {
+      topMargin = dp(10)
     }
-    root.addView(timerBar, barLp)
 
-    // Order Info & Payout Row
-    val orderRow = LinearLayout(this).apply {
+    val priceRow = LinearLayout(this).apply {
       orientation = LinearLayout.HORIZONTAL
       gravity = Gravity.CENTER_VERTICAL
     }
 
-    val orderNumView = TextView(this).apply {
-      text = orderNum
-      setTextColor(Color.WHITE)
-      textSize = 17f
-      typeface = Typeface.DEFAULT_BOLD
-    }
-    orderRow.addView(orderNumView)
-
-    val spacerOrder = View(this)
-    val spacerOrderLp = LinearLayout.LayoutParams(0, 1, 1f)
-    orderRow.addView(spacerOrder, spacerOrderLp)
-
-    val payoutBadge = TextView(this).apply {
+    val priceText = TextView(this).apply {
       text = payout
-      setTextColor(Color.parseColor("#34D399"))
-      textSize = 15f
+      setTextColor(Color.parseColor("#10B981"))
+      textSize = 22f
       typeface = Typeface.DEFAULT_BOLD
-      setPadding(dp(10), dp(4), dp(10), dp(4))
-      background = GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE
-        cornerRadius = dp(8).toFloat()
-        setColor(Color.parseColor("#065F46"))
-      }
     }
-    orderRow.addView(payoutBadge)
-    root.addView(orderRow)
+    priceRow.addView(priceText)
 
-    // Pickup Details
-    val pickupSection = LinearLayout(this).apply {
+    val spacerPrice = View(this)
+    val spacerPriceLp = LinearLayout.LayoutParams(0, 1, 1f)
+    priceRow.addView(spacerPrice, spacerPriceLp)
+
+    val orderTag = TextView(this).apply {
+      text = orderNum
+      setTextColor(Color.parseColor("#94A3B8"))
+      textSize = 12f
+      typeface = Typeface.DEFAULT_BOLD
+    }
+    priceRow.addView(orderTag)
+    priceBox.addView(priceRow)
+
+    val payoutSub = TextView(this).apply {
+      text = "Guaranteed Courier Earnings • Instant Transfer"
+      setTextColor(Color.parseColor("#5EEAD4"))
+      textSize = 11f
+      typeface = Typeface.DEFAULT
+    }
+    priceBox.addView(payoutSub)
+    root.addView(priceBox, priceBoxLp)
+
+    // 3. Route Details Container (Pickup -> Drop with Distance & Cold Chain)
+    val routeCard = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
-      setPadding(0, dp(10), 0, dp(4))
+      val pad = dp(12)
+      setPadding(pad, pad, pad, pad)
+      val bg = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(16).toFloat()
+        setColor(Color.parseColor("#131D33")) // Elevated slate card
+        setStroke(dp(1), Color.parseColor("#1E293B"))
+      }
+      background = bg
+    }
+    val routeCardLp = LinearLayout.LayoutParams(
+      LinearLayout.LayoutParams.MATCH_PARENT,
+      LinearLayout.LayoutParams.WRAP_CONTENT
+    ).apply {
+      topMargin = dp(10)
     }
 
+    // Pickup Point
     val pickupTitleRow = LinearLayout(this).apply {
       orientation = LinearLayout.HORIZONTAL
       gravity = Gravity.CENTER_VERTICAL
@@ -349,41 +376,64 @@ class FloatingDispatchOverlayService : Service() {
     val pickupDot = TextView(this).apply {
       text = "● "
       setTextColor(Color.parseColor("#10B981"))
-      textSize = 14f
+      textSize = 16f
     }
     val pickupLabView = TextView(this).apply {
       text = pickupLab
-      setTextColor(Color.parseColor("#F8FAFC"))
-      textSize = 14f
+      setTextColor(Color.WHITE)
+      textSize = 14.5f
       typeface = Typeface.DEFAULT_BOLD
     }
     pickupTitleRow.addView(pickupDot)
     pickupTitleRow.addView(pickupLabView)
-    pickupSection.addView(pickupTitleRow)
+    routeCard.addView(pickupTitleRow)
 
     val pickupAddressView = TextView(this).apply {
       text = pickupAddr
       setTextColor(Color.parseColor("#94A3B8"))
       textSize = 12f
-      setPadding(dp(16), dp(2), 0, dp(2))
+      setPadding(dp(16), dp(1), 0, dp(2))
     }
-    pickupSection.addView(pickupAddressView)
+    routeCard.addView(pickupAddressView)
 
-    val distanceView = TextView(this).apply {
+    val distanceChip = TextView(this).apply {
       text = "📍 $distance"
       setTextColor(Color.parseColor("#38BDF8"))
-      textSize = 12f
+      textSize = 11.5f
       typeface = Typeface.DEFAULT_BOLD
-      setPadding(dp(16), 0, 0, 0)
+      setPadding(dp(8), dp(3), dp(8), dp(3))
+      val chipBg = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(6).toFloat()
+        setColor(Color.parseColor("#0C4A6E"))
+      }
+      background = chipBg
     }
-    pickupSection.addView(distanceView)
-    root.addView(pickupSection)
+    val distChipLp = LinearLayout.LayoutParams(
+      LinearLayout.LayoutParams.WRAP_CONTENT,
+      LinearLayout.LayoutParams.WRAP_CONTENT
+    ).apply {
+      marginStart = dp(16)
+      topMargin = dp(2)
+      bottomMargin = dp(4)
+    }
+    routeCard.addView(distanceChip, distChipLp)
 
-    // Drop Hub Details
-    val dropSection = LinearLayout(this).apply {
-      orientation = LinearLayout.VERTICAL
-      setPadding(0, dp(4), 0, dp(8))
+    // Connecting Vertical Line
+    val pathLine = View(this).apply {
+      background = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        setColor(Color.parseColor("#334155"))
+      }
     }
+    val pathLp = LinearLayout.LayoutParams(dp(2), dp(12)).apply {
+      marginStart = dp(6)
+      topMargin = dp(2)
+      bottomMargin = dp(2)
+    }
+    routeCard.addView(pathLine, pathLp)
+
+    // Drop Point
     val dropTitleRow = LinearLayout(this).apply {
       orientation = LinearLayout.HORIZONTAL
       gravity = Gravity.CENTER_VERTICAL
@@ -391,53 +441,63 @@ class FloatingDispatchOverlayService : Service() {
     val dropDot = TextView(this).apply {
       text = "● "
       setTextColor(Color.parseColor("#EF4444"))
-      textSize = 14f
+      textSize = 16f
     }
     val dropLabView = TextView(this).apply {
       text = "Drop: $targetLab"
-      setTextColor(Color.parseColor("#E2E8F0"))
-      textSize = 13f
+      setTextColor(Color.WHITE)
+      textSize = 14f
       typeface = Typeface.DEFAULT_BOLD
     }
     dropTitleRow.addView(dropDot)
     dropTitleRow.addView(dropLabView)
-    dropSection.addView(dropTitleRow)
+    routeCard.addView(dropTitleRow)
+
+    if (targetAddr.isNotEmpty()) {
+      val dropAddressView = TextView(this).apply {
+        text = targetAddr
+        setTextColor(Color.parseColor("#94A3B8"))
+        textSize = 12f
+        setPadding(dp(16), dp(1), 0, dp(2))
+      }
+      routeCard.addView(dropAddressView)
+    }
 
     val specimensView = TextView(this).apply {
       text = "🧪 $specimens"
-      setTextColor(Color.parseColor("#A5B4FC"))
-      textSize = 12f
+      setTextColor(Color.parseColor("#C4B5FD"))
+      textSize = 11.5f
       setPadding(dp(16), dp(2), 0, 0)
     }
-    dropSection.addView(specimensView)
-    root.addView(dropSection)
+    routeCard.addView(specimensView)
+    root.addView(routeCard, routeCardLp)
 
-    // Action Buttons: Decline & Accept
+    // 4. Action Buttons: ✕ Reject & ⚡ ACCEPT PICKUP (Rapido style)
     val actionRow = LinearLayout(this).apply {
       orientation = LinearLayout.HORIZONTAL
       val lp = LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT,
         LinearLayout.LayoutParams.WRAP_CONTENT
       ).apply {
-        topMargin = dp(12)
+        topMargin = dp(14)
       }
       layoutParams = lp
     }
 
     val declineBtn = TextView(this).apply {
-      text = "✕ Decline"
+      text = "✕ Reject"
       setTextColor(Color.parseColor("#F87171"))
-      textSize = 14f
+      textSize = 14.5f
       typeface = Typeface.DEFAULT_BOLD
       gravity = Gravity.CENTER
       val bg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
-        cornerRadius = dp(12).toFloat()
+        cornerRadius = dp(14).toFloat()
         setColor(Color.parseColor("#1E293B"))
-        setStroke(dp(1), Color.parseColor("#DC2626"))
+        setStroke(dp(1.5), Color.parseColor("#EF4444"))
       }
       background = bg
-      setPadding(0, dp(12), 0, dp(12))
+      setPadding(0, dp(14), 0, dp(14))
       isClickable = true
       isFocusable = true
       setOnClickListener {
@@ -445,23 +505,23 @@ class FloatingDispatchOverlayService : Service() {
       }
     }
     val declineLp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-      marginEnd = dp(8)
+      marginEnd = dp(10)
     }
     actionRow.addView(declineBtn, declineLp)
 
     val acceptBtn = TextView(this).apply {
-      text = "✓ ACCEPT PICKUP"
+      text = "⚡ ACCEPT PICKUP"
       setTextColor(Color.WHITE)
-      textSize = 14f
+      textSize = 15.5f
       typeface = Typeface.DEFAULT_BOLD
       gravity = Gravity.CENTER
       val bg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
-        cornerRadius = dp(12).toFloat()
-        setColor(Color.parseColor("#0D9488"))
+        cornerRadius = dp(14).toFloat()
+        setColor(Color.parseColor("#10B981"))
       }
       background = bg
-      setPadding(0, dp(12), 0, dp(12))
+      setPadding(0, dp(14), 0, dp(14))
       isClickable = true
       isFocusable = true
       setOnClickListener {
@@ -1313,6 +1373,7 @@ class FloatingDispatchOverlayService : Service() {
     const val EXTRA_PICKUP_LAB = "pickupLab"
     const val EXTRA_PICKUP_ADDRESS = "pickupAddress"
     const val EXTRA_TARGET_LAB = "targetLab"
+    const val EXTRA_TARGET_ADDRESS = "targetAddress"
     const val EXTRA_DISTANCE = "distance"
     const val EXTRA_PAYOUT = "payout"
     const val EXTRA_SPECIMENS = "specimens"
@@ -1493,6 +1554,7 @@ class FloatingDispatchOverlayModule(
         putExtra(FloatingDispatchOverlayService.EXTRA_PICKUP_LAB, orderData?.getString("pickupLab") ?: "")
         putExtra(FloatingDispatchOverlayService.EXTRA_PICKUP_ADDRESS, orderData?.getString("pickupAddress") ?: "")
         putExtra(FloatingDispatchOverlayService.EXTRA_TARGET_LAB, orderData?.getString("targetLab") ?: "")
+        putExtra(FloatingDispatchOverlayService.EXTRA_TARGET_ADDRESS, orderData?.getString("targetAddress") ?: "")
         putExtra(FloatingDispatchOverlayService.EXTRA_DISTANCE, orderData?.getString("distance") ?: "")
         putExtra(FloatingDispatchOverlayService.EXTRA_PAYOUT, orderData?.getString("payout") ?: "")
         putExtra(FloatingDispatchOverlayService.EXTRA_SPECIMENS, orderData?.getString("specimens") ?: "")

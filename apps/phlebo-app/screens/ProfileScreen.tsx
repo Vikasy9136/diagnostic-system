@@ -564,7 +564,7 @@ export function ProfileScreen({
           >
             <Ionicons name="shield-checkmark" size={18} color="#0D9488" />
             <Text style={{ fontSize: 11.5, color: '#0F766E', flex: 1, lineHeight: 16 }}>
-              🔒 <strong>256-Bit Encrypted Storage:</strong> Account numbers are encrypted and stored safely for auto-disbursement of pickup commissions.
+              🔒 <Text style={{ fontWeight: '700' }}>256-Bit Encrypted Storage:</Text> Account numbers are encrypted and stored safely for auto-disbursement of pickup commissions.
             </Text>
           </View>
 

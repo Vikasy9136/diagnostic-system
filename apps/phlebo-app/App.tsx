@@ -69,6 +69,7 @@ import {
 import { signOut } from 'firebase/auth';
 import {
   addDoc,
+  arrayUnion,
   collection,
   doc,
   getDoc,
@@ -431,6 +432,7 @@ function PhleboAppContent() {
   const [showLocationPickerModal, setShowLocationPickerModal] = useState(false);
   const manualLiveGpsSyncedRef = useRef(false);
   const [dismissedBroadcastIds, setDismissedBroadcastIds] = useState<string[]>([]);
+  const [declinedOrderIds, setDeclinedOrderIds] = useState<string[]>([]);
   const [broadcastForceOpen, setBroadcastForceOpen] = useState(false);
   const [radiusOnlyFilter, setRadiusOnlyFilter] = useState(false);
   const [webNotifPerm, setWebNotifPerm] = useState<WebNotificationPermissionState>(() => {
@@ -820,8 +822,46 @@ function PhleboAppContent() {
           }));
           const filtered = all
             .filter((n) => {
-              if (n.recipientUid && session?.firebaseUser && n.recipientUid === session.firebaseUser.uid) return true;
-              if (n.recipientRole === UserRole.PHLEBOTOMIST || n.recipientRole === 'ALL') return true;
+              const titleUpper = (n.title || '').toUpperCase();
+              const msgUpper = (n.message || '').toUpperCase();
+
+              // Exclude general broadcast spam (such as retry broadcasts, search retry spam, surge hike spam)
+              if (
+                titleUpper.includes('RETRY BROADCAST') ||
+                titleUpper.includes('SURGE +₹') ||
+                titleUpper.includes('PRICE HIKE') ||
+                msgUpper.includes('PICKUP RETRIED') ||
+                msgUpper.includes('RETRIED PICKUP SEARCH')
+              ) {
+                return false;
+              }
+
+              // General unassigned pool order broadcast should NOT clutter phlebotomist personal notification tray
+              if (
+                (String(n.category) === 'PICKUP_ASSIGNED' || String(n.category) === 'NEW_ORDER_BROADCAST') &&
+                !n.recipientUid
+              ) {
+                return false;
+              }
+
+              // 1. Direct notification for this phlebotomist
+              if (
+                n.recipientUid &&
+                (n.recipientUid === session?.firebaseUser?.uid ||
+                  n.recipientUid === effectivePhleboId ||
+                  n.recipientUid === myPhleboProfile?.id)
+              ) {
+                return true;
+              }
+
+              // 2. Direct Admin or broadcast specifically for phlebotomists (system announcements, payout releases)
+              if (n.recipientRole === UserRole.PHLEBOTOMIST || n.recipientRole === 'ALL') {
+                if (n.orderId && !n.recipientUid) {
+                  return false;
+                }
+                return true;
+              }
+
               return false;
             })
             .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
@@ -909,6 +949,59 @@ function PhleboAppContent() {
       console.warn('Failed to clear notifications:', err);
     }
   };
+
+  // Load persisted declined/rejected bookings for this phlebotomist
+  useEffect(() => {
+    if (!effectivePhleboId) return;
+    void AsyncStorage.getItem(`labsetu_declined_orders_${effectivePhleboId}`).then((raw) => {
+      if (raw) {
+        try {
+          const list = JSON.parse(raw);
+          if (Array.isArray(list)) {
+            setDeclinedOrderIds(list);
+            list.forEach((id) => alertedBroadcastIdsRef.current.add(id));
+          }
+        } catch {}
+      }
+    });
+  }, [effectivePhleboId]);
+
+  const handleDeclineOrder = useCallback(
+    async (orderId: string) => {
+      stopContinuousPickupAlert();
+      void dismissIncomingPickupOverlay();
+      setBroadcastForceOpen(false);
+      setDeclinedOrderIds((prev) => {
+        const next = prev.includes(orderId) ? prev : [...prev, orderId];
+        if (effectivePhleboId) {
+          void AsyncStorage.setItem(
+            `labsetu_declined_orders_${effectivePhleboId}`,
+            JSON.stringify(next)
+          ).catch(() => {});
+        }
+        return next;
+      });
+      setDismissedBroadcastIds((prev) =>
+        prev.includes(orderId) ? prev : [...prev, orderId]
+      );
+      alertedBroadcastIdsRef.current.add(orderId);
+
+      try {
+        await updateDoc(doc(db, 'orders', orderId), {
+          declinedPhleboIds: arrayUnion(effectivePhleboId || 'declined'),
+        });
+      } catch {
+        // Continue gracefully even if offline
+      }
+
+      showToast({
+        variant: 'INFO',
+        title: 'Booking Request Passed',
+        subtitle: 'You will not receive alerts for this pickup order.',
+      });
+    },
+    [effectivePhleboId, showToast]
+  );
 
   // Keep live ticker: 1-second cadence when unassigned orders exist or alert is active, 15-second cadence otherwise
   useEffect(() => {
@@ -1550,9 +1643,12 @@ function PhleboAppContent() {
 
     const nearby = openPoolWithDistance.filter((x) => x.inBroadcastRadius);
 
-    // 2. Price Hike or Search Retry detection: if lab bumped incentive or retried search, re-arm alert!
+    // 2. Price Hike or Search Retry detection: if lab bumped incentive or retried search, re-arm alert (unless phlebo already declined)
     for (const x of nearby) {
       const oId = x.order.id;
+      if (declinedOrderIds.includes(oId) || x.order.declinedPhleboIds?.includes(effectivePhleboId)) {
+        continue;
+      }
       const prevHike = seenHikeMapRef.current.get(oId) ?? 0;
       const currHike = x.order.surgeIncentiveInr ?? 0;
       const prevRetry = seenRetryMapRef.current.get(oId) ?? 0;
@@ -1566,7 +1662,12 @@ function PhleboAppContent() {
       }
     }
 
-    const newlyArrived = nearby.filter((x) => !alertedBroadcastIdsRef.current.has(x.order.id));
+    const newlyArrived = nearby.filter(
+      (x) =>
+        !alertedBroadcastIdsRef.current.has(x.order.id) &&
+        !declinedOrderIds.includes(x.order.id) &&
+        !x.order.declinedPhleboIds?.includes(effectivePhleboId)
+    );
     if (newlyArrived.length === 0) return;
 
     newlyArrived.forEach((x) => {
@@ -1586,7 +1687,7 @@ function PhleboAppContent() {
       ? `Earn ${formatInr(lead.order.courierFeeInr || 100)} (${formatInr(basePay)} + ₹${lead.order.surgeIncentiveInr} Surge)`
       : `Earn ${formatInr(lead.order.courierFeeInr || 100)}`;
 
-    // Trigger outside-app floating pickup modal over other apps
+    // Trigger outside-app floating pickup modal over other apps (Rapido style)
     void triggerIncomingPickupOverlay({
       orderId: lead.order.id,
       orderNumber: lead.order.orderNumber || lead.order.id,
@@ -1595,10 +1696,11 @@ function PhleboAppContent() {
         lead.order.pickupLocation?.address ||
         lead.order.pickupLocation?.pincode ||
         'Sample Collection Address',
-      targetLab:
-        lead.order.targetLabName ||
+      targetLab: lead.order.targetLabName || 'Testing Lab',
+      targetAddress:
         lead.order.deliveryLocation?.address ||
-        'Testing Lab',
+        lead.order.targetLabName ||
+        'Testing Reference Lab',
       distance: `${lead.distFromRiderKm} km away`,
       payout: payoutLabel,
       specimens: `${lead.order.specimens?.length || 1} Specimens • Sample Collection`,
@@ -1694,7 +1796,7 @@ function PhleboAppContent() {
       },
       trigger: Platform.OS === 'android' ? { channelId: URGENT_DISPATCH_CHANNEL_ID } : null,
     }).catch(() => { });
-  }, [session, isOnline, effectivePhleboId, openPoolWithDistance, showToast]);
+  }, [session, isOnline, effectivePhleboId, openPoolWithDistance, declinedOrderIds, showToast]);
 
   // Sync outside-app floating overlay service / sticky duty notification when minimized or closed
   const nearbyOpenCount = useMemo(
@@ -1773,9 +1875,7 @@ function PhleboAppContent() {
             }
           }
         } else if (event?.action === 'DECLINE' && event.orderId) {
-          setDismissedBroadcastIds((prev) =>
-            prev.includes(event.orderId!) ? prev : [...prev, event.orderId!]
-          );
+          void handleDeclineOrder(event.orderId);
         }
       }
     );
@@ -1794,13 +1894,15 @@ function PhleboAppContent() {
             void handleAcceptPoolOrder(found);
           }
         }
+      } else if (pending?.action === 'DECLINE' && pending.orderId) {
+        void handleDeclineOrder(pending.orderId);
       }
     });
 
     return () => {
       sub.remove();
     };
-  }, [openPoolWithDistance, orders]);
+  }, [openPoolWithDistance, orders, handleDeclineOrder]);
 
   // Listen to Outside-App Floating Quick Action Menu Duty Status Toggles
   useEffect(() => {
@@ -1865,12 +1967,23 @@ function PhleboAppContent() {
     }
 
     const undismissed = openPoolWithDistance.find(
-      (x) => x.inBroadcastRadius && !dismissedBroadcastIds.includes(x.order.id)
+      (x) =>
+        x.inBroadcastRadius &&
+        !dismissedBroadcastIds.includes(x.order.id) &&
+        !declinedOrderIds.includes(x.order.id) &&
+        !x.order.declinedPhleboIds?.includes(effectivePhleboId)
     );
     if (undismissed) return undismissed;
 
     if (broadcastForceOpen) {
-      return openPoolWithDistance.find((x) => x.inBroadcastRadius) || null;
+      return (
+        openPoolWithDistance.find(
+          (x) =>
+            x.inBroadcastRadius &&
+            !declinedOrderIds.includes(x.order.id) &&
+            !x.order.declinedPhleboIds?.includes(effectivePhleboId)
+        ) || null
+      );
     }
 
     return null;
@@ -1888,6 +2001,7 @@ function PhleboAppContent() {
     broadcastForceOpen,
     openPoolWithDistance,
     dismissedBroadcastIds,
+    declinedOrderIds,
   ]);
 
   // Merge live settlements & payouts with handled orders for accurate earnings computation
@@ -3839,12 +3953,7 @@ function PhleboAppContent() {
         riderLocation={riderLocation}
         submittingAction={submittingAction}
         onDismissBroadcast={(orderId) => {
-          stopContinuousPickupAlert();
-          void dismissIncomingPickupOverlay();
-          setBroadcastForceOpen(false);
-          setDismissedBroadcastIds((prev) =>
-            prev.includes(orderId) ? prev : [...prev, orderId]
-          );
+          void handleDeclineOrder(orderId);
         }}
         onAcceptPoolOrder={(order) => void handleAcceptPoolOrder(order)}
         onOpenDirectionsMap={openDirectionsMap}
@@ -4121,8 +4230,18 @@ function PhleboAppContent() {
                 adminLoginEmail={ADMIN_LOGIN_EMAIL}
                 requestTab={requestTab}
                 radiusOnlyFilter={radiusOnlyFilter}
-                openPoolOrdersCount={openPoolOrders.length}
-                openPoolWithDistance={openPoolWithDistance}
+                openPoolOrdersCount={
+                  openPoolOrders.filter(
+                    (o) =>
+                      !declinedOrderIds.includes(o.id) &&
+                      !o.declinedPhleboIds?.includes(effectivePhleboId)
+                  ).length
+                }
+                openPoolWithDistance={openPoolWithDistance.filter(
+                  (x) =>
+                    !declinedOrderIds.includes(x.order.id) &&
+                    !x.order.declinedPhleboIds?.includes(effectivePhleboId)
+                )}
                 activeAssignedOrders={activeAssignedOrders}
                 completedAssignedOrders={completedAssignedOrders}
                 submittingAction={submittingAction}

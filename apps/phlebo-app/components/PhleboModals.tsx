@@ -208,6 +208,8 @@ export function BroadcastDispatchModal({
           style={[
             styles.modalBackdrop,
             {
+              backgroundColor: 'rgba(9, 13, 22, 0.82)',
+              justifyContent: 'center',
               paddingTop: Math.max(insets.top + 12, 16),
               paddingBottom: Math.max(insets.bottom + 12, 16),
               paddingLeft: Math.max(insets.left + 14, 16),
@@ -215,126 +217,392 @@ export function BroadcastDispatchModal({
             },
           ]}
         >
-          <View style={[styles.broadcastCard, { maxHeight: '90%' }]}>
+          <View
+            style={{
+              backgroundColor: '#090D16',
+              borderRadius: 24,
+              borderWidth: 2,
+              borderColor: '#10B981',
+              padding: 16,
+              maxHeight: '92%',
+              width: '100%',
+              maxWidth: 480,
+              alignSelf: 'center',
+              shadowColor: '#10B981',
+              shadowOffset: { width: 0, height: 8 },
+              shadowOpacity: 0.35,
+              shadowRadius: 20,
+              elevation: 28,
+            }}
+          >
             <ScrollView showsVerticalScrollIndicator={false}>
-              <View style={styles.broadcastAlertBadge}>
-                <Text style={styles.broadcastAlertBadgeText}>
-                  ⚡ LIVE BROADCAST • {remSeconds}s remaining • {activeBroadcastMatch.distFromRiderKm} km away (within{' '}
-                  {activeBroadcastMatch.maxRadiusKm} km)
-                </Text>
-              </View>
+              {/* 1. Header Bar: Rapido Captain Status + Timer */}
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <View
+                  style={{
+                    backgroundColor: '#064E3B',
+                    paddingHorizontal: 10,
+                    paddingVertical: 5,
+                    borderRadius: 8,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  <View
+                    style={{
+                      width: 7,
+                      height: 7,
+                      borderRadius: 3.5,
+                      backgroundColor: '#10B981',
+                    }}
+                  />
+                  <Text
+                    style={{
+                      fontSize: 11.5,
+                      fontFamily: BRAND_FONTS.bold,
+                      color: '#10B981',
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    ⚡ NEW PICKUP REQUEST
+                  </Text>
+                </View>
 
-              {Boolean(activeBroadcastMatch.order.surgeIncentiveInr && activeBroadcastMatch.order.surgeIncentiveInr > 0) && (
                 <View
                   style={{
                     backgroundColor: '#451A03',
-                    borderColor: '#D97706',
+                    paddingHorizontal: 10,
+                    paddingVertical: 5,
+                    borderRadius: 8,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      fontFamily: BRAND_FONTS.bold,
+                      color: '#F59E0B',
+                    }}
+                  >
+                    ⏱ {remSeconds}s
+                  </Text>
+                </View>
+              </View>
+
+              {/* Surge Incentive Banner */}
+              {Boolean(
+                activeBroadcastMatch.order.surgeIncentiveInr &&
+                  activeBroadcastMatch.order.surgeIncentiveInr > 0
+              ) && (
+                <View
+                  style={{
+                    backgroundColor: '#451A03',
+                    borderColor: '#F59E0B',
                     borderWidth: 1,
                     borderRadius: 8,
                     paddingHorizontal: 12,
-                    paddingVertical: 7,
+                    paddingVertical: 6,
                     marginTop: 8,
-                    marginBottom: 4,
                     flexDirection: 'row',
                     alignItems: 'center',
-                    gap: 8,
+                    gap: 6,
                   }}
                 >
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#FBBF24' }}>
-                    ⚡ +₹{activeBroadcastMatch.order.surgeIncentiveInr} PRICE HIKE ADD-ON INCLUDED
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      fontFamily: BRAND_FONTS.bold,
+                      color: '#FBBF24',
+                    }}
+                  >
+                    ⚡ +₹{activeBroadcastMatch.order.surgeIncentiveInr} SURGE HIKE INCLUDED
                   </Text>
                 </View>
               )}
 
-              <Text style={styles.broadcastTitle}>
-                Pickup Request • {activeBroadcastMatch.order.orderNumber}
-              </Text>
-              <Text style={styles.broadcastFeeHero}>
-                Earn {formatInr(activeBroadcastMatch.order.courierFeeInr || 0)}
-                {Boolean(activeBroadcastMatch.order.surgeIncentiveInr) && (
-                  <Text style={{ fontSize: 13, color: '#FBBF24', fontWeight: '600' }}>
-                    {' '}({formatInr(activeBroadcastMatch.order.baseCourierFeeInr || ((activeBroadcastMatch.order.courierFeeInr || 0) - (activeBroadcastMatch.order.surgeIncentiveInr || 0)))} Base + {formatInr(activeBroadcastMatch.order.surgeIncentiveInr || 0)} Surge)
+              {/* 2. Hero Payout Box (Rapido Big Earnings Banner) */}
+              <View
+                style={{
+                  backgroundColor: '#062A24',
+                  borderColor: '#0D9488',
+                  borderWidth: 1,
+                  borderRadius: 14,
+                  paddingHorizontal: 14,
+                  paddingVertical: 10,
+                  marginTop: 10,
+                }}
+              >
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 22,
+                      fontFamily: BRAND_FONTS.extraBold,
+                      color: '#10B981',
+                    }}
+                  >
+                    Earn {formatInr(activeBroadcastMatch.order.courierFeeInr || 100)}
                   </Text>
-                )}
-                {' '}• {formatLabel(activeBroadcastMatch.order.priority)}
-              </Text>
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      fontFamily: BRAND_FONTS.bold,
+                      color: '#94A3B8',
+                    }}
+                  >
+                    {activeBroadcastMatch.order.orderNumber}
+                  </Text>
+                </View>
+                <Text
+                  style={{
+                    fontSize: 11,
+                    fontFamily: BRAND_FONTS.medium,
+                    color: '#5EEAD4',
+                    marginTop: 2,
+                  }}
+                >
+                  Guaranteed Courier Earnings • {formatLabel(activeBroadcastMatch.order.priority)}
+                </Text>
+              </View>
 
-              <View style={styles.routeContainer}>
-                <View style={styles.routeRow}>
-                  <View style={[styles.dotMarker, { backgroundColor: COLORS.primaryTeal }]} />
+              {/* 3. Route Details Container (Pickup -> Drop) */}
+              <View
+                style={{
+                  backgroundColor: '#131D33',
+                  borderColor: '#1E293B',
+                  borderWidth: 1,
+                  borderRadius: 16,
+                  padding: 12,
+                  marginTop: 10,
+                }}
+              >
+                {/* Pickup Row */}
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+                  <View
+                    style={{
+                      width: 12,
+                      height: 12,
+                      borderRadius: 6,
+                      backgroundColor: '#10B981',
+                      marginTop: 4,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <View
+                      style={{
+                        width: 4,
+                        height: 4,
+                        borderRadius: 2,
+                        backgroundColor: '#FFFFFF',
+                      }}
+                    />
+                  </View>
                   <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={styles.routePlaceTitle}>
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontFamily: BRAND_FONTS.bold,
+                        color: '#FFFFFF',
+                      }}
+                    >
                       {activeBroadcastMatch.order.smallLabName}
                     </Text>
-                    <Text style={styles.routePlaceSubtitle}>
-                      {activeBroadcastMatch.order.pickupLocation.address}
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        fontFamily: BRAND_FONTS.regular,
+                        color: '#94A3B8',
+                        marginTop: 1,
+                      }}
+                    >
+                      {activeBroadcastMatch.order.pickupLocation?.address}
                     </Text>
+                    <View
+                      style={{
+                        backgroundColor: '#0C4A6E',
+                        paddingHorizontal: 8,
+                        paddingVertical: 3,
+                        borderRadius: 6,
+                        alignSelf: 'flex-start',
+                        marginTop: 4,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 11,
+                          fontFamily: BRAND_FONTS.bold,
+                          color: '#38BDF8',
+                        }}
+                      >
+                        📍 {activeBroadcastMatch.distFromRiderKm} km away from you
+                      </Text>
+                    </View>
                   </View>
                 </View>
 
-                <View style={styles.routeConnectingLine} />
+                {/* Connecting Path */}
+                <View
+                  style={{
+                    width: 2,
+                    height: 14,
+                    backgroundColor: '#334155',
+                    marginLeft: 5,
+                    marginVertical: 4,
+                  }}
+                />
 
-                <View style={styles.routeRow}>
-                  <View style={[styles.dotMarker, { backgroundColor: COLORS.errorRed }]} />
+                {/* Drop Row */}
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+                  <View
+                    style={{
+                      width: 12,
+                      height: 12,
+                      borderRadius: 6,
+                      backgroundColor: '#EF4444',
+                      marginTop: 4,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <View
+                      style={{
+                        width: 4,
+                        height: 4,
+                        borderRadius: 2,
+                        backgroundColor: '#FFFFFF',
+                      }}
+                    />
+                  </View>
                   <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={styles.routePlaceTitle}>
-                      {activeBroadcastMatch.order.targetLabName}
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontFamily: BRAND_FONTS.bold,
+                        color: '#FFFFFF',
+                      }}
+                    >
+                      Drop: {activeBroadcastMatch.order.targetLabName}
                     </Text>
-                    <Text style={styles.routePlaceSubtitle}>
-                      {activeBroadcastMatch.order.deliveryLocation.address}
-                    </Text>
+                    {Boolean(activeBroadcastMatch.order.deliveryLocation?.address) && (
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontFamily: BRAND_FONTS.regular,
+                          color: '#94A3B8',
+                          marginTop: 1,
+                        }}
+                      >
+                        {activeBroadcastMatch.order.deliveryLocation.address}
+                      </Text>
+                    )}
+                    <View
+                      style={{
+                        backgroundColor: '#2E1065',
+                        paddingHorizontal: 8,
+                        paddingVertical: 3,
+                        borderRadius: 6,
+                        alignSelf: 'flex-start',
+                        marginTop: 4,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 11,
+                          fontFamily: BRAND_FONTS.semiBold,
+                          color: '#C4B5FD',
+                        }}
+                      >
+                        🧪 {(activeBroadcastMatch.order.specimens || []).length} Specimen(s) • Cold-Chain Custody
+                      </Text>
+                    </View>
                   </View>
                 </View>
               </View>
 
-              <OsmWebMapPreview
-                latitude={
-                  activeBroadcastMatch.order.pickupLocation?.latitude || riderLocation.latitude
-                }
-                longitude={
-                  activeBroadcastMatch.order.pickupLocation?.longitude || riderLocation.longitude
-                }
-                title={`Pickup Point • ${activeBroadcastMatch.order.smallLabName}`}
-                height={130}
-                onOpenGoogleMaps={() =>
-                  onOpenDirectionsMap(
-                    activeBroadcastMatch.order.pickupLocation?.latitude,
-                    activeBroadcastMatch.order.pickupLocation?.longitude,
-                    activeBroadcastMatch.order.pickupLocation?.address
-                  )
-                }
-              />
+              {/* Map Preview */}
+              <View style={{ marginTop: 10, borderRadius: 14, overflow: 'hidden' }}>
+                <OsmWebMapPreview
+                  latitude={
+                    activeBroadcastMatch.order.pickupLocation?.latitude || riderLocation.latitude
+                  }
+                  longitude={
+                    activeBroadcastMatch.order.pickupLocation?.longitude || riderLocation.longitude
+                  }
+                  title={`Pickup Point • ${activeBroadcastMatch.order.smallLabName}`}
+                  height={110}
+                  onOpenGoogleMaps={() =>
+                    onOpenDirectionsMap(
+                      activeBroadcastMatch.order.pickupLocation?.latitude,
+                      activeBroadcastMatch.order.pickupLocation?.longitude,
+                      activeBroadcastMatch.order.pickupLocation?.address
+                    )
+                  }
+                />
+              </View>
 
-              <Text style={styles.broadcastSpecsLine}>
-                {(activeBroadcastMatch.order.specimens || []).length} Tube(s):{' '}
-                {(activeBroadcastMatch.order.specimens || [])
-                  .map(
-                    (s) =>
-                      `${s.testCode} (${(TUBE_METADATA[s.tubeType] || TUBE_METADATA[TubeType.SERUM_RED_GOLD]).shortTag})`
-                  )
-                  .join(', ')}
-                {typeof activeBroadcastMatch.order.distanceKm === 'number' &&
-                activeBroadcastMatch.order.distanceKm > 0
-                  ? ` • Route ${activeBroadcastMatch.order.distanceKm} km`
-                  : ''}
-              </Text>
-
-              <View style={[styles.actionsRow, { marginTop: 16 }]}>
+              {/* 4. Action Buttons: ✕ Reject & ⚡ ACCEPT PICKUP (Rapido style) */}
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
                 <TouchableOpacity
-                  style={styles.btnSecondary}
+                  style={{
+                    flex: 1,
+                    backgroundColor: '#1E293B',
+                    borderWidth: 1.5,
+                    borderColor: '#EF4444',
+                    borderRadius: 14,
+                    paddingVertical: 13,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
                   disabled={submittingAction}
                   onPress={() => onDismissBroadcast(activeBroadcastMatch.order.id)}
+                  activeOpacity={0.8}
                 >
-                  <Text style={styles.btnSecondaryText}>Pass</Text>
+                  <Text
+                    style={{
+                      fontSize: 14.5,
+                      fontFamily: BRAND_FONTS.bold,
+                      color: '#F87171',
+                    }}
+                  >
+                    ✕ Reject
+                  </Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.btnPrimary, { flex: 2, backgroundColor: '#16A34A' }]}
+                  style={{
+                    flex: 1.8,
+                    backgroundColor: '#10B981',
+                    borderRadius: 14,
+                    paddingVertical: 13,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    opacity: submittingAction ? 0.7 : 1,
+                  }}
                   disabled={submittingAction}
                   onPress={() => onAcceptPoolOrder(activeBroadcastMatch.order)}
+                  activeOpacity={0.88}
                 >
-                  <Text style={styles.btnPrimaryText}>
-                    {submittingAction ? 'Claiming...' : '⚡ ACCEPT PICKUP NOW'}
+                  <Text
+                    style={{
+                      fontSize: 15.5,
+                      fontFamily: BRAND_FONTS.extraBold,
+                      color: '#FFFFFF',
+                      letterSpacing: 0.3,
+                    }}
+                  >
+                    {submittingAction ? 'Claiming...' : '⚡ ACCEPT PICKUP'}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -1698,23 +1966,37 @@ export function PhleboNotificationsModal({
   onClearAll,
   onSelectOrder,
 }: PhleboNotificationsModalProps) {
+  const [filterTab, setFilterTab] = useState<'ALL' | 'UNREAD' | 'PAYOUTS' | 'ORDERS'>('ALL');
   const unreadCount = notifications.filter((n) => !n.read).length;
+
+  const filteredList = notifications.filter((n) => {
+    if (filterTab === 'UNREAD') return !n.read;
+    if (filterTab === 'PAYOUTS') {
+      const cat = String(n.category || '').toUpperCase();
+      return cat.includes('PAYOUT') || cat.includes('PAYMENT');
+    }
+    if (filterTab === 'ORDERS') {
+      const cat = String(n.category || '').toUpperCase();
+      return cat.includes('BOOKING') || cat.includes('DISPATCH') || cat.includes('ORDER') || Boolean(n.orderId);
+    }
+    return true;
+  });
 
   function getCategoryMeta(category?: string) {
     const cat = String(category || '').toUpperCase();
     if (cat.includes('BOOKING') || cat.includes('DISPATCH') || cat.includes('ORDER')) {
-      return { icon: 'bicycle', color: '#0D9488', bg: '#CCFBF1' };
+      return { icon: 'bicycle-outline', color: '#0D9488', bg: '#CCFBF1' };
     }
     if (cat.includes('PAYOUT') || cat.includes('PAYMENT')) {
       return { icon: 'cash-outline', color: '#16A34A', bg: '#DCFCE7' };
     }
     if (cat.includes('KIT') || cat.includes('INVENTORY') || cat.includes('SUPPLY')) {
-      return { icon: 'cube-outline', color: '#9333EA', bg: '#FAF5FF' };
+      return { icon: 'cube-outline', color: '#8B5CF6', bg: '#EDE9FE' };
     }
     if (cat.includes('COLD_CHAIN') || cat.includes('ALERT') || cat.includes('URGENT')) {
-      return { icon: 'warning-outline', color: '#DC2626', bg: '#FEE2E2' };
+      return { icon: 'alert-circle-outline', color: '#DC2626', bg: '#FEE2E2' };
     }
-    return { icon: 'notifications-outline', color: '#2563EB', bg: '#EFF6FF' };
+    return { icon: 'notifications-outline', color: '#0A2A5E', bg: '#E0E7FF' };
   }
 
   function formatTimeAgo(dateStr?: string) {
@@ -1741,20 +2023,38 @@ export function PhleboNotificationsModal({
           activeOpacity={1}
           style={{
             backgroundColor: '#FFFFFF',
-            borderTopLeftRadius: 20,
-            borderTopRightRadius: 20,
-            maxHeight: '85%',
+            borderTopLeftRadius: 28,
+            borderTopRightRadius: 28,
+            maxHeight: '88%',
             width: '100%',
-            paddingBottom: 24,
+            paddingBottom: 28,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: -4 },
+            shadowOpacity: 0.15,
+            shadowRadius: 16,
+            elevation: 20,
           }}
           onPress={(e) => e.stopPropagation()}
         >
+          {/* Top Pull Bar */}
+          <View
+            style={{
+              width: 44,
+              height: 5,
+              borderRadius: 3,
+              backgroundColor: '#CBD5E1',
+              alignSelf: 'center',
+              marginTop: 10,
+              marginBottom: 6,
+            }}
+          />
+
           {/* Header */}
           <View
             style={{
-              paddingHorizontal: 18,
-              paddingTop: 18,
-              paddingBottom: 12,
+              paddingHorizontal: 20,
+              paddingTop: 8,
+              paddingBottom: 14,
               borderBottomWidth: 1,
               borderBottomColor: '#F1F5F9',
               flexDirection: 'row',
@@ -1762,25 +2062,37 @@ export function PhleboNotificationsModal({
               justifyContent: 'space-between',
             }}
           >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               <View
                 style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 16,
-                  backgroundColor: '#0F172A',
+                  width: 38,
+                  height: 38,
+                  borderRadius: 12,
+                  backgroundColor: '#0A2A5E',
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
               >
-                <Ionicons name="notifications" size={17} color="#FFFFFF" />
+                <Ionicons name="notifications" size={19} color="#FFFFFF" />
               </View>
               <View>
-                <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>
+                <Text
+                  style={{
+                    fontSize: 17,
+                    fontFamily: BRAND_FONTS.bold,
+                    color: '#0F172A',
+                  }}
+                >
                   Notifications
                 </Text>
-                <Text style={{ fontSize: 11, color: '#64748B' }}>
-                  {unreadCount > 0 ? `${unreadCount} unread alert${unreadCount > 1 ? 's' : ''}` : 'All caught up'}
+                <Text
+                  style={{
+                    fontSize: 11.5,
+                    fontFamily: BRAND_FONTS.medium,
+                    color: unreadCount > 0 ? '#0D9488' : '#64748B',
+                  }}
+                >
+                  {unreadCount > 0 ? `⚡ ${unreadCount} unread update${unreadCount > 1 ? 's' : ''}` : 'All caught up ✓'}
                 </Text>
               </View>
             </View>
@@ -1790,27 +2102,41 @@ export function PhleboNotificationsModal({
                 <>
                   <TouchableOpacity
                     style={{
-                      paddingHorizontal: 8,
-                      paddingVertical: 5,
-                      borderRadius: 6,
+                      paddingHorizontal: 9,
+                      paddingVertical: 6,
+                      borderRadius: 8,
                       backgroundColor: '#CCFBF1',
                     }}
                     onPress={onMarkAllRead}
+                    activeOpacity={0.8}
                   >
-                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#0D9488' }}>
+                    <Text
+                      style={{
+                        fontSize: 11,
+                        fontFamily: BRAND_FONTS.bold,
+                        color: '#0D9488',
+                      }}
+                    >
                       ✓ Read All
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={{
-                      paddingHorizontal: 8,
-                      paddingVertical: 5,
-                      borderRadius: 6,
+                      paddingHorizontal: 9,
+                      paddingVertical: 6,
+                      borderRadius: 8,
                       backgroundColor: '#FEE2E2',
                     }}
                     onPress={onClearAll}
+                    activeOpacity={0.8}
                   >
-                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#DC2626' }}>
+                    <Text
+                      style={{
+                        fontSize: 11,
+                        fontFamily: BRAND_FONTS.bold,
+                        color: '#DC2626',
+                      }}
+                    >
                       🗑️ Clear
                     </Text>
                   </TouchableOpacity>
@@ -1820,38 +2146,108 @@ export function PhleboNotificationsModal({
                 onPress={onClose}
                 hitSlop={8}
                 style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: 14,
+                  width: 32,
+                  height: 32,
+                  borderRadius: 16,
                   backgroundColor: '#F1F5F9',
                   alignItems: 'center',
                   justifyContent: 'center',
                   marginLeft: 4,
                 }}
               >
-                <Ionicons name="close" size={18} color="#475569" />
+                <Ionicons name="close" size={19} color="#475569" />
               </TouchableOpacity>
             </View>
           </View>
 
-          {/* List */}
+          {/* Filter Pills */}
+          <View
+            style={{
+              flexDirection: 'row',
+              paddingHorizontal: 18,
+              paddingVertical: 10,
+              gap: 8,
+              borderBottomWidth: 1,
+              borderBottomColor: '#F8FAFC',
+            }}
+          >
+            {[
+              { id: 'ALL', label: `All (${notifications.length})` },
+              { id: 'UNREAD', label: `Unread (${unreadCount})` },
+              { id: 'PAYOUTS', label: 'Payouts' },
+              { id: 'ORDERS', label: 'Bookings' },
+            ].map((tab) => {
+              const active = filterTab === tab.id;
+              return (
+                <TouchableOpacity
+                  key={tab.id}
+                  style={{
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderRadius: 20,
+                    backgroundColor: active ? '#0A2A5E' : '#F1F5F9',
+                  }}
+                  onPress={() => setFilterTab(tab.id as any)}
+                >
+                  <Text
+                    style={{
+                      fontSize: 11.5,
+                      fontFamily: active ? BRAND_FONTS.bold : BRAND_FONTS.medium,
+                      color: active ? '#FFFFFF' : '#475569',
+                    }}
+                  >
+                    {tab.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {/* Notifications List */}
           <ScrollView
-            style={{ maxHeight: 420 }}
+            style={{ maxHeight: 460 }}
             contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 20 }}
             showsVerticalScrollIndicator={false}
           >
-            {notifications.length === 0 ? (
-              <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-                <Ionicons name="notifications-off-outline" size={44} color="#CBD5E1" />
-                <Text style={{ fontSize: 14, fontWeight: '700', color: '#64748B', marginTop: 10 }}>
-                  No Notifications Yet
+            {filteredList.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 45 }}>
+                <View
+                  style={{
+                    width: 64,
+                    height: 64,
+                    borderRadius: 32,
+                    backgroundColor: '#F0FDFA',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginBottom: 12,
+                  }}
+                >
+                  <Ionicons name="notifications-off-outline" size={32} color="#0D9488" />
+                </View>
+                <Text
+                  style={{
+                    fontSize: 15,
+                    fontFamily: BRAND_FONTS.bold,
+                    color: '#0F172A',
+                  }}
+                >
+                  No Notifications Here
                 </Text>
-                <Text style={{ fontSize: 12, color: '#94A3B8', marginTop: 4, textAlign: 'center' }}>
-                  You will receive instant alerts for booking dispatches, payout settlements, and emergency messages here.
+                <Text
+                  style={{
+                    fontSize: 12,
+                    fontFamily: BRAND_FONTS.regular,
+                    color: '#64748B',
+                    marginTop: 4,
+                    textAlign: 'center',
+                    paddingHorizontal: 24,
+                  }}
+                >
+                  Direct dispatch assignments, payouts, and important courier announcements will appear in this feed.
                 </Text>
               </View>
             ) : (
-              notifications.map((item) => {
+              filteredList.map((item) => {
                 const meta = getCategoryMeta(item.category);
                 return (
                   <TouchableOpacity
@@ -1860,35 +2256,47 @@ export function PhleboNotificationsModal({
                     style={{
                       flexDirection: 'row',
                       gap: 12,
-                      padding: 12,
-                      borderRadius: 12,
-                      backgroundColor: !item.read ? '#F8FAFC' : '#FFFFFF',
+                      padding: 13,
+                      borderRadius: 14,
+                      backgroundColor: !item.read ? '#F0FDFA' : '#FFFFFF',
                       borderWidth: 1,
-                      borderColor: !item.read ? '#CBD5E1' : '#F1F5F9',
-                      marginBottom: 8,
+                      borderColor: !item.read ? '#99F6E4' : '#E2E8F0',
+                      marginBottom: 10,
+                      shadowColor: '#0F172A',
+                      shadowOffset: { width: 0, height: 1 },
+                      shadowOpacity: !item.read ? 0.05 : 0.02,
+                      shadowRadius: 3,
+                      elevation: !item.read ? 2 : 1,
                     }}
                     onPress={() => onMarkRead(item.id)}
                   >
                     <View
                       style={{
-                        width: 36,
-                        height: 36,
-                        borderRadius: 18,
+                        width: 40,
+                        height: 40,
+                        borderRadius: 12,
                         backgroundColor: meta.bg,
                         alignItems: 'center',
                         justifyContent: 'center',
                         flexShrink: 0,
                       }}
                     >
-                      <Ionicons name={meta.icon as any} size={18} color={meta.color} />
+                      <Ionicons name={meta.icon as any} size={20} color={meta.color} />
                     </View>
 
                     <View style={{ flex: 1, minWidth: 0 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+                      <View
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          marginBottom: 3,
+                        }}
+                      >
                         <Text
                           style={{
-                            fontSize: 13,
-                            fontWeight: !item.read ? '800' : '600',
+                            fontSize: 13.5,
+                            fontFamily: !item.read ? BRAND_FONTS.bold : BRAND_FONTS.semiBold,
                             color: '#0F172A',
                             flex: 1,
                           }}
@@ -1896,7 +2304,14 @@ export function PhleboNotificationsModal({
                         >
                           {item.title}
                         </Text>
-                        <Text style={{ fontSize: 10, color: '#94A3B8', marginLeft: 8 }}>
+                        <Text
+                          style={{
+                            fontSize: 10.5,
+                            fontFamily: BRAND_FONTS.medium,
+                            color: '#94A3B8',
+                            marginLeft: 8,
+                          }}
+                        >
                           {formatTimeAgo(item.createdAt)}
                         </Text>
                       </View>
@@ -1904,33 +2319,40 @@ export function PhleboNotificationsModal({
                       <Text
                         style={{
                           fontSize: 12,
+                          fontFamily: BRAND_FONTS.regular,
                           color: '#475569',
-                          lineHeight: 17,
+                          lineHeight: 18,
                         }}
                       >
                         {item.message}
                       </Text>
 
-                      {item.orderId && onSelectOrder && (
+                      {Boolean(item.orderId && onSelectOrder) && (
                         <TouchableOpacity
                           style={{
                             alignSelf: 'flex-start',
                             marginTop: 8,
                             paddingHorizontal: 10,
-                            paddingVertical: 4,
-                            borderRadius: 6,
-                            backgroundColor: '#EFF6FF',
+                            paddingVertical: 5,
+                            borderRadius: 7,
+                            backgroundColor: '#E0E7FF',
                             borderWidth: 1,
-                            borderColor: '#BFDBFE',
+                            borderColor: '#C7D2FE',
                           }}
                           onPress={() => {
                             onMarkRead(item.id);
                             onClose();
-                            onSelectOrder(item.orderId!);
+                            onSelectOrder!(item.orderId!);
                           }}
                         >
-                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#1D4ED8' }}>
-                            View Booking ({item.orderId}) →
+                          <Text
+                            style={{
+                              fontSize: 11,
+                              fontFamily: BRAND_FONTS.bold,
+                              color: '#0A2A5E',
+                            }}
+                          >
+                            View Booking Details →
                           </Text>
                         </TouchableOpacity>
                       )}
@@ -1942,7 +2364,7 @@ export function PhleboNotificationsModal({
                           width: 8,
                           height: 8,
                           borderRadius: 4,
-                          backgroundColor: '#0D9488',
+                          backgroundColor: '#10B981',
                           marginTop: 4,
                           flexShrink: 0,
                         }}

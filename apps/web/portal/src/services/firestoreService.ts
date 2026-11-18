@@ -2230,21 +2230,23 @@ export async function retryOrderBroadcast(
     console.warn('[retryOrderBroadcast] custody_events log caught:', err);
   }
 
-  try {
-    // Broadcast high-priority alert to nearby phlebotomists
-    await dispatchPlatformAlert({
-      title: hikeInr > 0
-        ? `⚡ SURGE +₹${hikeInr} ADD-ON: Pickup ${existing.orderNumber}`
-        : `🔄 RETRY BROADCAST: Pickup ${existing.orderNumber}`,
-      message: `${existing.smallLabName} pickup retried (${existing.distanceKm || 1} km route -> ${existing.targetLabName}). Payout boosted to ₹${newCourierFee}!`,
-      category: NotificationCategory.PICKUP_ASSIGNED,
-      priority: NotificationPriority.HIGH,
-      recipientRole: UserRole.PHLEBOTOMIST,
-      orderId: existing.id,
-      queueEmail: false,
-    });
-  } catch (err) {
-    console.warn('[retryOrderBroadcast] dispatchPlatformAlert caught:', err);
+  // If an order had an assigned phlebotomist, alert only that specific courier
+  if (existing.phlebotomistId) {
+    try {
+      await dispatchPlatformAlert({
+        title: hikeInr > 0
+          ? `⚡ SURGE +₹${hikeInr} ADD-ON: Pickup ${existing.orderNumber}`
+          : `🔄 RETRY BROADCAST: Pickup ${existing.orderNumber}`,
+        message: `${existing.smallLabName} pickup retried (${existing.distanceKm || 1} km route -> ${existing.targetLabName}). Payout boosted to ₹${newCourierFee}!`,
+        category: NotificationCategory.PICKUP_ASSIGNED,
+        priority: NotificationPriority.HIGH,
+        recipientRole: UserRole.PHLEBOTOMIST,
+        orderId: existing.id,
+        queueEmail: false,
+      });
+    } catch (err) {
+      console.warn('[retryOrderBroadcast] dispatchPlatformAlert caught:', err);
+    }
   }
 
   return {

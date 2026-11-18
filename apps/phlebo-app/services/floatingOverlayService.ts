@@ -9,6 +9,7 @@ export interface IncomingOrderOverlayPayload {
   pickupLab: string;
   pickupAddress: string;
   targetLab: string;
+  targetAddress?: string;
   distance: string;
   payout: string;
   specimens: string;

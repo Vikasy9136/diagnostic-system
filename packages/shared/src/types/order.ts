@@ -124,6 +124,7 @@ export interface PickupOrder {
   searchStatus?: 'SEARCHING' | 'NO_PHLEBO_FOUND' | 'ASSIGNED' | 'EXPIRED';
   broadcastExpiresAt?: string;
   searchRetryCount?: number;
+  declinedPhleboIds?: string[];
   cancellationReason?: string;
   rejectionReason?: string;
   createdAt: string;
