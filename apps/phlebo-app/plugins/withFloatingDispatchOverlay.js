@@ -185,6 +185,22 @@ class FloatingDispatchOverlayService : Service() {
     ).toInt()
   }
 
+  private fun dp(value: Double): Int {
+    return TypedValue.applyDimension(
+      TypedValue.COMPLEX_UNIT_DIP,
+      value.toFloat(),
+      resources.displayMetrics
+    ).toInt()
+  }
+
+  private fun dp(value: Float): Int {
+    return TypedValue.applyDimension(
+      TypedValue.COMPLEX_UNIT_DIP,
+      value,
+      resources.displayMetrics
+    ).toInt()
+  }
+
   /* =========================================================================
    * 1. Incoming Pickup Floating Modal Card Over Other Apps (Rapido Captain Style)
    * ========================================================================= */
@@ -494,7 +510,7 @@ class FloatingDispatchOverlayService : Service() {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(14).toFloat()
         setColor(Color.parseColor("#1E293B"))
-        setStroke(dp(1.5), Color.parseColor("#EF4444"))
+        setStroke(dp(2), Color.parseColor("#EF4444"))
       }
       background = bg
       setPadding(0, dp(14), 0, dp(14))
@@ -977,7 +993,7 @@ class FloatingDispatchOverlayService : Service() {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(16).toFloat()
         setColor(Color.WHITE)
-        setStroke(dp(1.5), Color.parseColor("#0D9488"))
+        setStroke(dp(2), Color.parseColor("#0D9488"))
       }
       elevation = dp(14).toFloat()
     }
@@ -1105,7 +1121,7 @@ class FloatingDispatchOverlayService : Service() {
         cornerRadius = dp(10).toFloat()
         setColor(if (currentOnline) Color.parseColor("#DCFCE7") else Color.parseColor("#F8FAFC"))
         if (currentOnline) {
-          setStroke(dp(1.5), Color.parseColor("#16A34A"))
+          setStroke(dp(2), Color.parseColor("#16A34A"))
         }
       }
       isClickable = true
@@ -1160,7 +1176,7 @@ class FloatingDispatchOverlayService : Service() {
         cornerRadius = dp(10).toFloat()
         setColor(if (!currentOnline) Color.parseColor("#FEE2E2") else Color.parseColor("#F8FAFC"))
         if (!currentOnline) {
-          setStroke(dp(1.5), Color.parseColor("#DC2626"))
+          setStroke(dp(2), Color.parseColor("#DC2626"))
         }
       }
       isClickable = true
