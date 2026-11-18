@@ -658,24 +658,30 @@ function PhleboAppContent() {
       );
     };
 
-    // 1. Open dispatch pool (READY_FOR_PICKUP with no assigned phlebo)
+    // 1. Open dispatch pool (READY_FOR_PICKUP)
     unsubs.push(
       onSnapshot(
         query(
           collection(db, 'orders'),
-          where('status', '==', OrderStatus.READY_FOR_PICKUP),
-          where('phlebotomistId', '==', '')
+          where('status', '==', OrderStatus.READY_FOR_PICKUP)
         ),
         (snap) => {
           for (const [k, v] of orderMap.entries()) {
-            if (v.status === OrderStatus.READY_FOR_PICKUP && !v.phlebotomistId) {
+            if (v.status === OrderStatus.READY_FOR_PICKUP && (!v.phlebotomistId || v.phlebotomistId === myPhleboId)) {
               orderMap.delete(k);
             }
           }
           snap.docs.forEach((d) => {
-            orderMap.set(d.id, { id: d.id, ...(d.data() as Omit<PickupOrder, 'id'>) });
+            const data = d.data() as Omit<PickupOrder, 'id'>;
+            // Include order if unassigned or assigned to current rider
+            if (!data.phlebotomistId || data.phlebotomistId === '' || (myPhleboId && data.phlebotomistId === myPhleboId)) {
+              orderMap.set(d.id, { id: d.id, ...data });
+            }
           });
           emitOrders();
+        },
+        (err) => {
+          console.warn('Orders dispatch pool query warning:', err);
         }
       )
     );
@@ -695,22 +701,31 @@ function PhleboAppContent() {
               orderMap.set(d.id, { id: d.id, ...(d.data() as Omit<PickupOrder, 'id'>) });
             });
             emitOrders();
+          },
+          (err) => {
+            console.warn('Assigned orders query warning:', err);
           }
         )
       );
 
       // 3. Phlebotomist fleet profile doc
       unsubs.push(
-        onSnapshot(doc(db, 'phlebotomists', myPhleboId), (snap) => {
-          if (snap.exists()) {
-            setMyPhleboProfile({
-              id: snap.id,
-              ...(snap.data() as Omit<PhlebotomistProfile, 'id'>),
-            });
-          } else {
-            setMyPhleboProfile(null);
+        onSnapshot(
+          doc(db, 'phlebotomists', myPhleboId),
+          (snap) => {
+            if (snap.exists()) {
+              setMyPhleboProfile({
+                id: snap.id,
+                ...(snap.data() as Omit<PhlebotomistProfile, 'id'>),
+              });
+            } else {
+              setMyPhleboProfile(null);
+            }
+          },
+          (err) => {
+            console.warn('Phlebo profile doc warning:', err);
           }
-        })
+        )
       );
     } else if (phleboEmail) {
       unsubs.push(
@@ -727,6 +742,9 @@ function PhleboAppContent() {
                 ...(first.data() as Omit<PhlebotomistProfile, 'id'>),
               });
             }
+          },
+          (err) => {
+            console.warn('Phlebo email query warning:', err);
           }
         )
       );
@@ -1043,36 +1061,48 @@ function PhleboAppContent() {
   // Active real-time document listener on selected order & settlement for instant payment/status sync
   useEffect(() => {
     if (!selectedOrderId) return;
-    const unsubOrder = onSnapshot(doc(db, 'orders', selectedOrderId), (snap) => {
-      if (snap.exists()) {
-        const latestOrder = { id: snap.id, ...(snap.data() as Omit<PickupOrder, 'id'>) };
-        setOrders((prev) => {
-          const idx = prev.findIndex((o) => o.id === selectedOrderId);
-          if (idx >= 0) {
-            const next = [...prev];
-            next[idx] = latestOrder;
-            return next;
-          }
-          return [latestOrder, ...prev];
-        });
+    const unsubOrder = onSnapshot(
+      doc(db, 'orders', selectedOrderId),
+      (snap) => {
+        if (snap.exists()) {
+          const latestOrder = { id: snap.id, ...(snap.data() as Omit<PickupOrder, 'id'>) };
+          setOrders((prev) => {
+            const idx = prev.findIndex((o) => o.id === selectedOrderId);
+            if (idx >= 0) {
+              const next = [...prev];
+              next[idx] = latestOrder;
+              return next;
+            }
+            return [latestOrder, ...prev];
+          });
+        }
+      },
+      (err) => {
+        console.warn('Selected order doc subscription warning:', err);
       }
-    });
+    );
 
     const stlId = `STL-${selectedOrderId.replace('BK-', '')}`;
-    const unsubStl = onSnapshot(doc(db, 'settlements', stlId), (snap) => {
-      if (snap.exists()) {
-        const latestStl = { id: snap.id, ...(snap.data() as Omit<SettlementRecord, 'id'>) };
-        setSettlements((prev) => {
-          const idx = prev.findIndex((s) => s.id === latestStl.id || s.orderId === selectedOrderId);
-          if (idx >= 0) {
-            const next = [...prev];
-            next[idx] = latestStl;
-            return next;
-          }
-          return [latestStl, ...prev];
-        });
+    const unsubStl = onSnapshot(
+      doc(db, 'settlements', stlId),
+      (snap) => {
+        if (snap.exists()) {
+          const latestStl = { id: snap.id, ...(snap.data() as Omit<SettlementRecord, 'id'>) };
+          setSettlements((prev) => {
+            const idx = prev.findIndex((s) => s.id === latestStl.id || s.orderId === selectedOrderId);
+            if (idx >= 0) {
+              const next = [...prev];
+              next[idx] = latestStl;
+              return next;
+            }
+            return [latestStl, ...prev];
+          });
+        }
+      },
+      (err) => {
+        console.warn('Selected settlement doc subscription warning:', err);
       }
-    });
+    );
 
     return () => {
       unsubOrder();
@@ -1439,8 +1469,8 @@ function PhleboAppContent() {
   }, [cameraModal]);
 
   const defaultBroadcastKm = Math.min(
-    25,
-    Math.max(1, assignedAdminZone?.radiusKm || commissionConfig.defaultBroadcastRadiusKm || 5)
+    50,
+    Math.max(15, assignedAdminZone?.radiusKm || commissionConfig.defaultBroadcastRadiusKm || 15)
   );
 
   // Open pool orders annotated with live Haversine distance from rider & Admin zone radar match
@@ -1453,7 +1483,7 @@ function PhleboAppContent() {
           order.pickupLocation?.latitude ?? riderLocation.latitude,
           order.pickupLocation?.longitude ?? riderLocation.longitude
         );
-        const maxRadiusKm = order.broadcastRadiusKm || defaultBroadcastKm;
+        const maxRadiusKm = Math.max(order.broadcastRadiusKm || 0, defaultBroadcastKm);
         return {
           order,
           distFromRiderKm,

@@ -1952,9 +1952,6 @@ export async function createLiveBooking(params: {
     resolvedPickup.longitude,
     resolvedPickup.pincode
   );
-  if (!coverage.covered) {
-    throw new Error(coverage.message);
-  }
 
   const resolvedDelivery = params.deliveryLocation || {
     address: params.targetLab.address,
@@ -1973,7 +1970,7 @@ export async function createLiveBooking(params: {
   const broadcastRadiusKm =
     params.broadcastRadiusKm ??
     params.commissionConfig.defaultBroadcastRadiusKm ??
-    5;
+    (coverage.covered ? 10 : 25);
 
   const custodyEvent: CustodyEvent = {
     id: `EVT-${Date.now()}`,

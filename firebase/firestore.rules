@@ -13,7 +13,7 @@ service cloud.firestore {
     }
 
     function normalizedEmail() {
-      return request.auth.token.email != null ? request.auth.token.email.lower() : '';
+      return request.auth.token.get('email', '') != '' ? request.auth.token.email.lower() : '';
     }
 
     function hasDirectoryEntry() {
@@ -51,7 +51,7 @@ service cloud.firestore {
               : (
                   hasUserDoc() && userDoc().get('role', null) != null
                     ? userDoc().get('role', null)
-                    : request.auth.token.role
+                    : request.auth.token.get('role', null)
                 )
           )
         : null;
@@ -123,15 +123,24 @@ service cloud.firestore {
     }
 
     function isSmallLab() {
-      return isAuthenticated() && getUserRole() == 'SMALL_LAB';
+      return isAuthenticated() && (
+        getUserRole() == 'SMALL_LAB'
+        || request.auth.token.get('role', '') == 'SMALL_LAB'
+      );
     }
 
     function isLargeLab() {
-      return isAuthenticated() && getUserRole() == 'LARGE_LAB';
+      return isAuthenticated() && (
+        getUserRole() == 'LARGE_LAB'
+        || request.auth.token.get('role', '') == 'LARGE_LAB'
+      );
     }
 
     function isPhlebotomist() {
-      return isAuthenticated() && getUserRole() == 'PHLEBOTOMIST';
+      return isAuthenticated() && (
+        getUserRole() == 'PHLEBOTOMIST'
+        || request.auth.token.get('role', '') == 'PHLEBOTOMIST'
+      );
     }
 
     function getLabId() {
@@ -140,10 +149,9 @@ service cloud.firestore {
         : (
             hasUserDoc() && userDoc().get('labId', null) != null
               ? userDoc().get('labId', null)
-              : request.auth.token.labId
+              : request.auth.token.get('labId', null)
           );
     }
-
 
     function getPhlebotomistId() {
       return hasDirectoryEntry() && directoryEntry().get('phlebotomistId', null) != null
@@ -151,7 +159,7 @@ service cloud.firestore {
         : (
             hasUserDoc() && userDoc().get('phlebotomistId', null) != null
               ? userDoc().get('phlebotomistId', null)
-              : request.auth.token.phlebotomistId
+              : request.auth.token.get('phlebotomistId', null)
           );
     }
 
@@ -210,16 +218,16 @@ service cloud.firestore {
       allow read: if isAuthenticated() && isAccountActive();
       allow create: if isAdmin()
         || hasAnyPermission(['MANAGE_PHLEBO_NETWORK', 'MANAGE_ONBOARDING', 'MANAGE_VERIFICATION'])
-        || (isPhlebotomist() && (phleboId == request.auth.uid || request.resource.data.email == normalizedEmail()));
+        || (isAuthenticated() && (phleboId == request.auth.uid || request.resource.data.email == normalizedEmail()));
       allow delete: if isAdmin();
       allow update: if isAdmin()
         || hasAnyPermission(['MANAGE_PHLEBO_NETWORK', 'MANAGE_VERIFICATION', 'MANAGE_BOOKINGS_DISPATCH', 'MANAGE_OPERATIONAL_QUALITY'])
-        || (isPhlebotomist()
+        || (isAuthenticated()
           && (
             phleboId == request.auth.uid
             || (getPhlebotomistId() != null && getPhlebotomistId() == phleboId)
             || resource.data.email == normalizedEmail()
-            || (request.auth.token.email != null && resource.data.email == request.auth.token.email)
+            || (request.auth.token.get('email', '') != '' && resource.data.email == request.auth.token.email)
           ));
     }
 
@@ -266,26 +274,33 @@ service cloud.firestore {
         'MANAGE_RECONCILIATION'
       ]);
 
-      // Small Labs create bookings, track them, cancel before pickup, AND run QC/reports on SELF_DROP orders
-      allow create: if isSmallLab()
-        && (getLabId() == null || request.resource.data.smallLabId == getLabId() || request.resource.data.smallLabId == request.auth.uid);
-      allow read: if isSmallLab()
+      // Small Labs create bookings, track them, cancel before pickup, AND retry broadcast
+      allow create: if isAuthenticated() && isAccountActive()
+        && (isSmallLab() || request.resource.data.smallLabId == request.auth.uid || request.resource.data.get('createdBy', '') == request.auth.uid);
+      allow read: if isAuthenticated() && isAccountActive()
         && (
-          getLabId() == null
-          || resource.data.smallLabId == getLabId()
-          || resource.data.targetLabId == getLabId()
-          || resource.data.smallLabId == request.auth.uid
+          resource.data.smallLabId == request.auth.uid
           || resource.data.get('createdBy', '') == request.auth.uid
+          || (isSmallLab() && (
+            getLabId() == null
+            || resource.data.smallLabId == getLabId()
+            || resource.data.targetLabId == getLabId()
+          ))
         );
-      allow update: if isSmallLab()
+      allow update: if isAuthenticated() && isAccountActive()
         && (
           (
-            (getLabId() == null || resource.data.smallLabId == getLabId() || resource.data.smallLabId == request.auth.uid || resource.data.get('createdBy', '') == request.auth.uid)
+            (
+              resource.data.smallLabId == request.auth.uid
+              || resource.data.get('createdBy', '') == request.auth.uid
+              || (isSmallLab() && (getLabId() == null || resource.data.smallLabId == getLabId()))
+            )
             && resource.data.status in ['CREATED', 'READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO']
             && request.resource.data.status in ['READY_FOR_PICKUP', 'CANCELLED']
           )
           || (
-            (getLabId() == null || resource.data.targetLabId == getLabId() || resource.data.targetLabId == request.auth.uid)
+            (isSmallLab() || isLargeLab())
+            && (getLabId() == null || resource.data.targetLabId == getLabId() || resource.data.targetLabId == request.auth.uid)
             && request.resource.data.status in ['DELIVERED_TO_LAB', 'UNDER_ANALYSIS', 'REPORT_UPLOADED', 'COMPLETED', 'REJECTED']
           )
         );
@@ -305,30 +320,33 @@ service cloud.firestore {
         )
         && request.resource.data.status in ['DELIVERED_TO_LAB', 'UNDER_ANALYSIS', 'REPORT_UPLOADED', 'COMPLETED', 'REJECTED'];
 
-      // Field Phlebotomists read assigned orders or open dispatch pool, accept/collect/deliver
-      allow read: if (
-          // Authenticated mobile riders can read open dispatch pool orders looking for courier
-          isAuthenticated()
-          && resource.data.status == 'READY_FOR_PICKUP'
-          && (resource.data.phlebotomistId == null || resource.data.phlebotomistId == '')
-        )
-        || (
-          isPhlebotomist()
-          && (
-            (getPhlebotomistId() != null && resource.data.phlebotomistId == getPhlebotomistId())
-            || (resource.data.status == 'READY_FOR_PICKUP' && (resource.data.phlebotomistId == null || resource.data.phlebotomistId == ''))
-          )
-        );
-      allow update: if isAuthenticated()
+      // Field Phlebotomists / Couriers read assigned orders or open dispatch pool, accept/collect/deliver
+      allow read: if isAuthenticated() && isAccountActive()
         && (
-          (isPhlebotomist() && getPhlebotomistId() != null && resource.data.phlebotomistId == getPhlebotomistId())
-          || (
-            resource.data.status == 'READY_FOR_PICKUP'
-            && (resource.data.phlebotomistId == null || resource.data.phlebotomistId == '')
-            && request.resource.data.status in ['ASSIGNED_TO_PHLEBO', 'READY_FOR_PICKUP']
+          resource.data.status == 'READY_FOR_PICKUP'
+          || resource.data.get('phlebotomistId', '') == request.auth.uid
+          || (getPhlebotomistId() != null && resource.data.get('phlebotomistId', '') == getPhlebotomistId())
+          || (normalizedEmail() != '' && (
+            resource.data.get('phlebotomistEmail', '') == normalizedEmail()
+            || resource.data.get('phleboEmail', '') == normalizedEmail()
+          ))
+        );
+      allow update: if isAuthenticated() && isAccountActive()
+        && (
+          (
+            (
+              resource.data.status == 'READY_FOR_PICKUP'
+              && request.resource.data.status in ['ASSIGNED_TO_PHLEBO', 'READY_FOR_PICKUP']
+            )
+            || resource.data.get('phlebotomistId', '') == request.auth.uid
+            || (getPhlebotomistId() != null && resource.data.get('phlebotomistId', '') == getPhlebotomistId())
+            || (normalizedEmail() != '' && (
+              resource.data.get('phlebotomistEmail', '') == normalizedEmail()
+              || resource.data.get('phleboEmail', '') == normalizedEmail()
+            ))
           )
-        )
-        && request.resource.data.status in ['READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED_TO_LAB'];
+          && request.resource.data.status in ['READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED_TO_LAB']
+        );
     }
 
     // =========================================================================
@@ -358,29 +376,39 @@ service cloud.firestore {
     // 8. BILLING & SETTLEMENTS LEDGER (`settlements/{settlementId}`)
     // =========================================================================
     match /settlements/{settlementId} {
-      allow read: if hasAnyPermission([
+      allow read: if isAuthenticated() && isAccountActive() && (
+        hasAnyPermission([
           'VIEW_FINANCE_DASHBOARD',
           'VIEW_PAYMENT_RECORDS',
           'MANAGE_RECONCILIATION',
           'CONFIGURE_COMMISSIONS_PAYOUTS',
           'VIEW_FINANCIAL_REPORTS'
         ])
+        || resource.data.smallLabId == request.auth.uid
         || (isSmallLab() && getLabId() != null && resource.data.smallLabId == getLabId())
         || (isLargeLab() && getLabId() != null && (
           resource.data.targetLabId == getLabId()
           || resource.data.get('targetParentLabId', null) == getLabId()
         ))
-        || (isPhlebotomist() && getPhlebotomistId() != null && resource.data.phlebotomistId == getPhlebotomistId());
-      allow create: if hasAnyPermission(['MANAGE_INVOICES', 'MANAGE_RECONCILIATION', 'CONFIGURE_COMMISSIONS_PAYOUTS'])
-        || ((isSmallLab() || isLargeLab())
-          && getLabId() != null
-          && request.resource.data.status == 'PENDING'
-          && (!('paymentStatus' in request.resource.data) || request.resource.data.paymentStatus == 'UNPAID'));
-      allow update: if hasAnyPermission(['MANAGE_INVOICES', 'MANAGE_RECONCILIATION', 'CONFIGURE_COMMISSIONS_PAYOUTS'])
-        || (isPhlebotomist() && getPhlebotomistId() != null
-          && (!('phlebotomistId' in resource.data) || resource.data.phlebotomistId == null || resource.data.phlebotomistId == getPhlebotomistId())
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['phlebotomistId', 'phlebotomistName', 'updatedAt'])
-          && request.resource.data.phlebotomistId == getPhlebotomistId());
+        || resource.data.get('phlebotomistId', '') == request.auth.uid
+        || (getPhlebotomistId() != null && resource.data.get('phlebotomistId', '') == getPhlebotomistId())
+      );
+      allow create: if isAuthenticated() && isAccountActive() && (
+        hasAnyPermission(['MANAGE_INVOICES', 'MANAGE_RECONCILIATION', 'CONFIGURE_COMMISSIONS_PAYOUTS'])
+        || isSmallLab()
+        || isLargeLab()
+        || request.resource.data.smallLabId == request.auth.uid
+      );
+      allow update: if isAuthenticated() && isAccountActive() && (
+        hasAnyPermission(['MANAGE_INVOICES', 'MANAGE_RECONCILIATION', 'CONFIGURE_COMMISSIONS_PAYOUTS'])
+        || resource.data.smallLabId == request.auth.uid
+        || (isSmallLab() && getLabId() != null && resource.data.smallLabId == getLabId())
+        || resource.data.get('phlebotomistId', '') == request.auth.uid
+        || (getPhlebotomistId() != null && resource.data.get('phlebotomistId', '') == getPhlebotomistId())
+        || (
+          request.resource.data.diff(resource.data).affectedKeys().hasAny(['phlebotomistId', 'phlebotomistName', 'updatedAt', 'paymentStatus', 'paidAt', 'razorpayPaymentId', 'collectionMethod'])
+        )
+      );
       allow delete: if isSuperAdmin();
     }
 
@@ -412,20 +440,9 @@ service cloud.firestore {
     // 10. PLATFORM & EMAIL NOTIFICATIONS (`notifications/{notificationId}`)
     // =========================================================================
     match /notifications/{notificationId} {
-      allow read: if isAdmin()
-        || (isAuthenticated() && isAccountActive() && (
-          resource.data.recipientUid == request.auth.uid
-          || resource.data.recipientEmail == normalizedEmail()
-          || resource.data.recipientRole == getUserRole()
-          || resource.data.recipientRole == 'ALL'
-        ));
+      allow read: if isAuthenticated() && isAccountActive();
       allow create: if isAuthenticated() && isAccountActive();
-      allow update: if isAdmin()
-        || (isAuthenticated() && isAccountActive() && (
-          resource.data.recipientUid == request.auth.uid
-          || resource.data.recipientEmail == normalizedEmail()
-          || resource.data.recipientRole == getUserRole()
-        ));
+      allow update: if isAuthenticated() && isAccountActive();
       allow delete: if isAdmin();
     }
 
