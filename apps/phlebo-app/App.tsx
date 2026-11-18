@@ -27,6 +27,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Notifications from 'expo-notifications';
 import * as Updates from 'expo-updates';
 import * as Location from 'expo-location';
+import * as ImagePicker from 'expo-image-picker';
 import {
   checkAppUpdateAvailability,
   applyAppUpdate,
@@ -392,11 +393,16 @@ function PhleboAppContent() {
   const [verifyingLinkPayment, setVerifyingLinkPayment] = useState(false);
 
   const [payoutMethod, setPayoutMethod] = useState<'UPI' | 'BANK_TRANSFER'>('UPI');
+  const [payoutBankName, setPayoutBankName] = useState('');
   const [payoutAccountName, setPayoutAccountName] = useState('');
   const [payoutUpiId, setPayoutUpiId] = useState('');
   const [payoutBankAccount, setPayoutBankAccount] = useState('');
   const [payoutIfsc, setPayoutIfsc] = useState('');
   const [savingPayoutProfile, setSavingPayoutProfile] = useState(false);
+  const [profileName, setProfileName] = useState('');
+  const [profileDob, setProfileDob] = useState('1996-08-15');
+  const [profileGender, setProfileGender] = useState<'MALE' | 'FEMALE' | 'OTHER'>('MALE');
+  const [profilePhotoUrl, setProfilePhotoUrl] = useState('');
 
   // Selected trip & workflow form state
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
@@ -946,9 +952,19 @@ function PhleboAppContent() {
     };
   }, [session?.firebaseUser, effectivePhleboId]);
 
-  // Populate payout account settings whenever fleet profile updates
+  // Populate payout account & personal settings whenever fleet profile updates
   useEffect(() => {
     const pp = myPhleboProfile?.payoutProfile;
+    if (myPhleboProfile?.name) setProfileName(myPhleboProfile.name);
+    const customDoc = myPhleboProfile as unknown as Record<string, unknown> | undefined;
+    if (customDoc?.dob && typeof customDoc.dob === 'string') setProfileDob(customDoc.dob);
+    if (customDoc?.gender && (customDoc.gender === 'MALE' || customDoc.gender === 'FEMALE' || customDoc.gender === 'OTHER')) {
+      setProfileGender(customDoc.gender);
+    }
+    if (myPhleboProfile?.livePhotoUrl) setProfilePhotoUrl(myPhleboProfile.livePhotoUrl);
+    const customPp = pp as unknown as Record<string, unknown> | undefined;
+    if (customPp?.bankName && typeof customPp.bankName === 'string') setPayoutBankName(customPp.bankName);
+
     if (!pp) {
       setPayoutAccountName((prev) => prev || phleboName);
       return;
@@ -958,7 +974,7 @@ function PhleboAppContent() {
     setPayoutUpiId(pp.upiId || '');
     setPayoutBankAccount(pp.bankAccountLast4 ? `••••${pp.bankAccountLast4}` : '');
     setPayoutIfsc(pp.ifscCode || '');
-  }, [myPhleboProfile?.payoutProfile, phleboName]);
+  }, [myPhleboProfile, phleboName]);
 
   // Sync optimistic local duty status whenever Firestore fleet profile updates (unless user recently toggled)
   useEffect(() => {
@@ -3490,6 +3506,48 @@ function PhleboAppContent() {
     });
   }
 
+  async function handlePickProfilePhoto() {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        showToast({
+          variant: 'WARNING',
+          title: 'Storage Permission Required',
+          subtitle: 'Please grant gallery access to select a profile photo.',
+        });
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.7,
+      });
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        const pickedUri = result.assets[0].uri;
+        setProfilePhotoUrl(pickedUri);
+        if (effectivePhleboId) {
+          await updateDoc(doc(db, 'phlebotomists', effectivePhleboId), {
+            livePhotoUrl: pickedUri,
+            updatedAt: new Date().toISOString(),
+          });
+          showToast({
+            variant: 'SUCCESS',
+            title: 'Avatar Photo Updated',
+            subtitle: 'New profile photo saved in cloud.',
+          });
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Gallery error';
+      showToast({
+        variant: 'WARNING',
+        title: 'Could Not Pick Photo',
+        subtitle: msg,
+      });
+    }
+  }
+
   async function handleSavePayoutProfile() {
     if (!effectivePhleboId) {
       showDynamicAlert({
@@ -3500,7 +3558,7 @@ function PhleboAppContent() {
       return;
     }
 
-    const holder = payoutAccountName.trim() || phleboName;
+    const holder = payoutAccountName.trim() || profileName || phleboName;
     const upi = payoutUpiId.trim();
     const rawAcc = payoutBankAccount.replace(/[^0-9]/g, '');
     const last4 = rawAcc ? rawAcc.slice(-4) : myPhleboProfile?.payoutProfile?.bankAccountLast4 || '';
@@ -3527,9 +3585,10 @@ function PhleboAppContent() {
     setSavingPayoutProfile(true);
     try {
       const now = new Date().toISOString();
-      const nextProfile: PayoutProfile = {
+      const nextProfile: PayoutProfile & { bankName?: string } = {
         preferredMethod: payoutMethod,
         accountHolderName: holder,
+        ...(payoutBankName ? { bankName: payoutBankName.trim() } : {}),
         ...(upi ? { upiId: upi } : {}),
         ...(rawAcc.length >= 6
           ? { bankAccountNumber: rawAcc }
@@ -3542,17 +3601,21 @@ function PhleboAppContent() {
       };
 
       await updateDoc(doc(db, 'phlebotomists', effectivePhleboId), {
+        ...(profileName ? { name: profileName.trim() } : {}),
+        dob: profileDob,
+        gender: profileGender,
+        ...(profilePhotoUrl ? { livePhotoUrl: profilePhotoUrl } : {}),
         payoutProfile: nextProfile,
         updatedAt: now,
       });
 
       showToast({
         variant: 'SUCCESS',
-        title: '⚡ Instant Payout Account Saved',
+        title: '⚡ Profile & Bank Details Saved',
         subtitle:
           payoutMethod === 'UPI'
-            ? `30-min payouts will settle to UPI ${upi}.`
-            : `30-min payouts will settle to Bank ••••${last4} (${ifsc}).`,
+            ? `Payouts linked to UPI ${upi}. Details saved in cloud.`
+            : `Payouts linked to Bank ••••${last4} (${ifsc}). Details saved in cloud.`,
       });
     } catch (err) {
       showDynamicAlert({
@@ -3969,9 +4032,13 @@ function PhleboAppContent() {
             ) : bottomTab === 'profile' ? (
               <ProfileScreen
                 phleboInitial={phleboInitial}
-                phleboName={phleboName}
+                phleboName={profileName || phleboName}
                 displayCourierId={displayCourierId}
                 phleboEmail={phleboEmail}
+                phleboPhone={myPhleboProfile?.phone}
+                phleboDob={profileDob}
+                phleboGender={profileGender}
+                profilePhotoUrl={profilePhotoUrl || myPhleboProfile?.livePhotoUrl}
                 myPhleboProfile={myPhleboProfile}
                 completedDeliveriesCount={completedAssignedOrders.length}
                 dutyStatus={dutyStatus}
@@ -3980,6 +4047,7 @@ function PhleboAppContent() {
                 webNotifPerm={webNotifPerm}
                 floatingSettings={floatingSettings}
                 payoutMethod={payoutMethod}
+                payoutBankName={payoutBankName}
                 payoutAccountName={payoutAccountName}
                 payoutUpiId={payoutUpiId}
                 payoutBankAccount={payoutBankAccount}
@@ -3996,12 +4064,17 @@ function PhleboAppContent() {
                 kitAllocationsCount={kitAllocations.length}
                 onOpenHelpSupport={handleOpenHelpSupport}
                 onCheckForUpdates={() => void handleCheckForUpdates(true)}
+                onChangeName={setProfileName}
+                onChangeDob={setProfileDob}
+                onChangeGender={setProfileGender}
                 onChangePayoutMethod={setPayoutMethod}
+                onChangePayoutBankName={setPayoutBankName}
                 onChangePayoutAccountName={setPayoutAccountName}
                 onChangePayoutUpiId={setPayoutUpiId}
                 onChangePayoutBankAccount={setPayoutBankAccount}
                 onChangePayoutIfsc={setPayoutIfsc}
-                onSavePayoutProfile={() => void handleSavePayoutProfile()}
+                onPickProfilePhoto={handlePickProfilePhoto}
+                onSaveProfile={() => void handleSavePayoutProfile()}
                 onTriggerSos={handleTriggerSos}
                 onSignOut={handleSignOut}
               />

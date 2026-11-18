@@ -280,9 +280,10 @@ export function MobileGoogleAuthPage() {
           return;
         }
 
-        // Fresh visit from Phlebo App: prompt user to tap button for user gesture activation
-        setStage('waiting_user');
-        setStatusMessage('Tap below to select your Google account for LabSetu Phlebo App.');
+        // Fresh visit from Phlebo App: immediately trigger Google Sign-In with account selector
+        setStage('starting');
+        setStatusMessage('Opening Google account selector...');
+        void startGoogleSignIn();
       } catch (err: unknown) {
         if (cancelled) return;
         const fbErr = err as { code?: string; message?: string };

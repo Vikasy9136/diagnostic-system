@@ -58,13 +58,16 @@ export function BookingDetailsScreen({
         String(c.eventType || '').toUpperCase().includes('ACCESSION')
     )
   );
+  const isCancelled =
+    order.status === OrderStatus.CANCELLED ||
+    stUpper.includes('CANCEL') ||
+    order.status === 'REJECTED';
   const isDone =
+    isCancelled ||
     stUpper.includes('DELIVER') ||
     stUpper.includes('ANALYS') ||
     stUpper.includes('REPORT') ||
     stUpper.includes('COMPLET') ||
-    stUpper.includes('CANCEL') ||
-    stUpper.includes('REJECT') ||
     hasDeliveryEvent ||
     isOrderCompleted(order.status);
   const isInTransit =
@@ -314,7 +317,8 @@ export function BookingDetailsScreen({
           </View>
         </View>
 
-        {order.paymentStatus !== 'PAID' &&
+        {!isCancelled &&
+        order.paymentStatus !== 'PAID' &&
         (order.totalAmountInr || order.courierFeeInr || 0) >= 1 ? (
           <View
             style={{
@@ -431,7 +435,30 @@ export function BookingDetailsScreen({
           </View>
         ) : null}
 
-        {!isDone ? (
+        {isCancelled ? (
+          <View
+            style={{
+              backgroundColor: '#FEF2F2',
+              borderColor: '#FECACA',
+              borderWidth: 1.5,
+              borderRadius: 14,
+              padding: 16,
+              marginTop: 14,
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+              <Ionicons name="close-circle" size={26} color="#DC2626" />
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#991B1B', fontWeight: '800', fontSize: 16 }}>
+                  Order Cancelled
+                </Text>
+                <Text style={{ color: '#B91C1C', fontSize: 13, marginTop: 4, lineHeight: 18 }}>
+                  This pickup order has been cancelled by the lab or customer. No sample collection, tube barcode scanning, or payment collection is required.
+                </Text>
+              </View>
+            </View>
+          </View>
+        ) : !isDone ? (
           isInTransit ? (
             <TouchableOpacity
               style={[styles.ctaButton, { backgroundColor: '#0D9488' }]}

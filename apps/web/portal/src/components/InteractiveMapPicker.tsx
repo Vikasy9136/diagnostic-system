@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
-import { LOCALITY_GPS_PRESETS } from '@diagnostic/shared';
+import { calculateHaversineDistanceKm, LOCALITY_GPS_PRESETS } from '@diagnostic/shared';
 
 export interface MapSelectedLocation {
   latitude: number;
@@ -11,6 +11,16 @@ export interface MapSelectedLocation {
   pincode?: string;
   label?: string;
   placeId?: string;
+}
+
+export interface NearbyPhleboMapMarker {
+  id: string;
+  name: string;
+  latitude?: number;
+  longitude?: number;
+  status?: string;
+  phone?: string;
+  rating?: number;
 }
 
 interface InteractiveMapPickerProps {
@@ -24,6 +34,7 @@ interface InteractiveMapPickerProps {
   heightPx?: number;
   showPresets?: boolean;
   searchPlaceholder?: string;
+  nearbyPhlebos?: NearbyPhleboMapMarker[];
 }
 
 export type MapLayerType = 'GOOGLE_ROADS' | 'GOOGLE_SATELLITE' | 'GOOGLE_HYBRID';
@@ -76,6 +87,42 @@ function buildGooglePinIcon(): L.DivIcon {
     iconSize: [30, 30],
     iconAnchor: [15, 30],
     popupAnchor: [0, -30],
+  });
+}
+
+function buildBikeCourierIcon(courierName?: string, isOnline = true): L.DivIcon {
+  const name = courierName || 'Live Rider';
+  const html = `
+    <div class="labsetu-bike-marker-wrapper">
+      <div class="labsetu-bike-radar-ring" style="border-color:${isOnline ? '#0D9488' : '#64748B'};background:${isOnline ? 'rgba(20,184,166,0.22)' : 'rgba(100,116,139,0.15)'};"></div>
+      <svg width="46" height="46" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="filter: drop-shadow(0 3px 8px rgba(15,23,42,0.45));">
+        <circle cx="16" cy="44" r="9" fill="#1E293B" stroke="#94A3B8" stroke-width="2.5"/>
+        <circle cx="16" cy="44" r="4" fill="#F8FAFC" stroke="#64748B" stroke-width="1.5"/>
+        <circle cx="48" cy="44" r="9" fill="#1E293B" stroke="#94A3B8" stroke-width="2.5"/>
+        <circle cx="48" cy="44" r="4" fill="#F8FAFC" stroke="#64748B" stroke-width="1.5"/>
+        <path d="M16 44 L28 40 L44 32 L48 44" stroke="#0A2A5E" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M28 40 L34 46 L40 46" stroke="#0D9488" stroke-width="3" stroke-linecap="round"/>
+        <path d="M42 32 L51 34 L49 39" stroke="#0D9488" stroke-width="3.5" stroke-linecap="round"/>
+        <circle cx="52" cy="34" r="2.2" fill="#FACC15"/>
+        <path d="M42 27 L44 32 L40 31" stroke="#334155" stroke-width="2.2" stroke-linecap="round"/>
+        <path d="M28 35 L33 41 L35 44" stroke="#0A2A5E" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M26 31 L37 28 L42 29" stroke="#0A2A5E" stroke-width="5" stroke-linecap="round"/>
+        <circle cx="36" cy="20" r="6.2" fill="#0D9488" stroke="#0A2A5E" stroke-width="1.6"/>
+        <rect x="17" y="18" width="16" height="18" rx="3.5" fill="#FFFFFF" stroke="#0A2A5E" stroke-width="1.8"/>
+        <path d="M19 20 H31 L32 23.5 C32 25, 30 25.5, 29 24.5 C28 25.5, 26 25.5, 25.5 24.5 C25 25.5, 23 25.5, 22 24.5 C21 25.5, 19.5 25, 19 23.5 Z" fill="#0D9488"/>
+      </svg>
+      <div class="labsetu-bike-badge" style="background:${isOnline ? '#0A2A5E' : '#334155'};">
+        <span>🛵</span>
+        <span>${name}</span>
+      </div>
+    </div>
+  `;
+  return L.divIcon({
+    className: 'labsetu-bike-marker-container',
+    html,
+    iconSize: [64, 64],
+    iconAnchor: [32, 32],
+    popupAnchor: [0, -28],
   });
 }
 
@@ -449,6 +496,7 @@ export function InteractiveMapPicker({
   heightPx = 250,
   showPresets = true,
   searchPlaceholder = 'Search Google Maps (e.g. Lilavati Hospital, Andheri West, 400053)...',
+  nearbyPhlebos = [],
 }: InteractiveMapPickerProps) {
   const safeLat = Number.isFinite(latitude) && Math.abs(latitude) > 0.001 ? latitude : 19.124;
   const safeLng = Number.isFinite(longitude) && Math.abs(longitude) > 0.001 ? longitude : 72.866;
@@ -468,6 +516,7 @@ export function InteractiveMapPicker({
   const currentTileLayerRef = useRef<L.TileLayer | null>(null);
   const markerRef = useRef<L.Marker | null>(null);
   const circleRef = useRef<L.Circle | null>(null);
+  const phlebosLayerRef = useRef<L.LayerGroup | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const searchRunIdRef = useRef<number>(0);
   const onChangeRef = useRef(onChange);
@@ -634,6 +683,9 @@ export function InteractiveMapPicker({
       }).addTo(map);
     }
 
+    // Layer group for live nearby phlebotomists (Uber / Rapido style)
+    phlebosLayerRef.current = L.layerGroup().addTo(map);
+
     const resizeTimer = window.setTimeout(() => {
       map.invalidateSize();
     }, 120);
@@ -646,9 +698,53 @@ export function InteractiveMapPicker({
       currentTileLayerRef.current = null;
       markerRef.current = null;
       circleRef.current = null;
+      phlebosLayerRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Render live nearby phlebotomists on map with Uber/Rapido-style animated bikes
+  useEffect(() => {
+    if (!mapRef.current || !phlebosLayerRef.current) return;
+    const group = phlebosLayerRef.current;
+    group.clearLayers();
+
+    if (!nearbyPhlebos || nearbyPhlebos.length === 0) return;
+
+    nearbyPhlebos.forEach((p) => {
+      const pLat = Number(p.latitude);
+      const pLng = Number(p.longitude);
+      if (!Number.isFinite(pLat) || !Number.isFinite(pLng) || Math.abs(pLat) < 0.001) return;
+
+      const distKm = calculateHaversineDistanceKm(safeLat, safeLng, pLat, pLng);
+      // Display riders in reasonable vicinity (up to 30 km)
+      if (distKm > 30) return;
+
+      const isOnline = p.status === 'ONLINE';
+      const marker = L.marker([pLat, pLng], {
+        icon: buildBikeCourierIcon(p.name, isOnline),
+      });
+
+      const etaMins = Math.max(3, Math.round(distKm * 2.8));
+      const popupHtml = `
+        <div style="font-family: Inter, system-ui, sans-serif; font-size: 12px; min-width: 175px; padding: 4px;">
+          <div style="font-weight: 700; color: #0F172A; display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+            <span>🛵 ${p.name}</span>
+            <span style="font-size: 10px; font-weight: 700; background: ${isOnline ? '#DCFCE7' : '#F1F5F9'}; color: ${isOnline ? '#15803D' : '#64748B'}; padding: 1px 7px; border-radius: 999px;">
+              ${isOnline ? 'Online' : 'Standby'}
+            </span>
+          </div>
+          <div style="color: #0D9488; font-weight: 700; margin-top: 4px; font-size: 11.5px;">
+            📍 ${distKm.toFixed(1)} km away • ~${etaMins} mins ETA
+          </div>
+          ${p.phone ? `<div style="color: #475569; font-size: 11px; margin-top: 3px;">📞 ${p.phone}</div>` : ''}
+          ${p.rating ? `<div style="color: #D97706; font-size: 11px; margin-top: 2px;">★ ${p.rating.toFixed(1)} Rating</div>` : ''}
+        </div>
+      `;
+      marker.bindPopup(popupHtml);
+      group.addLayer(marker);
+    });
+  }, [nearbyPhlebos, safeLat, safeLng]);
 
   // Sync external coordinates
   useEffect(() => {
@@ -959,8 +1055,47 @@ export function InteractiveMapPicker({
         </div>
       )}
 
-      {/* Map Leaflet/Google Tile Canvas */}
-      <div ref={mapContainerRef} className="map-canvas" style={{ height: `${heightPx}px` }} />
+      {/* Map Leaflet/Google Tile Canvas with Rapido/Uber Live Rider Radar */}
+      <div style={{ position: 'relative' }}>
+        {nearbyPhlebos && nearbyPhlebos.length > 0 && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '10px',
+              left: '10px',
+              zIndex: 999,
+              backgroundColor: 'rgba(255, 255, 255, 0.95)',
+              backdropFilter: 'blur(6px)',
+              border: '1.5px solid #0D9488',
+              borderRadius: '999px',
+              padding: '4px 12px',
+              boxShadow: '0 4px 12px rgba(15, 23, 42, 0.15)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '0.76rem',
+              fontWeight: 700,
+              color: '#0F766E',
+              pointerEvents: 'none',
+            }}
+          >
+            <span
+              style={{
+                display: 'inline-block',
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                backgroundColor: '#10B981',
+                boxShadow: '0 0 0 2px rgba(16, 185, 129, 0.3)',
+              }}
+            />
+            <span>
+              🛵 {nearbyPhlebos.filter((p) => p.status === 'ONLINE').length} Active Phlebotomist(s) on Radar
+            </span>
+          </div>
+        )}
+        <div ref={mapContainerRef} className="map-canvas" style={{ height: `${heightPx}px` }} />
+      </div>
 
       {/* Footer Bar with Active GPS and Helpful Tip */}
       <div className="map-coords-bar">

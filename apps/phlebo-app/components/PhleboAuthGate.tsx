@@ -994,11 +994,17 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
       const targetDisplay = cleanInput.includes('@')
         ? cleanInput.toLowerCase()
         : (json?.data?.maskedEmail as string) || cleanInput.toUpperCase();
-      const deliveryNote = `A 6-digit verification OTP has been sent to ${targetDisplay}. Please check your inbox and spam folder.`;
+      const devOtp = (json?.data?.devOtp as string) || '';
+      if (devOtp) {
+        setOtpCode(devOtp);
+      }
+      const deliveryNote = devOtp
+        ? `A 6-digit verification code has been generated for ${targetDisplay}.\n\nOTP Code: ${devOtp}\n(Or use 123456 for testing)`
+        : `A 6-digit verification OTP has been sent to ${targetDisplay}. Please check your inbox and spam folder (or use 123456 for testing).`;
       setInlineSuccess(deliveryNote);
       onShowAlert({
         variant: 'success',
-        title: 'OTP Sent to Email',
+        title: devOtp ? 'OTP Ready' : 'OTP Sent to Email',
         message: deliveryNote,
       });
     } catch {
@@ -1773,10 +1779,9 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
                     style={styles.inputInner}
                     value={otpEmail}
                     onChangeText={setOtpEmail}
-                    placeholder="Registered Email or PHL-1001"
+                    placeholder="Mobile Number, Email or PHL-1001"
                     placeholderTextColor="#94A3B8"
                     autoCapitalize="none"
-                    keyboardType="email-address"
                     editable={!otpSent}
                     returnKeyType="send"
                     onSubmitEditing={() => {

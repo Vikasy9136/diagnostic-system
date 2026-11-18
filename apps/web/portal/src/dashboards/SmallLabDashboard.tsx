@@ -1218,6 +1218,7 @@ export function SmallLabDashboard({
         order={liveCustodyOrder}
         onClose={() => setCustodyModalOrder(null)}
         titlePrefix="Live Tracking & Custody"
+        nearbyPhlebos={phlebotomists}
         fallbackDropLat={pickupLat}
         fallbackDropLng={pickupLng}
         custodyTimeline={liveCustodyOrder ? liveCustodyOrder.custodyHistory || [] : undefined}

@@ -163,6 +163,7 @@ export interface OrderLiveTrackingModalProps {
   titlePrefix?: string;
   headerBadges?: ReactNode;
   phleboCourier?: PhlebotomistProfile | null;
+  nearbyPhlebos?: PhlebotomistProfile[];
   fallbackDropLat?: number;
   fallbackDropLng?: number;
   fallbackDropAddress?: string;
@@ -180,6 +181,7 @@ export function OrderLiveTrackingModal({
   titlePrefix = 'Live Route & Custody Map',
   headerBadges,
   phleboCourier,
+  nearbyPhlebos,
   fallbackDropLat = 19.076,
   fallbackDropLng = 72.8777,
   fallbackDropAddress,
@@ -269,6 +271,7 @@ export function OrderLiveTrackingModal({
           pickupLocation={memoizedPickup}
           dropLocation={memoizedDrop}
           phleboLocation={livePhleboPos}
+          nearbyPhlebos={nearbyPhlebos}
           heightPx={290}
         />
       </div>

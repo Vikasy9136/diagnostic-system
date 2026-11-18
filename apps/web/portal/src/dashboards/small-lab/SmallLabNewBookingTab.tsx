@@ -872,6 +872,9 @@ export function SmallLabNewBookingTab({
                       heightPx={240}
                       title="Pin Exact Sample Collection Point (Google Maps)"
                       subtitle="Drag pin, click map, or search Google Places to sync coordinates for rider navigation"
+                      radiusKm={broadcastRadiusKm}
+                      radiusColor="#0D9488"
+                      nearbyPhlebos={phlebotomists}
                       onChange={onPickupLocationChange}
                     />
                   </div>
@@ -1348,6 +1351,27 @@ export function SmallLabNewBookingTab({
                       onChange={(e) => onBroadcastRadiusKmChange(Number(e.target.value))}
                       style={{ width: '100%' }}
                     />
+
+                    {/* Rapido / Uber Style Live Phlebotomists Radar Map */}
+                    <div style={{ marginTop: '12px', borderRadius: '10px', overflow: 'hidden', border: '1px solid #CBD5E1' }}>
+                      <InteractiveMapPicker
+                        latitude={pickupLat}
+                        longitude={pickupLng}
+                        radiusKm={broadcastRadiusKm}
+                        radiusColor="#0D9488"
+                        heightPx={200}
+                        showPresets={false}
+                        nearbyPhlebos={phlebotomists}
+                        title="Live Fleet Radar Around Collection Point"
+                        subtitle="Rapido / Uber style real-time view of nearby phlebotomists"
+                        onChange={(loc) => {
+                          onPickupLocationChange({
+                            ...loc,
+                            label: loc.label || 'Collection Point',
+                          });
+                        }}
+                      />
+                    </div>
                   </div>
                 )}
 
