@@ -1364,12 +1364,7 @@ export function SmallLabNewBookingTab({
                         nearbyPhlebos={phlebotomists}
                         title="Live Fleet Radar Around Collection Point"
                         subtitle="Rapido / Uber style real-time view of nearby phlebotomists"
-                        onChange={(loc) => {
-                          onPickupLocationChange({
-                            ...loc,
-                            label: loc.label || 'Collection Point',
-                          });
-                        }}
+                        onChange={onPickupLocationChange}
                       />
                     </div>
                   </div>

@@ -51,11 +51,11 @@ const TRACKING_TILE_CONFIGS: Record<TrackingLayerType, { url: string; options: L
 /**
  * Custom Animated Bike Courier Rider Marker with LabSetu Brand Logo on the Bag.
  */
-function buildBikeCourierIcon(courierName?: string): L.DivIcon {
+function buildBikeCourierIcon(courierName?: string, isOnline: boolean = true): L.DivIcon {
   const name = courierName || 'Live Courier';
   const html = `
     <div class="labsetu-bike-marker-wrapper">
-      <div class="labsetu-bike-radar-ring"></div>
+      <div class="labsetu-bike-radar-ring ${isOnline ? '' : 'standby'}"></div>
       <svg width="58" height="58" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="filter: drop-shadow(0 4px 10px rgba(15,23,42,0.45));">
         <!-- Back Wheel -->
         <circle cx="16" cy="44" r="9" fill="#1E293B" stroke="#94A3B8" stroke-width="2.5"/>
