@@ -275,7 +275,7 @@ export async function createOrder(params: CreateOrderParams) {
       process.env.NODE_ENV !== 'production'
     ) {
       console.warn(
-        '[Razorpay] Live credentials failed authentication (401). Generating simulated dev order to prevent blocking field collections.'
+        `[Razorpay] Configured key rejected by Razorpay API (401: ${errObj?.error?.description || 'Authentication failed'}). Running in resilient dev-simulation mode (order_sim) so field collections & test payments are never blocked.`
       );
       order = {
         id: `order_sim_${Date.now()}_${Math.floor(1000 + Math.random() * 8999)}`,

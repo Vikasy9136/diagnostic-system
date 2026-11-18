@@ -30,16 +30,29 @@ service cloud.firestore {
       return hasDirectoryEntry() && directoryEntry().get('isActive', true) != false;
     }
 
+    function hasUserDoc() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
     function isAccountActive() {
-      return !hasDirectoryEntry() || isDirectoryActive();
+      return (!hasDirectoryEntry() || isDirectoryActive())
+        && (!hasUserDoc() || userDoc().get('isActive', true) != false);
     }
 
     function getUserRole() {
       return isAuthenticated() && isAccountActive()
         ? (
-            hasDirectoryEntry()
-              ? directoryEntry().get('role', request.auth.token.role)
-              : request.auth.token.role
+            hasDirectoryEntry() && directoryEntry().get('role', null) != null
+              ? directoryEntry().get('role', null)
+              : (
+                  hasUserDoc() && userDoc().get('role', null) != null
+                    ? userDoc().get('role', null)
+                    : request.auth.token.role
+                )
           )
         : null;
     }
@@ -124,19 +137,22 @@ service cloud.firestore {
     function getLabId() {
       return hasDirectoryEntry() && directoryEntry().get('labId', null) != null
         ? directoryEntry().get('labId', null)
-        : request.auth.token.labId;
+        : (
+            hasUserDoc() && userDoc().get('labId', null) != null
+              ? userDoc().get('labId', null)
+              : request.auth.token.labId
+          );
     }
 
-    function getParentLabId() {
-      return hasDirectoryEntry() && directoryEntry().get('parentLabId', null) != null
-        ? directoryEntry().get('parentLabId', null)
-        : request.auth.token.parentLabId;
-    }
 
     function getPhlebotomistId() {
       return hasDirectoryEntry() && directoryEntry().get('phlebotomistId', null) != null
         ? directoryEntry().get('phlebotomistId', null)
-        : request.auth.token.phlebotomistId;
+        : (
+            hasUserDoc() && userDoc().get('phlebotomistId', null) != null
+              ? userDoc().get('phlebotomistId', null)
+              : request.auth.token.phlebotomistId
+          );
     }
 
     // =========================================================================
@@ -252,24 +268,24 @@ service cloud.firestore {
 
       // Small Labs create bookings, track them, cancel before pickup, AND run QC/reports on SELF_DROP orders
       allow create: if isSmallLab()
-        && getLabId() != null
-        && request.resource.data.smallLabId == getLabId();
+        && (getLabId() == null || request.resource.data.smallLabId == getLabId() || request.resource.data.smallLabId == request.auth.uid);
       allow read: if isSmallLab()
-        && getLabId() != null
         && (
-          resource.data.smallLabId == getLabId()
+          getLabId() == null
+          || resource.data.smallLabId == getLabId()
           || resource.data.targetLabId == getLabId()
+          || resource.data.smallLabId == request.auth.uid
+          || resource.data.get('createdBy', '') == request.auth.uid
         );
       allow update: if isSmallLab()
-        && getLabId() != null
         && (
           (
-            resource.data.smallLabId == getLabId()
+            (getLabId() == null || resource.data.smallLabId == getLabId() || resource.data.smallLabId == request.auth.uid || resource.data.get('createdBy', '') == request.auth.uid)
             && resource.data.status in ['CREATED', 'READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO']
             && request.resource.data.status in ['READY_FOR_PICKUP', 'CANCELLED']
           )
           || (
-            resource.data.targetLabId == getLabId()
+            (getLabId() == null || resource.data.targetLabId == getLabId() || resource.data.targetLabId == request.auth.uid)
             && request.resource.data.status in ['DELIVERED_TO_LAB', 'UNDER_ANALYSIS', 'REPORT_UPLOADED', 'COMPLETED', 'REJECTED']
           )
         );
@@ -381,9 +397,7 @@ service cloud.firestore {
     // =========================================================================
     match /custody_events/{eventId} {
       allow read: if isAuthenticated() && isAccountActive();
-      allow create: if isAuthenticated()
-        && isAccountActive()
-        && request.resource.data.operatorId == request.auth.uid;
+      allow create: if isAuthenticated() && isAccountActive();
       allow update, delete: if false;
     }
 

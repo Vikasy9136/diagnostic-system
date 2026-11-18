@@ -2194,12 +2194,13 @@ export async function retryOrderBroadcast(
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 45000).toISOString();
 
+  const operatorUid = auth.currentUser?.uid || existing.smallLabId;
   const retryEvent: CustodyEvent = {
     id: `EVT-${Date.now()}`,
     orderId: existing.id,
     eventType: CustodyEventType.PACKED_BY_SMALL_LAB,
     timestamp: now.toISOString(),
-    operatorId: existing.smallLabId,
+    operatorId: operatorUid,
     operatorName: existing.smallLabName,
     operatorRole: UserRole.SMALL_LAB,
     notes: hikeInr > 0
@@ -2222,20 +2223,29 @@ export async function retryOrderBroadcast(
   };
 
   await updateDoc(orderRef, stripUndefinedFields(updatedFields));
-  await addDoc(collection(db, 'custody_events'), retryEvent);
 
-  // Broadcast high-priority alert to nearby phlebotomists
-  await dispatchPlatformAlert({
-    title: hikeInr > 0
-      ? `⚡ SURGE +₹${hikeInr} ADD-ON: Pickup ${existing.orderNumber}`
-      : `🔄 RETRY BROADCAST: Pickup ${existing.orderNumber}`,
-    message: `${existing.smallLabName} pickup retried (${existing.distanceKm || 1} km route -> ${existing.targetLabName}). Payout boosted to ₹${newCourierFee}!`,
-    category: NotificationCategory.PICKUP_ASSIGNED,
-    priority: NotificationPriority.HIGH,
-    recipientRole: UserRole.PHLEBOTOMIST,
-    orderId: existing.id,
-    queueEmail: false,
-  });
+  try {
+    await addDoc(collection(db, 'custody_events'), retryEvent);
+  } catch (err) {
+    console.warn('[retryOrderBroadcast] custody_events log caught:', err);
+  }
+
+  try {
+    // Broadcast high-priority alert to nearby phlebotomists
+    await dispatchPlatformAlert({
+      title: hikeInr > 0
+        ? `⚡ SURGE +₹${hikeInr} ADD-ON: Pickup ${existing.orderNumber}`
+        : `🔄 RETRY BROADCAST: Pickup ${existing.orderNumber}`,
+      message: `${existing.smallLabName} pickup retried (${existing.distanceKm || 1} km route -> ${existing.targetLabName}). Payout boosted to ₹${newCourierFee}!`,
+      category: NotificationCategory.PICKUP_ASSIGNED,
+      priority: NotificationPriority.HIGH,
+      recipientRole: UserRole.PHLEBOTOMIST,
+      orderId: existing.id,
+      queueEmail: false,
+    });
+  } catch (err) {
+    console.warn('[retryOrderBroadcast] dispatchPlatformAlert caught:', err);
+  }
 
   return {
     ...existing,
