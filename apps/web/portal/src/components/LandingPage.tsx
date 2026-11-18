@@ -3,6 +3,8 @@ import { ADMIN_LOGIN_EMAIL } from '../firebase';
 
 interface LandingPageProps {
   onGoToLogin: (role?: UserRole) => void;
+  onGoToPrivacy?: () => void;
+  onGoToTerms?: () => void;
 }
 
 const WEB_ROLE_CARDS: {
@@ -51,7 +53,7 @@ const WEB_ROLE_CARDS: {
   },
 ];
 
-export function LandingPage({ onGoToLogin }: LandingPageProps) {
+export function LandingPage({ onGoToLogin, onGoToPrivacy, onGoToTerms }: LandingPageProps) {
   return (
     <div className="landing-root">
       {/* Sticky Navigation */}
@@ -427,8 +429,50 @@ export function LandingPage({ onGoToLogin }: LandingPageProps) {
         </div>
       </section>
 
-      <footer style={{ borderTop: '1px solid #E2E8F0', background: '#FFFFFF', padding: '24px', textAlign: 'center', fontSize: '0.82rem', color: '#64748B' }}>
-        © {new Date().getFullYear()} {LABSETU_THEME.brand.name} Diagnostics Network • Connected Sample Pickup &amp; Lab Reporting
+      <footer style={{ borderTop: '1px solid #E2E8F0', background: '#FFFFFF', padding: '32px 24px', textAlign: 'center', fontSize: '0.84rem', color: '#64748B' }}>
+        <div style={{ maxWidth: '1240px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '16px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '20px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
+            <a
+              href="#roles"
+              style={{ color: '#475569', textDecoration: 'none', fontWeight: 600 }}
+            >
+              Partner Portals
+            </a>
+            <span style={{ color: '#CBD5E1' }}>•</span>
+            <a
+              href="#workflow"
+              style={{ color: '#475569', textDecoration: 'none', fontWeight: 600 }}
+            >
+              Workflow
+            </a>
+            <span style={{ color: '#CBD5E1' }}>•</span>
+            <a
+              href="#security"
+              style={{ color: '#475569', textDecoration: 'none', fontWeight: 600 }}
+            >
+              Security
+            </a>
+            <span style={{ color: '#CBD5E1' }}>•</span>
+            <button
+              type="button"
+              onClick={onGoToPrivacy}
+              style={{ background: 'none', border: 'none', padding: 0, color: '#0D9488', fontWeight: 700, cursor: 'pointer', fontSize: '0.84rem' }}
+            >
+              Privacy Policy
+            </button>
+            <span style={{ color: '#CBD5E1' }}>•</span>
+            <button
+              type="button"
+              onClick={onGoToTerms}
+              style={{ background: 'none', border: 'none', padding: 0, color: '#0D9488', fontWeight: 700, cursor: 'pointer', fontSize: '0.84rem' }}
+            >
+              Terms &amp; Conditions
+            </button>
+          </div>
+          <div>
+            © {new Date().getFullYear()} {LABSETU_THEME.brand.name} Diagnostics Network • Connected Sample Pickup &amp; Lab Reporting • All Rights Reserved
+          </div>
+        </div>
       </footer>
     </div>
   );

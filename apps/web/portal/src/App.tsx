@@ -8,6 +8,8 @@ import { ForgotPasswordPage } from './components/ForgotPasswordPage';
 import { ResetPasswordPage } from './components/ResetPasswordPage';
 import { MobileGoogleAuthPage } from './components/MobileGoogleAuthPage';
 import { MobileScannerPage } from './components/MobileScannerPage';
+import { PrivacyPolicyPage } from './components/PrivacyPolicyPage';
+import { TermsConditionsPage } from './components/TermsConditionsPage';
 import {
   DynamicAlertModal,
   INITIAL_DYNAMIC_ALERT,
@@ -25,7 +27,9 @@ type RouteView =
   | 'reset-password'
   | 'mobile-google-auth'
   | 'mobile-scanner'
-  | 'dashboard';
+  | 'dashboard'
+  | 'privacy'
+  | 'terms';
 
 const ACTIVE_ROLE_STORAGE_KEY = 'labsetu_active_role';
 
@@ -89,6 +93,35 @@ function parseBrowserRoute(): {
   if (path.startsWith('/forgot-password')) {
     return {
       view: 'forgot-password',
+      role: resolvedRole,
+      blockedPhleboParam: false,
+      initialEmail,
+    };
+  }
+
+  const pageParam = params.get('page')?.toLowerCase();
+  if (
+    path.startsWith('/privacy') ||
+    path.startsWith('/privacy-policy') ||
+    pageParam === 'privacy' ||
+    pageParam === 'privacy-policy'
+  ) {
+    return {
+      view: 'privacy',
+      role: resolvedRole,
+      blockedPhleboParam: false,
+      initialEmail,
+    };
+  }
+  if (
+    path.startsWith('/terms') ||
+    path.startsWith('/terms-and-conditions') ||
+    path.startsWith('/terms-of-service') ||
+    pageParam === 'terms' ||
+    pageParam === 'terms-and-conditions'
+  ) {
+    return {
+      view: 'terms',
       role: resolvedRole,
       blockedPhleboParam: false,
       initialEmail,
@@ -371,7 +404,29 @@ export function App() {
 
       {routeView === 'mobile-scanner' && <MobileScannerPage />}
 
-      {routeView === 'landing' && <LandingPage onGoToLogin={handleGoToLogin} />}
+      {routeView === 'landing' && (
+        <LandingPage
+          onGoToLogin={handleGoToLogin}
+          onGoToPrivacy={() => navigate('/privacy')}
+          onGoToTerms={() => navigate('/terms')}
+        />
+      )}
+
+      {routeView === 'privacy' && (
+        <PrivacyPolicyPage
+          onBackToHome={() => navigate('/')}
+          onGoToLogin={handleGoToLogin}
+          onGoToTerms={() => navigate('/terms')}
+        />
+      )}
+
+      {routeView === 'terms' && (
+        <TermsConditionsPage
+          onBackToHome={() => navigate('/')}
+          onGoToLogin={handleGoToLogin}
+          onGoToPrivacy={() => navigate('/privacy')}
+        />
+      )}
 
       {routeView === 'forgot-password' && (
         <ForgotPasswordPage
@@ -398,6 +453,8 @@ export function App() {
           onSelectRole={handleSelectRoleOnLogin}
           onBackToLanding={() => navigate('/')}
           onForgotPassword={handleGoToForgotPassword}
+          onGoToPrivacy={() => navigate('/privacy')}
+          onGoToTerms={() => navigate('/terms')}
           onShowAlert={showAlert}
           onAuthenticated={handleAuthenticated}
         />

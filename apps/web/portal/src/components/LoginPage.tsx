@@ -48,6 +48,8 @@ interface LoginPageProps {
   onSelectRole: (role: UserRole) => void;
   onBackToLanding: () => void;
   onForgotPassword: (email?: string) => void;
+  onGoToPrivacy?: () => void;
+  onGoToTerms?: () => void;
   onShowAlert: (opts: {
     variant: DynamicAlertVariant;
     title: string;
@@ -75,6 +77,8 @@ export function LoginPage({
   onSelectRole,
   onBackToLanding,
   onForgotPassword,
+  onGoToPrivacy,
+  onGoToTerms,
   onShowAlert,
   onAuthenticated,
 }: LoginPageProps) {
@@ -1089,6 +1093,29 @@ export function LoginPage({
           </div>
         </div>
       </div>
+
+      <footer style={{ textAlign: 'center', padding: '16px 20px 24px', fontSize: '0.82rem', color: '#64748B' }}>
+        <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', alignItems: 'center', marginBottom: '8px' }}>
+          <button
+            type="button"
+            onClick={onGoToPrivacy}
+            style={{ background: 'none', border: 'none', padding: 0, color: '#0D9488', fontWeight: 600, cursor: 'pointer', fontSize: '0.82rem' }}
+          >
+            Privacy Policy
+          </button>
+          <span style={{ color: '#CBD5E1' }}>•</span>
+          <button
+            type="button"
+            onClick={onGoToTerms}
+            style={{ background: 'none', border: 'none', padding: 0, color: '#0D9488', fontWeight: 600, cursor: 'pointer', fontSize: '0.82rem' }}
+          >
+            Terms &amp; Conditions
+          </button>
+        </div>
+        <div>
+          © {new Date().getFullYear()} {LABSETU_THEME.brand.name} Diagnostics Network • Connected Sample Logistics
+        </div>
+      </footer>
     </div>
   );
 }
