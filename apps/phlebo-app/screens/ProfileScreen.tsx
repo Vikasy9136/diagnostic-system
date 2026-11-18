@@ -610,7 +610,7 @@ export function ProfileScreen({
         </View>
 
         <Text style={styles.versionFootnote}>
-          LabSetu Phlebo App • Live Field Operations • v1.0.0
+          LabSetu Phlebo App • Live Field Operations • v1.0.1
         </Text>
       </View>
     </ScrollView>

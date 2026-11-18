@@ -27,6 +27,11 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Notifications from 'expo-notifications';
 import * as Updates from 'expo-updates';
 import * as Location from 'expo-location';
+import {
+  checkAppUpdateAvailability,
+  applyAppUpdate,
+  CURRENT_APP_VERSION,
+} from './services/appUpdateService';
 import * as TaskManager from 'expo-task-manager';
 import {
   calculateHaversineDistanceKm,
@@ -433,6 +438,8 @@ function PhleboAppContent() {
   const seenHikeMapRef = useRef<Map<string, number>>(new Map());
   const seenRetryMapRef = useRef<Map<string, number>>(new Map());
   const lastBarcodeToastRef = useRef<Record<string, string>>({});
+  const seenNotificationDocIdsRef = useRef<Set<string>>(new Set());
+  const initialNotifLoadRef = useRef(true);
 
   // History filter state
   const [bookingHistoryFilter, setBookingHistoryFilter] = useState<BookingHistoryFilter>('all');
@@ -490,17 +497,6 @@ function PhleboAppContent() {
   const handleCheckForUpdates = useCallback(
     async (interactive = false) => {
       try {
-        if (__DEV__ || !Updates.isEnabled) {
-          if (interactive) {
-            showToast({
-              variant: 'INFO',
-              title: 'Development Mode',
-              subtitle: 'Self-update checking is active in installed Preview/Production builds.',
-            });
-          }
-          return;
-        }
-
         if (interactive) {
           showToast({
             variant: 'INFO',
@@ -509,34 +505,50 @@ function PhleboAppContent() {
           });
         }
 
-        const check = await Updates.checkForUpdateAsync();
-        if (check.isAvailable) {
-          showToast({
-            variant: 'INFO',
-            title: 'Downloading update...',
-            subtitle: 'Please wait while new app bundle is fetched.',
-          });
-          await Updates.fetchUpdateAsync();
-          showDynamicAlert({
-            variant: 'confirm',
-            title: '🚀 New Update Ready',
-            message:
-              'A new version of LabSetu Partner has been downloaded. Restart the app now to apply changes?',
-            confirmLabel: 'Restart & Update Now',
-            cancelLabel: 'Later',
-            onConfirm: async () => {
-              try {
-                await Updates.reloadAsync();
-              } catch {
-                // Reload fallback
-              }
-            },
-          });
+        const result = await checkAppUpdateAvailability();
+
+        if (result.hasUpdate) {
+          if (result.updateType === 'OTA') {
+            showToast({
+              variant: 'INFO',
+              title: 'Downloading update...',
+              subtitle: 'Please wait while new app bundle is fetched.',
+            });
+            await applyAppUpdate(result);
+            showDynamicAlert({
+              variant: 'confirm',
+              title: '🚀 New Update Ready',
+              message:
+                'A new version of LabSetu Partner has been downloaded. Restart the app now to apply changes?',
+              confirmLabel: 'Restart & Update Now',
+              cancelLabel: 'Later',
+              onConfirm: async () => {
+                try {
+                  await Updates.reloadAsync();
+                } catch {
+                  // Reload fallback
+                }
+              },
+            });
+          } else if (result.updateType === 'APK') {
+            showDynamicAlert({
+              variant: 'confirm',
+              title: `🚀 Update Available (${result.latestVersion})`,
+              message: `A new version of LabSetu Partner APK is available to install.\n\nWhat's New:\n${result.releaseNotes || 'New floating quick-action menu, notification bar alerts, and audio fixes.'}\n\nDownload and install now?`,
+              confirmLabel: 'Download & Install',
+              cancelLabel: 'Later',
+              onConfirm: () => {
+                void applyAppUpdate(result, (msg) => {
+                  showToast({ variant: 'INFO', title: 'Opening Update', subtitle: msg });
+                });
+              },
+            });
+          }
         } else if (interactive) {
           showToast({
             variant: 'SUCCESS',
             title: 'App is Up to Date',
-            subtitle: 'You are running the latest LabSetu Partner release (v1.0.0).',
+            subtitle: `You are running the latest LabSetu Partner release (${CURRENT_APP_VERSION}).`,
           });
         }
       } catch (err: any) {
@@ -773,7 +785,7 @@ function PhleboAppContent() {
       )
     );
 
-    // 7. Live Phlebotomist In-App Notifications
+    // 7. Live Phlebotomist In-App Notifications & Real System Drawer Alerts
     unsubs.push(
       onSnapshot(
         collection(db, 'notifications'),
@@ -790,6 +802,37 @@ function PhleboAppContent() {
             })
             .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
           setNotifications(filtered);
+
+          if (initialNotifLoadRef.current) {
+            filtered.forEach((n) => seenNotificationDocIdsRef.current.add(n.id));
+            initialNotifLoadRef.current = false;
+          } else {
+            filtered.forEach((n) => {
+              if (!seenNotificationDocIdsRef.current.has(n.id) && !n.read) {
+                seenNotificationDocIdsRef.current.add(n.id);
+                if (Platform.OS !== 'web') {
+                  void Notifications.scheduleNotificationAsync({
+                    content: {
+                      title: n.title || 'LabSetu Platform Alert',
+                      body: n.message || 'New logistics update received.',
+                      data: { notificationId: n.id, orderId: n.orderId, action: 'OPEN_NOTIF' },
+                      sound: 'default',
+                      priority: Notifications.AndroidNotificationPriority.HIGH,
+                    },
+                    trigger: null,
+                  }).catch(() => {});
+                }
+                playPickupAlertChime();
+                showToast({
+                  variant: 'INFO',
+                  title: n.title || 'New Notification',
+                  subtitle: n.message || '',
+                  actionLabel: 'View',
+                  onAction: () => setShowNotificationsModal(true),
+                });
+              }
+            });
+          }
         },
         (err) => {
           console.warn('Notifications live subscription skipped:', err);
@@ -1656,6 +1699,11 @@ function PhleboAppContent() {
         setBottomTab('home');
         setSelectedOrderId(null);
         setCurrentScreen('BOOKING_REQUESTS');
+      } else if (data?.action === 'OPEN_COLLECTIONS') {
+        setBottomTab('home');
+        setCurrentScreen('TODAYS_COLLECTIONS');
+      } else if (data?.action === 'OPEN_NOTIF') {
+        setShowNotificationsModal(true);
       }
     });
     return () => {
@@ -1712,6 +1760,46 @@ function PhleboAppContent() {
       sub.remove();
     };
   }, [openPoolWithDistance, orders]);
+
+  // Listen to Outside-App Floating Quick Action Menu Duty Status Toggles
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+
+    const sub = DeviceEventEmitter.addListener(
+      'onOverlayDutyChange',
+      (event: { dutyStatus?: 'ONLINE' | 'OFFLINE' }) => {
+        const next = event?.dutyStatus;
+        if (next === 'ONLINE' || next === 'OFFLINE') {
+          void handleShiftUpdate(next);
+          showToast({
+            variant: next === 'ONLINE' ? 'SUCCESS' : 'INFO',
+            title: next === 'ONLINE' ? '🟢 Shift Set to Online' : '⚪ Shift Set to Offline',
+            subtitle: 'Duty status updated from outside-app floating quick menu.',
+          });
+        }
+      }
+    );
+    return () => {
+      sub.remove();
+    };
+  }, [handleShiftUpdate, showToast]);
+
+  // Handle deep link actions (e.g. from Outside-App Floating Menu "Today Collection")
+  useEffect(() => {
+    const handleDeepLink = (url?: string | null) => {
+      if (!url) return;
+      if (url.includes('open-collections') || url.includes('OPEN_COLLECTIONS')) {
+        setBottomTab('home');
+        setCurrentScreen('TODAYS_COLLECTIONS');
+      }
+    };
+
+    void Linking.getInitialURL().then(handleDeepLink);
+    const sub = Linking.addEventListener('url', (e) => handleDeepLink(e.url));
+    return () => {
+      sub.remove();
+    };
+  }, []);
 
   const activeBroadcastMatch = useMemo(() => {
     if (

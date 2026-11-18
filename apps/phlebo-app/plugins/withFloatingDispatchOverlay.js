@@ -76,6 +76,11 @@ class FloatingDispatchOverlayService : Service() {
   private var currentIncomingOrderId: String? = null
   private var currentIncomingOrderNumber: String? = null
 
+  // Floating Quick Action Menu
+  private var quickMenuCard: View? = null
+  private var glowRingView: View? = null
+  private var innerCircleView: FrameLayout? = null
+
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onCreate() {
@@ -648,41 +653,89 @@ class FloatingDispatchOverlayService : Service() {
   }
 
   /* =========================================================================
-   * 2. Persistent Floating Duty Bubble (Minimised Quick-Return Orb)
+   * 2. Persistent Floating Duty Bubble (Rich Branded In-App Style Orb)
    * ========================================================================= */
   private fun attachFloatingBubble() {
     val wm = windowManager ?: return
-    val sizePx = dp(60)
+    val orbSizePx = dp(68)
+    val circleSizePx = dp(56)
 
     val container = FrameLayout(this)
-    val circle = FrameLayout(this)
-    val circleDrawable = GradientDrawable().apply {
-      shape = GradientDrawable.OVAL
-      setColor(Color.WHITE)
-      setStroke(dp(3), Color.parseColor("#0D9488"))
-    }
-    circle.background = circleDrawable
-    circle.elevation = dp(10).toFloat()
 
-    val label = TextView(this).apply {
-      text = "LS"
+    // 1. Outer Translucent Glow Ring matching in-app style
+    val glow = View(this).apply {
+      background = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        val glowColor = if (currentNearbyCount > 0) {
+          Color.parseColor("#33F59E0B")
+        } else if (currentOnline) {
+          Color.parseColor("#330D9488")
+        } else {
+          Color.parseColor("#3394A3B8")
+        }
+        setColor(glowColor)
+      }
+    }
+    val glowLp = FrameLayout.LayoutParams(orbSizePx, orbSizePx).apply {
+      gravity = Gravity.CENTER
+    }
+    container.addView(glow, glowLp)
+    glowRingView = glow
+
+    // 2. Inner Circular Card with Teal Border
+    val circle = FrameLayout(this).apply {
+      background = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(Color.WHITE)
+        val strokeColor = if (currentNearbyCount > 0) {
+          Color.parseColor("#F59E0B")
+        } else if (currentOnline) {
+          Color.parseColor("#0D9488")
+        } else {
+          Color.parseColor("#94A3B8")
+        }
+        setStroke(dp(3), strokeColor)
+      }
+      elevation = dp(10).toFloat()
+    }
+    innerCircleView = circle
+
+    // 3. Center LabSetu Typography Brand Mark
+    val brandCol = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      gravity = Gravity.CENTER
+    }
+    val labText = TextView(this).apply {
+      text = "Lab"
       setTextColor(Color.parseColor("#0F766E"))
-      textSize = 17f
+      textSize = 12f
       typeface = Typeface.DEFAULT_BOLD
       gravity = Gravity.CENTER
     }
-    val labelLp = FrameLayout.LayoutParams(
+    val setuText = TextView(this).apply {
+      text = "Setu"
+      setTextColor(Color.parseColor("#0A2A5E"))
+      textSize = 11f
+      typeface = Typeface.DEFAULT_BOLD
+      gravity = Gravity.CENTER
+    }
+    brandCol.addView(labText)
+    brandCol.addView(setuText)
+
+    val brandLp = FrameLayout.LayoutParams(
       FrameLayout.LayoutParams.MATCH_PARENT,
       FrameLayout.LayoutParams.MATCH_PARENT
-    )
-    circle.addView(label, labelLp)
+    ).apply {
+      gravity = Gravity.CENTER
+    }
+    circle.addView(brandCol, brandLp)
 
-    val circleLp = FrameLayout.LayoutParams(sizePx, sizePx).apply {
+    val circleLp = FrameLayout.LayoutParams(circleSizePx, circleSizePx).apply {
       gravity = Gravity.CENTER
     }
     container.addView(circle, circleLp)
 
-    // Online Status Dot
+    // 4. Online Status Dot at Bottom-Left
     val dot = View(this)
     val dotDrawable = GradientDrawable().apply {
       shape = GradientDrawable.OVAL
@@ -693,17 +746,17 @@ class FloatingDispatchOverlayService : Service() {
     val dotSize = dp(14)
     val dotLp = FrameLayout.LayoutParams(dotSize, dotSize).apply {
       gravity = Gravity.BOTTOM or Gravity.START
-      marginStart = dp(4)
-      bottomMargin = dp(4)
+      marginStart = dp(6)
+      bottomMargin = dp(6)
     }
     container.addView(dot, dotLp)
     statusDotView = dot
 
-    // Badge for nearby bookings
+    // 5. Badge for Nearby Sample Pickups at Top-Right
     val badge = TextView(this).apply {
       text = if (currentNearbyCount > 9) "9+" else currentNearbyCount.toString()
       setTextColor(Color.WHITE)
-      textSize = 11f
+      textSize = 10f
       typeface = Typeface.DEFAULT_BOLD
       gravity = Gravity.CENTER
       val badgeBg = GradientDrawable().apply {
@@ -717,8 +770,8 @@ class FloatingDispatchOverlayService : Service() {
     }
     val badgeLp = FrameLayout.LayoutParams(dp(22), dp(18)).apply {
       gravity = Gravity.TOP or Gravity.END
-      marginEnd = dp(2)
-      topMargin = dp(2)
+      marginEnd = dp(4)
+      topMargin = dp(4)
     }
     container.addView(badge, badgeLp)
     badgeView = badge
@@ -731,12 +784,12 @@ class FloatingDispatchOverlayService : Service() {
     }
 
     val displayMetrics = resources.displayMetrics
-    val initialX = displayMetrics.widthPixels - sizePx - dp(16)
+    val initialX = displayMetrics.widthPixels - orbSizePx - dp(16)
     val initialY = (displayMetrics.heightPixels * 0.45).toInt()
 
     val params = WindowManager.LayoutParams(
-      sizePx + dp(12),
-      sizePx + dp(12),
+      orbSizePx + dp(8),
+      orbSizePx + dp(8),
       overlayType,
       WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
         WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
@@ -768,6 +821,9 @@ class FloatingDispatchOverlayService : Service() {
             params.x = initialWindowX + (event.rawX - initialTouchX).toInt()
             params.y = initialWindowY + (event.rawY - initialTouchY).toInt()
             windowManager?.updateViewLayout(container, params)
+            if (quickMenuCard != null) {
+              detachQuickActionMenu()
+            }
             return true
           }
           MotionEvent.ACTION_UP -> {
@@ -776,11 +832,11 @@ class FloatingDispatchOverlayService : Service() {
               (event.rawY - initialTouchY).toDouble()
             )
             val duration = System.currentTimeMillis() - touchStartTime
-            if (moved < dp(8) && duration < 300) {
-              openAppFromFloatingBubble()
+            if (moved < dp(8) && duration < 320) {
+              toggleQuickActionMenu(params.x, params.y, orbSizePx)
             } else {
               val screenWidth = resources.displayMetrics.widthPixels
-              val finalX = if (params.x + sizePx / 2 < screenWidth / 2) dp(12) else screenWidth - sizePx - dp(24)
+              val finalX = if (params.x + orbSizePx / 2 < screenWidth / 2) dp(12) else screenWidth - orbSizePx - dp(20)
               params.x = finalX
               windowManager?.updateViewLayout(container, params)
             }
@@ -797,13 +853,40 @@ class FloatingDispatchOverlayService : Service() {
   }
 
   private fun refreshBubbleAppearance() {
-    val dot = statusDotView ?: return
-    val dotDrawable = GradientDrawable().apply {
-      shape = GradientDrawable.OVAL
-      setColor(if (currentOnline) Color.parseColor("#10B981") else Color.parseColor("#94A3B8"))
-      setStroke(dp(2), Color.WHITE)
+    val dot = statusDotView
+    if (dot != null) {
+      val dotDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(if (currentOnline) Color.parseColor("#10B981") else Color.parseColor("#94A3B8"))
+        setStroke(dp(2), Color.WHITE)
+      }
+      dot.background = dotDrawable
     }
-    dot.background = dotDrawable
+
+    innerCircleView?.background = GradientDrawable().apply {
+      shape = GradientDrawable.OVAL
+      setColor(Color.WHITE)
+      val strokeColor = if (currentNearbyCount > 0) {
+        Color.parseColor("#F59E0B")
+      } else if (currentOnline) {
+        Color.parseColor("#0D9488")
+      } else {
+        Color.parseColor("#94A3B8")
+      }
+      setStroke(dp(3), strokeColor)
+    }
+
+    glowRingView?.background = GradientDrawable().apply {
+      shape = GradientDrawable.OVAL
+      val glowColor = if (currentNearbyCount > 0) {
+        Color.parseColor("#33F59E0B")
+      } else if (currentOnline) {
+        Color.parseColor("#330D9488")
+      } else {
+        Color.parseColor("#3394A3B8")
+      }
+      setColor(glowColor)
+    }
 
     badgeView?.apply {
       text = if (currentNearbyCount > 9) "9+" else currentNearbyCount.toString()
@@ -811,7 +894,330 @@ class FloatingDispatchOverlayService : Service() {
     }
   }
 
+  /* =========================================================================
+   * 3. Floating Quick Action Card: Today Collection, Online, Offline
+   * ========================================================================= */
+  private fun toggleQuickActionMenu(anchorX: Int, anchorY: Int, bubbleSizePx: Int) {
+    if (quickMenuCard != null) {
+      detachQuickActionMenu()
+    } else {
+      showQuickActionMenu(anchorX, anchorY, bubbleSizePx)
+    }
+  }
+
+  private fun showQuickActionMenu(anchorX: Int, anchorY: Int, bubbleSizePx: Int) {
+    val wm = windowManager ?: return
+    detachQuickActionMenu()
+
+    val cardWidth = dp(236)
+    val root = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      setPadding(dp(12), dp(12), dp(12), dp(12))
+      background = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(16).toFloat()
+        setColor(Color.WHITE)
+        setStroke(dp(1.5), Color.parseColor("#0D9488"))
+      }
+      elevation = dp(14).toFloat()
+    }
+
+    // Header Row: Status Indicator + Title + Close Button
+    val headerRow = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+    }
+
+    val headerDot = View(this).apply {
+      val dotD = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(if (currentOnline) Color.parseColor("#10B981") else Color.parseColor("#94A3B8"))
+      }
+      background = dotD
+    }
+    headerRow.addView(headerDot, LinearLayout.LayoutParams(dp(10), dp(10)))
+
+    val titleCol = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      setPadding(dp(6), 0, 0, 0)
+    }
+    val titleText = TextView(this).apply {
+      text = "LabSetu Partner"
+      setTextColor(Color.parseColor("#0A2A5E"))
+      textSize = 13.5f
+      typeface = Typeface.DEFAULT_BOLD
+    }
+    val subText = TextView(this).apply {
+      text = if (currentOnline) "● On Duty (Ready)" else "⚪ Off Duty (Standby)"
+      setTextColor(if (currentOnline) Color.parseColor("#15803D") else Color.parseColor("#64748B"))
+      textSize = 10.5f
+      typeface = Typeface.DEFAULT_BOLD
+    }
+    titleCol.addView(titleText)
+    titleCol.addView(subText)
+    val titleLp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+    headerRow.addView(titleCol, titleLp)
+
+    val closeBtn = TextView(this).apply {
+      text = "✕"
+      setTextColor(Color.parseColor("#64748B"))
+      textSize = 15f
+      typeface = Typeface.DEFAULT_BOLD
+      setPadding(dp(6), dp(2), dp(6), dp(2))
+      isClickable = true
+      isFocusable = true
+      setOnClickListener {
+        detachQuickActionMenu()
+      }
+    }
+    headerRow.addView(closeBtn)
+    root.addView(headerRow)
+
+    // Divider
+    val div = View(this).apply {
+      setBackgroundColor(Color.parseColor("#F1F5F9"))
+    }
+    val divLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply {
+      topMargin = dp(8)
+      bottomMargin = dp(8)
+    }
+    root.addView(div, divLp)
+
+    // Action 1: Today Collection
+    val todayRow = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+      setPadding(dp(10), dp(8), dp(10), dp(8))
+      background = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(10).toFloat()
+        setColor(Color.parseColor("#F0FDFA"))
+        setStroke(dp(1), Color.parseColor("#99F6E4"))
+      }
+      isClickable = true
+      isFocusable = true
+      setOnClickListener {
+        detachQuickActionMenu()
+        try {
+          val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            putExtra("ACTION", "OPEN_COLLECTIONS")
+            data = android.net.Uri.parse("labsetu-phlebo://open-collections")
+          }
+          if (launchIntent != null) startActivity(launchIntent)
+        } catch (_: Exception) {}
+      }
+    }
+    val todayIcon = TextView(this).apply {
+      text = "📦"
+      textSize = 16f
+      gravity = Gravity.CENTER
+    }
+    todayRow.addView(todayIcon)
+
+    val todayCol = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      setPadding(dp(8), 0, 0, 0)
+    }
+    val todayTitle = TextView(this).apply {
+      text = "Today Collections"
+      setTextColor(Color.parseColor("#0F766E"))
+      textSize = 12.5f
+      typeface = Typeface.DEFAULT_BOLD
+    }
+    val todaySub = TextView(this).apply {
+      text = "View today's samples & earnings"
+      setTextColor(Color.parseColor("#475569"))
+      textSize = 10f
+    }
+    todayCol.addView(todayTitle)
+    todayCol.addView(todaySub)
+    todayRow.addView(todayCol)
+    root.addView(todayRow)
+
+    // Action 2: Go Online
+    val onlineRow = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+      setPadding(dp(10), dp(8), dp(10), dp(8))
+      background = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(10).toFloat()
+        setColor(if (currentOnline) Color.parseColor("#DCFCE7") else Color.parseColor("#F8FAFC"))
+        if (currentOnline) {
+          setStroke(dp(1.5), Color.parseColor("#16A34A"))
+        }
+      }
+      isClickable = true
+      isFocusable = true
+      setOnClickListener {
+        currentOnline = true
+        refreshBubbleAppearance()
+        dutyChangeListener?.invoke("ONLINE")
+        detachQuickActionMenu()
+      }
+    }
+    val onlineLp = LinearLayout.LayoutParams(
+      LinearLayout.LayoutParams.MATCH_PARENT,
+      LinearLayout.LayoutParams.WRAP_CONTENT
+    ).apply {
+      topMargin = dp(6)
+    }
+    val onlineIcon = TextView(this).apply {
+      text = "🟢"
+      textSize = 13f
+      gravity = Gravity.CENTER
+    }
+    onlineRow.addView(onlineIcon)
+
+    val onlineCol = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      setPadding(dp(8), 0, 0, 0)
+    }
+    val onlineTitle = TextView(this).apply {
+      text = if (currentOnline) "● Online (Active Duty)" else "Go Online"
+      setTextColor(Color.parseColor("#15803D"))
+      textSize = 12.5f
+      typeface = Typeface.DEFAULT_BOLD
+    }
+    val onlineSub = TextView(this).apply {
+      text = "Receive live sample pickup requests"
+      setTextColor(Color.parseColor("#475569"))
+      textSize = 10f
+    }
+    onlineCol.addView(onlineTitle)
+    onlineCol.addView(onlineSub)
+    onlineRow.addView(onlineCol)
+    root.addView(onlineRow, onlineLp)
+
+    // Action 3: Go Offline
+    val offlineRow = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+      setPadding(dp(10), dp(8), dp(10), dp(8))
+      background = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(10).toFloat()
+        setColor(if (!currentOnline) Color.parseColor("#FEE2E2") else Color.parseColor("#F8FAFC"))
+        if (!currentOnline) {
+          setStroke(dp(1.5), Color.parseColor("#DC2626"))
+        }
+      }
+      isClickable = true
+      isFocusable = true
+      setOnClickListener {
+        currentOnline = false
+        refreshBubbleAppearance()
+        dutyChangeListener?.invoke("OFFLINE")
+        detachQuickActionMenu()
+      }
+    }
+    val offlineLp = LinearLayout.LayoutParams(
+      LinearLayout.LayoutParams.MATCH_PARENT,
+      LinearLayout.LayoutParams.WRAP_CONTENT
+    ).apply {
+      topMargin = dp(6)
+    }
+    val offlineIcon = TextView(this).apply {
+      text = "🔴"
+      textSize = 13f
+      gravity = Gravity.CENTER
+    }
+    offlineRow.addView(offlineIcon)
+
+    val offlineCol = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      setPadding(dp(8), 0, 0, 0)
+    }
+    val offlineTitle = TextView(this).apply {
+      text = if (!currentOnline) "● Offline (Standby)" else "Go Offline"
+      setTextColor(Color.parseColor("#B91C1C"))
+      textSize = 12.5f
+      typeface = Typeface.DEFAULT_BOLD
+    }
+    val offlineSub = TextView(this).apply {
+      text = "Pause dispatch & live location"
+      setTextColor(Color.parseColor("#475569"))
+      textSize = 10f
+    }
+    offlineCol.addView(offlineTitle)
+    offlineCol.addView(offlineSub)
+    offlineRow.addView(offlineCol)
+    root.addView(offlineRow, offlineLp)
+
+    // Footer: Open Full App
+    val openAppRow = TextView(this).apply {
+      text = "Open LabSetu App ↗"
+      setTextColor(Color.parseColor("#0D9488"))
+      textSize = 11.5f
+      typeface = Typeface.DEFAULT_BOLD
+      gravity = Gravity.CENTER
+      setPadding(0, dp(10), 0, dp(4))
+      isClickable = true
+      isFocusable = true
+      setOnClickListener {
+        detachQuickActionMenu()
+        openAppFromFloatingBubble()
+      }
+    }
+    root.addView(openAppRow)
+
+    val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+    } else {
+      @Suppress("DEPRECATION")
+      WindowManager.LayoutParams.TYPE_PHONE
+    }
+
+    val displayMetrics = resources.displayMetrics
+    val screenWidth = displayMetrics.widthPixels
+    val screenHeight = displayMetrics.heightPixels
+
+    val menuX = if (anchorX + bubbleSizePx / 2 < screenWidth / 2) {
+      anchorX + bubbleSizePx + dp(6)
+    } else {
+      anchorX - cardWidth - dp(6)
+    }.coerceIn(dp(10), screenWidth - cardWidth - dp(10))
+
+    val menuY = anchorY.coerceIn(dp(60), screenHeight - dp(300))
+
+    val lp = WindowManager.LayoutParams(
+      cardWidth,
+      WindowManager.LayoutParams.WRAP_CONTENT,
+      overlayType,
+      WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+        WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+      PixelFormat.TRANSLUCENT
+    ).apply {
+      gravity = Gravity.TOP or Gravity.START
+      x = menuX
+      y = menuY
+    }
+
+    root.setOnTouchListener { _, event ->
+      if (event.action == MotionEvent.ACTION_OUTSIDE) {
+        detachQuickActionMenu()
+        true
+      } else {
+        false
+      }
+    }
+
+    wm.addView(root, lp)
+    quickMenuCard = root
+  }
+
+  private fun detachQuickActionMenu() {
+    val card = quickMenuCard ?: return
+    try {
+      windowManager?.removeView(card)
+    } catch (_: Exception) {}
+    quickMenuCard = null
+  }
+
   private fun detachFloatingBubble() {
+    detachQuickActionMenu()
     val bubble = bubbleContainer ?: return
     try {
       windowManager?.removeView(bubble)
@@ -837,8 +1243,10 @@ class FloatingDispatchOverlayService : Service() {
         "LabSetu Dispatch Overlay",
         NotificationManager.IMPORTANCE_LOW
       ).apply {
-        description = "Shows live status and quick return to LabSetu dispatch radar."
+        description = "Background service for LabSetu sample dispatch overlay."
         setShowBadge(false)
+        enableVibration(false)
+        setSound(null, null)
       }
       val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
       nm.createNotificationChannel(channel)
@@ -857,12 +1265,8 @@ class FloatingDispatchOverlayService : Service() {
       }
     )
 
-    val title = if (currentOnline) "🟢 LabSetu On Duty • $currentCourierId" else "⚪ LabSetu On Standby • $currentCourierId"
-    val text = if (currentNearbyCount > 0) {
-      "⚡ $currentNearbyCount sample pickup request(s) nearby. Tap to open radar."
-    } else {
-      "Floating radar active. Tap to jump back to LabSetu."
-    }
+    val title = "LabSetu Field Dispatch"
+    val text = if (currentOnline) "On Duty • Dispatch Service Active" else "Off Duty • Standby"
 
     val iconRes = applicationInfo.icon.takeIf { it != 0 } ?: android.R.drawable.ic_dialog_info
 
@@ -918,6 +1322,7 @@ class FloatingDispatchOverlayService : Service() {
     var pendingActionType: String? = null
     var pendingActionOrderId: String? = null
     var actionListener: ((action: String, orderId: String) -> Unit)? = null
+    var dutyChangeListener: ((newDuty: String) -> Unit)? = null
 
     fun canDrawOverlaysCompat(context: Context): Boolean {
       return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -967,6 +1372,17 @@ class FloatingDispatchOverlayModule(
         reactCtx
           .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
           .emit("onIncomingOrderAction", map)
+      } catch (_: Exception) {}
+    }
+
+    FloatingDispatchOverlayService.dutyChangeListener = { newDuty ->
+      try {
+        val map = Arguments.createMap().apply {
+          putString("dutyStatus", newDuty)
+        }
+        reactCtx
+          .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+          .emit("onOverlayDutyChange", map)
       } catch (_: Exception) {}
     }
   }

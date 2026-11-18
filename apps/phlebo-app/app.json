@@ -3,7 +3,7 @@
     "name": "LabSetu Partner",
     "slug": "labsetu-phlebo",
     "scheme": "labsetu-phlebo",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "platforms": [
       "ios",
       "android",
@@ -35,6 +35,7 @@
         "backgroundColor": "#0F766E"
       },
       "package": "com.diagnostic.phleboapp",
+      "versionCode": 2,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.ACCESS_FINE_LOCATION",

@@ -281,41 +281,11 @@ export async function syncFloatingOverlayRuntime(opts: {
     }
   }
 
-  // 2. Expo Go & Android sticky notification quick-return bubble while minimized / offline standby
+  // 2. Clean up any legacy sticky duty notification in status bar
   try {
-    if (!shouldBeActive) {
-      await Notifications.dismissNotificationAsync(STICKY_DUTY_NOTIF_ID).catch(() => {});
-      return;
-    }
-
-    const perm = await Notifications.getPermissionsAsync();
-    if (perm.status !== 'granted') return;
-
-    await ensureDutyNotificationChannel();
-
-    // Post/refresh ongoing sticky notification when minimized, or on duty changes
-    if (appState !== 'active') {
-      await Notifications.scheduleNotificationAsync({
-        identifier: STICKY_DUTY_NOTIF_ID,
-        content: {
-          title: isOnline
-            ? `🟢 LabSetu Floating Radar ON • ${courierId || 'Partner'}`
-            : `⚪ LabSetu Quick Return • ${courierId || 'Partner'}`,
-          body:
-            nearbyCount > 0
-              ? `⚡ ${nearbyCount} pickup request(s) within 1–5 km! Tap to open LabSetu.`
-              : 'App minimized — Tap anytime to jump back to LabSetu Quick Radar.',
-          sticky: true,
-          autoDismiss: false,
-          data: { action: 'OPEN_RADAR' },
-        },
-        trigger: Platform.OS === 'android' ? { channelId: DUTY_CHANNEL_ID } : null,
-      });
-    } else {
-      await Notifications.dismissNotificationAsync(STICKY_DUTY_NOTIF_ID).catch(() => {});
-    }
+    await Notifications.dismissNotificationAsync(STICKY_DUTY_NOTIF_ID).catch(() => {});
   } catch {
-    // Ignore sticky notification errors cleanly
+    // Ignore cleanup error
   }
 }
 

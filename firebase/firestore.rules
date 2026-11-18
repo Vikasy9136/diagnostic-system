@@ -547,6 +547,11 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /system_config/{configId} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+
     match /backup_records/{backupId} {
       allow read: if hasAnyPermission(['VIEW_TECH_DASHBOARD', 'MANAGE_BACKUPS', 'VIEW_SUPER_ADMIN_DASHBOARD']);
       allow write: if false;
