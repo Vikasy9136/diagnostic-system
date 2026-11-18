@@ -219,7 +219,7 @@ export function ProfileScreen({
                 borderColor: '#FFFFFF',
               }}
               onPress={onPickProfilePhoto}
-              title="Change Profile Photo"
+              accessibilityLabel="Change Profile Photo"
             >
               <Ionicons name="camera" size={14} color="#FFFFFF" />
             </TouchableOpacity>
