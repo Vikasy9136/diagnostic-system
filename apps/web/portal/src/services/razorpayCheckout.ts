@@ -300,7 +300,7 @@ export async function startRazorpayBookingCheckout(
   const orderAmount = orderResp.amount || orderResp.data?.amount || amountPaise;
   const currency = orderResp.currency || orderResp.data?.currency || 'INR';
   const publicKey =
-    RAZORPAY_PUBLIC_KEY_ID || orderResp.key_id || orderResp.data?.key_id || 'rzp_test_TyoM0mUyIpaaOZ';
+    RAZORPAY_PUBLIC_KEY_ID || orderResp.key_id || orderResp.data?.key_id || 'rzp_live_U1YT5Z6Kt9ekwf';
 
   if (!orderId) {
     throw new Error('Online checkout configuration is missing. Please contact support.');

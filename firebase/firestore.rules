@@ -306,19 +306,26 @@ service cloud.firestore {
         && request.resource.data.status in ['DELIVERED_TO_LAB', 'UNDER_ANALYSIS', 'REPORT_UPLOADED', 'COMPLETED', 'REJECTED'];
 
       // Field Phlebotomists read assigned orders or open dispatch pool, accept/collect/deliver
-      allow read: if isPhlebotomist()
-        && (
-          (getPhlebotomistId() != null && resource.data.phlebotomistId == getPhlebotomistId())
-          || (resource.data.status == 'READY_FOR_PICKUP' && (resource.data.phlebotomistId == null || resource.data.phlebotomistId == ''))
+      allow read: if (
+          // Authenticated mobile riders can read open dispatch pool orders looking for courier
+          isAuthenticated()
+          && resource.data.status == 'READY_FOR_PICKUP'
+          && (resource.data.phlebotomistId == null || resource.data.phlebotomistId == '')
+        )
+        || (
+          isPhlebotomist()
+          && (
+            (getPhlebotomistId() != null && resource.data.phlebotomistId == getPhlebotomistId())
+            || (resource.data.status == 'READY_FOR_PICKUP' && (resource.data.phlebotomistId == null || resource.data.phlebotomistId == ''))
+          )
         );
-      allow update: if isPhlebotomist()
-        && getPhlebotomistId() != null
+      allow update: if isAuthenticated()
         && (
-          resource.data.phlebotomistId == getPhlebotomistId()
+          (isPhlebotomist() && getPhlebotomistId() != null && resource.data.phlebotomistId == getPhlebotomistId())
           || (
             resource.data.status == 'READY_FOR_PICKUP'
             && (resource.data.phlebotomistId == null || resource.data.phlebotomistId == '')
-            && request.resource.data.phlebotomistId == getPhlebotomistId()
+            && request.resource.data.status in ['ASSIGNED_TO_PHLEBO', 'READY_FOR_PICKUP']
           )
         )
         && request.resource.data.status in ['READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED_TO_LAB'];

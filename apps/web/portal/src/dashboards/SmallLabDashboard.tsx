@@ -655,15 +655,13 @@ export function SmallLabDashboard({
       return;
     }
 
+    // If outside standard pre-enrolled service zones, proceed via Flexible Pilot Dispatch to nearby riders
     if (!pickupCoverage.covered) {
       onShowAlert({
-        variant: 'warning',
-        title: 'Collection Area Not Active Yet',
-        message: pickupCoverage.message,
-        detail:
-          'We launch service area-by-area starting from active pilot clusters. Pin a collection address inside an active zone or ask Platform Admin to expand coverage.',
+        variant: 'info',
+        title: 'Flexible Fleet Radar Dispatch',
+        message: `Pincode ${pickupPincode || 'entered'} is in expansion mode. Request will be broadcast to all nearby online phlebotomists within ${broadcastRadiusKm} km!`,
       });
-      return;
     }
 
     const chosenPhlebo = phlebotomists.find((p) => p.id === selectedPhleboId) || null;

@@ -178,7 +178,7 @@ export async function startPhleboWebCheckout(
   const orderAmount = orderResp.amount || orderResp.data?.amount || amountPaise;
   const currency = orderResp.currency || orderResp.data?.currency || 'INR';
   const publicKey =
-    EXPO_RAZORPAY_KEY_ID || orderResp.key_id || orderResp.data?.key_id || 'rzp_test_TyoM0mUyIpaaOZ';
+    EXPO_RAZORPAY_KEY_ID || orderResp.key_id || orderResp.data?.key_id || 'rzp_live_U1YT5Z6Kt9ekwf';
 
   if (!orderId) {
     throw new Error('Payment checkout order could not be generated.');

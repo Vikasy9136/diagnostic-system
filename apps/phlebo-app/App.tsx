@@ -331,7 +331,7 @@ function PhleboAppContent() {
         const parsed = JSON.parse(raw) as Partial<FloatingIconSettings>;
         setFloatingSettings({ ...DEFAULT_FLOATING_ICON_SETTINGS, ...parsed });
       })
-      .catch(() => {});
+      .catch(() => { });
 
     AsyncStorage.getItem(DUTY_STATUS_STORAGE_KEY)
       .then((raw) => {
@@ -340,7 +340,7 @@ function PhleboAppContent() {
           setLocalDutyStatus(raw);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
 
     return () => {
       mounted = false;
@@ -366,7 +366,7 @@ function PhleboAppContent() {
     setFloatingSettings((prev) => {
       const next = { ...prev, ...patch };
       void AsyncStorage.setItem(FLOATING_SETTINGS_STORAGE_KEY, JSON.stringify(next)).catch(
-        () => {}
+        () => { }
       );
       return next;
     });
@@ -826,7 +826,7 @@ function PhleboAppContent() {
                       priority: Notifications.AndroidNotificationPriority.HIGH,
                     },
                     trigger: null,
-                  }).catch(() => {});
+                  }).catch(() => { });
                 }
                 playPickupAlertChime();
                 showToast({
@@ -981,7 +981,7 @@ function PhleboAppContent() {
     if (myPhleboProfile?.status) {
       if (Date.now() - lastUserShiftToggleMsRef.current < 8000) return;
       setLocalDutyStatus(myPhleboProfile.status);
-      void AsyncStorage.setItem(DUTY_STATUS_STORAGE_KEY, myPhleboProfile.status).catch(() => {});
+      void AsyncStorage.setItem(DUTY_STATUS_STORAGE_KEY, myPhleboProfile.status).catch(() => { });
     }
   }, [myPhleboProfile?.status]);
 
@@ -997,18 +997,13 @@ function PhleboAppContent() {
   }, [myPhleboProfile]);
 
   const openPoolOrders = useMemo(() => {
-    const now = nowTick;
     return orders.filter((o) => {
       if (o.status !== OrderStatus.READY_FOR_PICKUP || Boolean(o.phlebotomistId)) {
         return false;
       }
-      if (o.broadcastExpiresAt) {
-        return new Date(o.broadcastExpiresAt).getTime() > now;
-      }
-      const createdMs = new Date(o.createdAt).getTime();
-      return now - createdMs < 45000;
+      return true;
     });
-  }, [orders, nowTick]);
+  }, [orders]);
 
   const myAssignedOrders = useMemo(
     () =>
@@ -1126,10 +1121,9 @@ function PhleboAppContent() {
     const resolvedLabel = assignedAdminZone
       ? `${assignedAdminZone.zoneCode} • ${assignedAdminZone.name}`
       : myPhleboProfile?.assignedZoneName
-      ? `${
-          myPhleboProfile.assignedZoneCode ? `${myPhleboProfile.assignedZoneCode} • ` : ''
+        ? `${myPhleboProfile.assignedZoneCode ? `${myPhleboProfile.assignedZoneCode} • ` : ''
         }${myPhleboProfile.assignedZoneName}`
-      : myPhleboProfile?.currentLocation ||
+        : myPhleboProfile?.currentLocation ||
         (zonesLoaded ? 'Zone Pending (Admin)' : 'Syncing Admin Zone...');
 
     setGpsSourceLabel(resolvedLabel);
@@ -1282,7 +1276,7 @@ function PhleboAppContent() {
   useEffect(() => {
     if (Platform.OS === 'web') {
       if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
-      void navigator.serviceWorker.register('/sw.js').catch(() => {});
+      void navigator.serviceWorker.register('/sw.js').catch(() => { });
 
       const onSwMessage = (event: MessageEvent) => {
         const data = event.data as { type?: string; orderId?: string } | undefined;
@@ -1327,7 +1321,7 @@ function PhleboAppContent() {
         }
         const fg = await Location.requestForegroundPermissionsAsync();
         if (fg.status !== 'granted' || cancelled) return;
-        await Location.requestBackgroundPermissionsAsync().catch(() => {});
+        await Location.requestBackgroundPermissionsAsync().catch(() => { });
         if (cancelled) return;
         const alreadyStarted = await Location.hasStartedLocationUpdatesAsync(
           PHLEBO_BG_LOCATION_TASK
@@ -1356,7 +1350,7 @@ function PhleboAppContent() {
       activeBgLocationSink = null;
       void Location.hasStartedLocationUpdatesAsync(PHLEBO_BG_LOCATION_TASK)
         .then((running) => (running ? Location.stopLocationUpdatesAsync(PHLEBO_BG_LOCATION_TASK) : undefined))
-        .catch(() => {});
+        .catch(() => { });
     };
   }, [session, isOnline]);
 
@@ -1496,8 +1490,8 @@ function PhleboAppContent() {
       const isExpired = targetOrder?.broadcastExpiresAt
         ? new Date(targetOrder.broadcastExpiresAt).getTime() <= Date.now()
         : targetOrder?.createdAt
-        ? Date.now() - new Date(targetOrder.createdAt).getTime() >= 45000
-        : false;
+          ? Date.now() - new Date(targetOrder.createdAt).getTime() >= 45000
+          : false;
 
       if (isExpired) {
         showToast({
@@ -1555,6 +1549,7 @@ function PhleboAppContent() {
 
     // Continuous alert chime & device vibration (45-second window matching lab radar timeout)
     startContinuousPickupAlert(45);
+    setRequestTab('new');
 
     const basePay = lead.order.baseCourierFeeInr || (lead.order.courierFeeInr ? (lead.order.courierFeeInr - (lead.order.surgeIncentiveInr || 0)) : 100);
     const payoutLabel = lead.order.surgeIncentiveInr
@@ -1587,8 +1582,8 @@ function PhleboAppContent() {
         lead.order.surgeIncentiveInr
           ? `⚡ SURGE +₹${lead.order.surgeIncentiveInr} ADD-ON: ${lead.order.orderNumber}`
           : newlyArrived.length > 1
-          ? `⚡ ${newlyArrived.length} Live Sample Pickups Nearby`
-          : `⚡ Pickup Request ${lead.distFromRiderKm} km Away • ${lead.order.orderNumber}`,
+            ? `⚡ ${newlyArrived.length} Live Sample Pickups Nearby`
+            : `⚡ Pickup Request ${lead.distFromRiderKm} km Away • ${lead.order.orderNumber}`,
       subtitle: `${lead.order.smallLabName} → ${lead.order.targetLabName} • ${payoutLabel}`,
       actionLabel: 'Open Popup',
       onAction: () => {
@@ -1641,7 +1636,7 @@ function PhleboAppContent() {
                 setBroadcastForceOpen(true);
               };
             })
-            .catch(() => {});
+            .catch(() => { });
         } else {
           const nativeNotice = new window.Notification(notifTitle, {
             body: notifBody,
@@ -1668,7 +1663,7 @@ function PhleboAppContent() {
         priority: Notifications.AndroidNotificationPriority.MAX,
       },
       trigger: Platform.OS === 'android' ? { channelId: URGENT_DISPATCH_CHANNEL_ID } : null,
-    }).catch(() => {});
+    }).catch(() => { });
   }, [session, isOnline, effectivePhleboId, openPoolWithDistance, showToast]);
 
   // Sync outside-app floating overlay service / sticky duty notification when minimized or closed
@@ -2046,8 +2041,8 @@ function PhleboAppContent() {
       subtitle: assignedAdminZone
         ? `Admin Zone: ${assignedAdminZone.zoneCode} (${assignedAdminZone.name}) • Coordinates updated.`
         : cov.covered
-        ? `Active Zone ${cov.matchedZone?.zoneCode || ''} • Pickup radar synced.`
-        : cov.message,
+          ? `Active Zone ${cov.matchedZone?.zoneCode || ''} • Pickup radar synced.`
+          : cov.message,
     });
 
     if (effectivePhleboId) {
@@ -3078,9 +3073,8 @@ function PhleboAppContent() {
       showToast({
         variant: 'SUCCESS',
         title: `⚡ Delivered • ${order.orderNumber}`,
-        subtitle: `${formatInr(order.courierFeeInr || 0)} queued under ${
-          commissionConfig.instantPayoutWindowMinutes || 30
-        }-min instant payout SLA.`,
+        subtitle: `${formatInr(order.courierFeeInr || 0)} queued under ${commissionConfig.instantPayoutWindowMinutes || 30
+          }-min instant payout SLA.`,
       });
     } catch (err) {
       showDynamicAlert({
@@ -3097,7 +3091,7 @@ function PhleboAppContent() {
     lastUserShiftToggleMsRef.current = Date.now();
     setLocalDutyStatus(nextStatus);
     setMyPhleboProfile((prev) => (prev ? { ...prev, status: nextStatus } : prev));
-    void AsyncStorage.setItem(DUTY_STATUS_STORAGE_KEY, nextStatus).catch(() => {});
+    void AsyncStorage.setItem(DUTY_STATUS_STORAGE_KEY, nextStatus).catch(() => { });
 
     if (
       nextStatus === 'ONLINE' &&
@@ -3108,7 +3102,7 @@ function PhleboAppContent() {
     ) {
       void window.Notification.requestPermission()
         .then((perm) => setWebNotifPerm(perm))
-        .catch(() => {});
+        .catch(() => { });
     }
 
     const showShiftToast = (syncedRemote: boolean) => {
@@ -3118,8 +3112,8 @@ function PhleboAppContent() {
           nextStatus === 'ONLINE'
             ? '🟢 You are Now Online'
             : nextStatus === 'BREAK'
-            ? '🟡 Break Mode Enabled'
-            : '⚫ You are Now Offline',
+              ? '🟡 Break Mode Enabled'
+              : '⚫ You are Now Offline',
         subtitle:
           nextStatus === 'ONLINE'
             ? syncedRemote
@@ -3175,7 +3169,7 @@ function PhleboAppContent() {
             });
             docUpdated = true;
           }
-        } catch {}
+        } catch { }
       }
 
       // 3. Fallback: create/merge on session.firebaseUser.uid (permitted by firestore rules)
@@ -3196,7 +3190,7 @@ function PhleboAppContent() {
             { merge: true }
           );
           docUpdated = true;
-        } catch {}
+        } catch { }
       }
 
       showShiftToast(docUpdated);
@@ -3435,8 +3429,8 @@ function PhleboAppContent() {
             method === 'DIRECT_TO_LAB'
               ? 'DIRECT_TO_LAB'
               : method === 'CASH'
-              ? 'CASH_COLLECTED_BY_PHLEBO'
-              : 'UPI_COLLECTED_BY_PHLEBO';
+                ? 'CASH_COLLECTED_BY_PHLEBO'
+                : 'UPI_COLLECTED_BY_PHLEBO';
 
           const roleLabel = method === 'DIRECT_TO_LAB' ? 'PATIENT_DIRECT_LAB' : 'PHLEBOTOMIST';
 
@@ -3446,10 +3440,10 @@ function PhleboAppContent() {
             collectedByRole: roleLabel,
             ...(method === 'CASH'
               ? {
-                  cashSettledDirectly: true,
-                  cashPlatformFeePendingInr: 20,
-                  cashPlatformFeeStatus: 'DUE',
-                }
+                cashSettledDirectly: true,
+                cashPlatformFeePendingInr: 20,
+                cashPlatformFeeStatus: 'DUE',
+              }
               : {}),
             paidAt: now,
             updatedAt: now,
@@ -3593,8 +3587,8 @@ function PhleboAppContent() {
         ...(rawAcc.length >= 6
           ? { bankAccountNumber: rawAcc }
           : myPhleboProfile?.payoutProfile?.bankAccountNumber
-          ? { bankAccountNumber: myPhleboProfile.payoutProfile.bankAccountNumber }
-          : {}),
+            ? { bankAccountNumber: myPhleboProfile.payoutProfile.bankAccountNumber }
+            : {}),
         ...(last4 ? { bankAccountLast4: last4 } : {}),
         ...(ifsc ? { ifscCode: ifsc } : {}),
         updatedAt: now,
@@ -4158,10 +4152,10 @@ function PhleboAppContent() {
                 style={[
                   styles.bottomTabText,
                   bottomTab === 'home' &&
-                    currentScreen === 'BOOKING_REQUESTS' && {
-                      color: BRAND_COLORS.navyPrimary,
-                      fontFamily: BRAND_FONTS.bold,
-                    },
+                  currentScreen === 'BOOKING_REQUESTS' && {
+                    color: BRAND_COLORS.navyPrimary,
+                    fontFamily: BRAND_FONTS.bold,
+                  },
                 ]}
               >
                 Home
@@ -4360,8 +4354,8 @@ function PhleboAppContent() {
       <FloatingDispatchOverlay
         visible={Boolean(
           session &&
-            floatingSettings.enabled &&
-            (floatingSettings.visibilityMode === 'ALWAYS' || isOnline)
+          floatingSettings.enabled &&
+          (floatingSettings.visibilityMode === 'ALWAYS' || isOnline)
         )}
         isOnline={isOnline}
         nearbyOpenCount={openPoolWithDistance.filter((x) => x.inBroadcastRadius).length}

@@ -130,7 +130,11 @@ export function BookingRequestsScreen({
   const inRadiusCount = openPoolWithDistance.filter((x) => x.inBroadcastRadius).length;
   const pendingCount = activeAssignedOrders.length;
   const displayedEntries: OpenPoolEntry[] =
-    requestTab === 'completed'
+    requestTab === 'new'
+      ? (radiusOnlyFilter
+          ? openPoolWithDistance.filter((x) => x.inBroadcastRadius)
+          : openPoolWithDistance)
+      : requestTab === 'completed'
       ? completedAssignedOrders.map((order) => ({
           order,
           distFromRiderKm: undefined,
@@ -607,8 +611,27 @@ export function BookingRequestsScreen({
           </TouchableOpacity>
         ) : null}
 
-        {/* Filter Tabs Row: Assigned Tasks and Completed Tasks */}
+        {/* Filter Tabs Row: New Requests, Assigned Tasks, Completed */}
         <View style={styles.requestTabsRow}>
+          <TouchableOpacity
+            style={[
+              styles.tabButton,
+              requestTab === 'new' && styles.tabButtonActive,
+              openPoolWithDistance.length > 0 && requestTab !== 'new' && { backgroundColor: '#FEF3C7' },
+            ]}
+            onPress={() => onSelectRequestTab('new')}
+          >
+            <Text
+              style={[
+                styles.tabButtonText,
+                requestTab === 'new' && styles.tabButtonTextActive,
+                openPoolWithDistance.length > 0 && requestTab !== 'new' && { color: '#B45309', fontWeight: '800' },
+              ]}
+            >
+              {openPoolWithDistance.length > 0 ? `⚡ New (${openPoolWithDistance.length})` : 'New Requests'}
+            </Text>
+          </TouchableOpacity>
+
           <TouchableOpacity
             style={[styles.tabButton, requestTab === 'active' && styles.tabButtonActive]}
             onPress={() => onSelectRequestTab('active')}
@@ -619,7 +642,7 @@ export function BookingRequestsScreen({
                 requestTab === 'active' && styles.tabButtonTextActive,
               ]}
             >
-              Assigned Tasks ({activeAssignedOrders.length})
+              Assigned ({activeAssignedOrders.length})
             </Text>
           </TouchableOpacity>
 
@@ -633,7 +656,7 @@ export function BookingRequestsScreen({
                 requestTab === 'completed' && styles.tabButtonTextActive,
               ]}
             >
-              Completed ({completedAssignedOrders.length})
+              Done ({completedAssignedOrders.length})
             </Text>
           </TouchableOpacity>
         </View>
@@ -642,13 +665,17 @@ export function BookingRequestsScreen({
           <View style={styles.emptyBox}>
             <Ionicons name="clipboard-outline" size={32} color={BRAND_COLORS.tealPrimary} />
             <Text style={[styles.emptyTitle, { marginTop: 8 }]}>
-              {requestTab === 'active'
+              {requestTab === 'new'
+                ? 'No Open Pickup Requests Right Now'
+                : requestTab === 'active'
                 ? 'No Pickups Assigned'
                 : 'No Completed Collections Yet'}
             </Text>
             <Text style={styles.emptySub}>
-              {requestTab === 'active'
-                ? 'Turn duty Online. When nearby partner labs dispatch new sample pickups, an instant direct screen alert will appear for you to accept.'
+              {requestTab === 'new'
+                ? 'Stay Online. When partner labs create new sample pickups, they will appear here with distance and payout for you to accept.'
+                : requestTab === 'active'
+                ? 'Check the "New" tab above to accept open pickups, or wait for direct lab assignments.'
                 : 'Completed pickups and sample delivery history will show here.'}
             </Text>
           </View>

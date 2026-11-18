@@ -2043,7 +2043,10 @@ export async function createLiveBooking(params: {
         serviceZoneId: coverage.matchedZone.id,
         serviceZoneName: coverage.matchedZone.name,
       }
-      : {}),
+      : {
+        serviceZoneId: 'ZONE-PILOT-EXPANSION',
+        serviceZoneName: 'Flexible Pilot Expansion Zone',
+      }),
     paymentStatus: 'UNPAID',
     handoverOtp,
     department: params.selectedTests[0]?.department || 'Pathology',
