@@ -46,6 +46,7 @@ export interface BookingRequestsScreenProps {
   riderCoverage: ReturnType<typeof evaluatePointServiceCoverage>;
   todayPendingCount?: number;
   webNotifPerm: WebNotificationPermissionState;
+  hasOverlayPermission?: boolean;
   effectivePhleboId: string;
   adminLoginEmail: string;
   requestTab: RequestTab;
@@ -96,6 +97,7 @@ export function BookingRequestsScreen({
   riderCoverage,
   todayPendingCount,
   webNotifPerm,
+  hasOverlayPermission,
   effectivePhleboId,
   adminLoginEmail,
   requestTab,
@@ -554,6 +556,17 @@ export function BookingRequestsScreen({
           >
             <Text style={styles.notifBannerBtnText}>
               Enable Background Pickup Popups (Alerts when tab is minimized)
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {Platform.OS === 'android' && hasOverlayPermission === false ? (
+          <TouchableOpacity
+            style={[styles.notifBannerBtn, { backgroundColor: '#0D9488' }]}
+            onPress={onRequestBackgroundAlertPermission}
+          >
+            <Text style={styles.notifBannerBtnText}>
+              📌 Enable System Floating Icon (Draw over Google Maps & Phone Wallpaper) →
             </Text>
           </TouchableOpacity>
         ) : null}

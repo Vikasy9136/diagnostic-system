@@ -114,6 +114,7 @@ import { COMPACT_TEXT_SCALE, rs } from './utils/responsive';
 import {
   dismissIncomingPickupOverlay,
   ensureDutyNotificationChannel,
+  getOverlayEnvironmentInfo,
   getPendingIncomingOrderAction,
   isNativeSystemOverlayAvailable,
   openSystemOverlayPermissionSettings,
@@ -439,6 +440,7 @@ function PhleboAppContent() {
   const [pendingAppUpdate, setPendingAppUpdate] = useState<AppUpdateCheckResult | null>(null);
   const [systemModulesConfig, setSystemModulesConfig] = useState<{ kitModuleEnabled?: boolean }>({});
   const [showLocationPickerModal, setShowLocationPickerModal] = useState(false);
+  const [hasOverlayPermission, setHasOverlayPermission] = useState<boolean>(true);
   const manualLiveGpsSyncedRef = useRef(false);
   const [dismissedBroadcastIds, setDismissedBroadcastIds] = useState<string[]>([]);
   const [declinedOrderIds, setDeclinedOrderIds] = useState<string[]>([]);
@@ -1569,6 +1571,26 @@ function PhleboAppContent() {
     };
   }, [session, isOnline]);
 
+  // Check and sync real Android system overlay permission
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const checkOverlayPerm = async () => {
+      try {
+        const env = await getOverlayEnvironmentInfo();
+        setHasOverlayPermission(env.canDrawOverlays);
+      } catch {
+        // ignore
+      }
+    };
+    void checkOverlayPerm();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        void checkOverlayPerm();
+      }
+    });
+    return () => sub.remove();
+  }, [session]);
+
   async function handleRequestBackgroundAlertPermission() {
     if (Platform.OS === 'web') {
       if (typeof window === 'undefined' || !('Notification' in window)) {
@@ -1608,35 +1630,29 @@ function PhleboAppContent() {
 
     try {
       await ensureDutyNotificationChannel();
-      const res = await Notifications.requestPermissionsAsync();
-      if (res.status === 'granted') {
-        if (Platform.OS === 'android' && isNativeSystemOverlayAvailable()) {
-          showToast({
-            variant: 'SUCCESS',
-            title: 'Alerts & Persistent Duty Bar Active',
-            subtitle:
-              'Also tap "Allow Display Over Other Apps" to draw floating orb over closed/minimized apps.',
+      await Notifications.requestPermissionsAsync();
+      if (Platform.OS === 'android') {
+        const env = await getOverlayEnvironmentInfo();
+        setHasOverlayPermission(env.canDrawOverlays);
+        if (!env.canDrawOverlays) {
+          showDynamicAlert({
+            variant: 'info',
+            title: 'Enable Floating System Icon',
+            message:
+              'Allow "Display over other apps" in Android settings so the LabSetu floating bubble stays visible over Google Maps, WhatsApp, and your phone home screen.',
+            confirmLabel: 'Open Permission Settings',
+            cancelLabel: 'Later',
+            onConfirm: () => {
+              void openSystemOverlayPermissionSettings();
+            },
           });
         } else {
           showToast({
             variant: 'SUCCESS',
-            title: 'Background Alerts & Duty Bubble Active',
-            subtitle:
-              'Persistent quick-return bar & 1–5 km pickup alerts stay active when app is minimized.',
+            title: 'System Floating Icon Active',
+            subtitle: 'The LabSetu floating bubble is active across all apps and home screen.',
           });
         }
-      } else {
-        showDynamicAlert({
-          variant: 'warning',
-          title: 'Notification Permission Needed',
-          message:
-            'Allow notifications in Android settings so persistent duty bar & pickup alerts work when the app is minimized.',
-          confirmLabel: 'Open App Settings',
-          cancelLabel: 'Later',
-          onConfirm: () => {
-            void openSystemOverlayPermissionSettings();
-          },
-        });
       }
     } catch {
       // Ignore unsupported simulator prompt error
@@ -2065,13 +2081,26 @@ function PhleboAppContent() {
     };
   }, [handleShiftUpdate, showToast]);
 
-  // Handle deep link actions (e.g. from Outside-App Floating Menu "Today Collection")
+  // Handle deep link actions from System-Level Native Floating Menu
   useEffect(() => {
     const handleDeepLink = (url?: string | null) => {
       if (!url) return;
       if (url.includes('open-collections') || url.includes('OPEN_COLLECTIONS')) {
-        setBottomTab('home');
+        setBottomTab('tasks');
         setCurrentScreen('TODAYS_COLLECTIONS');
+      } else if (url.includes('open-requests') || url.includes('OPEN_REQUESTS')) {
+        setBottomTab('home');
+        setRequestTab('new');
+        setCurrentScreen('BOOKING_REQUESTS');
+      } else if (url.includes('open-history') || url.includes('OPEN_HISTORY')) {
+        setBottomTab('earnings');
+        setCurrentScreen('BOOKING_REQUESTS');
+      } else if (url.includes('open-support') || url.includes('OPEN_SUPPORT')) {
+        setBottomTab('home');
+        setCurrentScreen('HELP_AND_SUPPORT');
+      } else if (url.includes('open-home') || url.includes('OPEN_HOME')) {
+        setBottomTab('home');
+        setCurrentScreen('BOOKING_REQUESTS');
       }
     };
 
@@ -4367,6 +4396,7 @@ function PhleboAppContent() {
                 riderCoverage={riderCoverage}
                 todayPendingCount={todayPendingOrders.length}
                 webNotifPerm={webNotifPerm}
+                hasOverlayPermission={hasOverlayPermission}
                 effectivePhleboId={effectivePhleboId}
                 adminLoginEmail={ADMIN_LOGIN_EMAIL}
                 requestTab={requestTab}
@@ -4659,44 +4689,47 @@ function PhleboAppContent() {
         onClose={() => setFloatingSettingsVisible(false)}
       />
 
-      <FloatingDispatchOverlay
-        visible={Boolean(
-          session &&
-          floatingSettings.enabled &&
-          (floatingSettings.visibilityMode === 'ALWAYS' || isOnline)
-        )}
-        isOnline={isOnline}
-        nearbyOpenCount={openPoolWithDistance.filter((x) => x.inBroadcastRadius).length}
-        gpsLabel={gpsSourceLabel}
-        settings={floatingSettings}
-        resetNonce={floatingResetNonce}
-        onOpenNearbyPool={() => {
-          setBottomTab('home');
-          setSelectedOrderId(null);
-          setCurrentScreen('BOOKING_REQUESTS');
-          setRequestTab('active');
-          const firstNearby = openPoolWithDistance.find((x) => x.inBroadcastRadius);
-          if (firstNearby) {
-            setDismissedBroadcastIds((prev) =>
-              prev.filter((id) => id !== firstNearby.order.id)
-            );
+      {/* In-App Floating Widget: Rendered ONLY on Web where native Android WindowManager overlay does not exist */}
+      {Platform.OS === 'web' && (
+        <FloatingDispatchOverlay
+          visible={Boolean(
+            session &&
+            floatingSettings.enabled &&
+            (floatingSettings.visibilityMode === 'ALWAYS' || isOnline)
+          )}
+          isOnline={isOnline}
+          nearbyOpenCount={openPoolWithDistance.filter((x) => x.inBroadcastRadius).length}
+          gpsLabel={gpsSourceLabel}
+          settings={floatingSettings}
+          resetNonce={floatingResetNonce}
+          onOpenNearbyPool={() => {
+            setBottomTab('home');
+            setSelectedOrderId(null);
+            setCurrentScreen('BOOKING_REQUESTS');
+            setRequestTab('active');
+            const firstNearby = openPoolWithDistance.find((x) => x.inBroadcastRadius);
+            if (firstNearby) {
+              setDismissedBroadcastIds((prev) =>
+                prev.filter((id) => id !== firstNearby.order.id)
+              );
+              setBroadcastForceOpen(true);
+            }
+          }}
+          onOpenTodayCollections={handleOpenTodayCollections}
+          onOpenBroadcastPopup={() => {
+            const firstNearby = openPoolWithDistance.find((x) => x.inBroadcastRadius);
+            if (firstNearby) {
+              setDismissedBroadcastIds((prev) =>
+                prev.filter((id) => id !== firstNearby.order.id)
+              );
+            }
             setBroadcastForceOpen(true);
-          }
-        }}
-        onOpenTodayCollections={handleOpenTodayCollections}
-        onOpenBroadcastPopup={() => {
-          const firstNearby = openPoolWithDistance.find((x) => x.inBroadcastRadius);
-          if (firstNearby) {
-            setDismissedBroadcastIds((prev) =>
-              prev.filter((id) => id !== firstNearby.order.id)
-            );
-          }
-          setBroadcastForceOpen(true);
-        }}
-        onOpenLocationPicker={() => setShowLocationPickerModal(true)}
-        onOpenFloatingSettings={() => setFloatingSettingsVisible(true)}
-        onChangeDuty={(nextStatus) => void handleShiftUpdate(nextStatus)}
-      />
+          }}
+          onOpenLocationPicker={() => setShowLocationPickerModal(true)}
+          onOpenFloatingSettings={() => setFloatingSettingsVisible(true)}
+          onChangeDuty={(nextStatus) => void handleShiftUpdate(nextStatus)}
+        />
+      )}
 
       <ToastNotificationBanner toast={toastState} onDismiss={handleDismissToast} />
 

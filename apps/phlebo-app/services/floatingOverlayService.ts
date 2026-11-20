@@ -251,21 +251,20 @@ export async function syncFloatingOverlayRuntime(opts: {
   isOnline: boolean;
   nearbyCount: number;
   courierId: string;
-  appState: AppStateStatus;
+  appState?: AppStateStatus;
 }): Promise<void> {
   if (Platform.OS === 'web') return;
 
-  const { signedIn, settings, isOnline, nearbyCount, courierId, appState } = opts;
+  const { signedIn, settings, isOnline, nearbyCount, courierId } = opts;
   const shouldBeActive =
     signedIn &&
     settings.enabled &&
-    settings.showOutsideApp &&
     (settings.visibilityMode === 'ALWAYS' || isOnline);
 
-  // 1. Native Android APK overlay service (true WindowManager floating orb over other apps)
+  // 1. Native Android APK overlay service (true WindowManager floating orb over ALL apps and LabSetu itself)
   if (Platform.OS === 'android' && NativeOverlay) {
     try {
-      if (shouldBeActive && appState !== 'active') {
+      if (shouldBeActive) {
         const canDraw = await NativeOverlay.canDrawOverlays();
         if (canDraw) {
           await NativeOverlay.startOverlay({
