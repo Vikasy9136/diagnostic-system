@@ -44,14 +44,18 @@ service cloud.firestore {
     }
 
     function getUserRole() {
-      return isAuthenticated() && isAccountActive()
+      return isAuthenticated()
         ? (
-            hasDirectoryEntry() && directoryEntry().get('role', null) != null
-              ? directoryEntry().get('role', null)
+            request.auth.token.get('role', null) != null
+              ? request.auth.token.get('role', null)
               : (
                   hasUserDoc() && userDoc().get('role', null) != null
                     ? userDoc().get('role', null)
-                    : request.auth.token.get('role', null)
+                    : (
+                        hasDirectoryEntry() && directoryEntry().get('role', null) != null
+                          ? directoryEntry().get('role', null)
+                          : null
+                      )
                 )
           )
         : null;
@@ -144,22 +148,30 @@ service cloud.firestore {
     }
 
     function getLabId() {
-      return hasDirectoryEntry() && directoryEntry().get('labId', null) != null
-        ? directoryEntry().get('labId', null)
+      return request.auth.token.get('labId', null) != null
+        ? request.auth.token.get('labId', null)
         : (
             hasUserDoc() && userDoc().get('labId', null) != null
               ? userDoc().get('labId', null)
-              : request.auth.token.get('labId', null)
+              : (
+                  hasDirectoryEntry() && directoryEntry().get('labId', null) != null
+                    ? directoryEntry().get('labId', null)
+                    : null
+                )
           );
     }
 
     function getPhlebotomistId() {
-      return hasDirectoryEntry() && directoryEntry().get('phlebotomistId', null) != null
-        ? directoryEntry().get('phlebotomistId', null)
+      return request.auth.token.get('phlebotomistId', null) != null
+        ? request.auth.token.get('phlebotomistId', null)
         : (
             hasUserDoc() && userDoc().get('phlebotomistId', null) != null
               ? userDoc().get('phlebotomistId', null)
-              : request.auth.token.get('phlebotomistId', null)
+              : (
+                  hasDirectoryEntry() && directoryEntry().get('phlebotomistId', null) != null
+                    ? directoryEntry().get('phlebotomistId', null)
+                    : null
+                )
           );
     }
 
@@ -276,77 +288,78 @@ service cloud.firestore {
 
       // Small Labs create bookings, track them, cancel before pickup, AND retry broadcast
       allow create: if isAuthenticated() && isAccountActive()
-        && (isSmallLab() || request.resource.data.smallLabId == request.auth.uid || request.resource.data.get('createdBy', '') == request.auth.uid);
+        && (
+          isAdmin()
+          || isSmallLab()
+          || request.resource.data.smallLabId == request.auth.uid
+          || request.resource.data.get('createdBy', '') == request.auth.uid
+          || (getLabId() != null && request.resource.data.smallLabId == getLabId())
+        );
+
       allow read: if isAuthenticated() && isAccountActive()
         && (
-          resource.data.smallLabId == request.auth.uid
+          isAdmin()
+          || isSmallLab()
+          || isPhlebotomist()
+          || isLargeLab()
+          || resource.data.smallLabId == request.auth.uid
           || resource.data.get('createdBy', '') == request.auth.uid
-          || (isSmallLab() && (
-            getLabId() == null
-            || resource.data.smallLabId == getLabId()
-            || resource.data.targetLabId == getLabId()
-          ))
-        );
-      allow update: if isAuthenticated() && isAccountActive()
-        && (
-          (
-            (
-              resource.data.smallLabId == request.auth.uid
-              || resource.data.get('createdBy', '') == request.auth.uid
-              || (isSmallLab() && (getLabId() == null || resource.data.smallLabId == getLabId()))
-            )
-            && resource.data.status in ['CREATED', 'READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO']
-            && request.resource.data.status in ['READY_FOR_PICKUP', 'CANCELLED']
-          )
-          || (
-            (isSmallLab() || isLargeLab())
-            && (getLabId() == null || resource.data.targetLabId == getLabId() || resource.data.targetLabId == request.auth.uid)
-            && request.resource.data.status in ['DELIVERED_TO_LAB', 'UNDER_ANALYSIS', 'REPORT_UPLOADED', 'COMPLETED', 'REJECTED']
-          )
-        );
-
-      // Large Partner Labs (Branch center sees targetLabId == labId; Main HQ also sees child targetParentLabId == labId)
-      allow read: if isLargeLab()
-        && getLabId() != null
-        && (
-          resource.data.targetLabId == getLabId()
-          || resource.data.get('targetParentLabId', null) == getLabId()
-        );
-      allow update: if isLargeLab()
-        && getLabId() != null
-        && (
-          resource.data.targetLabId == getLabId()
-          || resource.data.get('targetParentLabId', null) == getLabId()
-        )
-        && request.resource.data.status in ['DELIVERED_TO_LAB', 'UNDER_ANALYSIS', 'REPORT_UPLOADED', 'COMPLETED', 'REJECTED'];
-
-      // Field Phlebotomists / Couriers read assigned orders or open dispatch pool, accept/collect/deliver
-      allow read: if isAuthenticated() && isAccountActive()
-        && (
-          isPhlebotomist()
-          || resource.data.status in ['READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO', 'ACCEPTED', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED_TO_LAB']
           || resource.data.get('phlebotomistId', '') == request.auth.uid
+          || (getLabId() != null && (
+            resource.data.smallLabId == getLabId()
+            || resource.data.targetLabId == getLabId()
+            || resource.data.get('targetParentLabId', '') == getLabId()
+          ))
           || (getPhlebotomistId() != null && resource.data.get('phlebotomistId', '') == getPhlebotomistId())
           || (normalizedEmail() != '' && (
-            resource.data.get('phlebotomistEmail', '') == normalizedEmail()
+            resource.data.get('smallLabEmail', '') == normalizedEmail()
+            || resource.data.get('phlebotomistEmail', '') == normalizedEmail()
             || resource.data.get('phleboEmail', '') == normalizedEmail()
           ))
+          || resource.data.status in ['READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO', 'ACCEPTED', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED_TO_LAB']
         );
+
       allow update: if isAuthenticated() && isAccountActive()
         && (
-          (
+          isAdmin()
+          // Small Labs: retry search broadcast, apply surge hike, cancel before pickup
+          || (
             (
-              resource.data.status == 'READY_FOR_PICKUP'
-              && request.resource.data.status in ['ASSIGNED_TO_PHLEBO', 'READY_FOR_PICKUP']
+              isSmallLab()
+              || resource.data.smallLabId == request.auth.uid
+              || resource.data.get('createdBy', '') == request.auth.uid
+              || (getLabId() != null && resource.data.smallLabId == getLabId())
+              || (normalizedEmail() != '' && resource.data.get('smallLabEmail', '') == normalizedEmail())
             )
-            || resource.data.get('phlebotomistId', '') == request.auth.uid
-            || (getPhlebotomistId() != null && resource.data.get('phlebotomistId', '') == getPhlebotomistId())
-            || (normalizedEmail() != '' && (
-              resource.data.get('phlebotomistEmail', '') == normalizedEmail()
-              || resource.data.get('phleboEmail', '') == normalizedEmail()
-            ))
+            && resource.data.status in ['CREATED', 'READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO', 'SEARCH_EXPIRED', 'NO_SHOW_CANCELLED']
+            && request.resource.data.status in ['READY_FOR_PICKUP', 'CANCELLED', 'ASSIGNED_TO_PHLEBO']
           )
-          && request.resource.data.status in ['READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED_TO_LAB']
+          // Large Partner Labs (Branch center sees targetLabId == labId; Main HQ also sees child targetParentLabId == labId)
+          || (
+            (
+              isLargeLab()
+              || resource.data.targetLabId == request.auth.uid
+              || (getLabId() != null && (resource.data.targetLabId == getLabId() || resource.data.get('targetParentLabId', null) == getLabId()))
+            )
+            && request.resource.data.status in ['DELIVERED_TO_LAB', 'UNDER_ANALYSIS', 'REPORT_UPLOADED', 'COMPLETED', 'REJECTED']
+          )
+          // Field Phlebotomists / Couriers: claim from pool, start trip, collect sample, deliver to lab
+          || (
+            (
+              isPhlebotomist()
+              || (
+                resource.data.status == 'READY_FOR_PICKUP'
+                && request.resource.data.status in ['ASSIGNED_TO_PHLEBO', 'READY_FOR_PICKUP']
+              )
+              || resource.data.get('phlebotomistId', '') == request.auth.uid
+              || (getPhlebotomistId() != null && resource.data.get('phlebotomistId', '') == getPhlebotomistId())
+              || (normalizedEmail() != '' && (
+                resource.data.get('phlebotomistEmail', '') == normalizedEmail()
+                || resource.data.get('phleboEmail', '') == normalizedEmail()
+              ))
+            )
+            && request.resource.data.status in ['READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED_TO_LAB']
+          )
         );
     }
 
