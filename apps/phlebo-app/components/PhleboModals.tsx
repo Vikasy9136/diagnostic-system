@@ -22,6 +22,7 @@ import {
   type KitAllocationRecord,
   type LiveGeoCoordinate,
   type PhlebotomistProfile,
+  type PhlebotomistShiftStatus,
   type PickupOrder,
   type PlatformNotification,
   type ServiceZoneRecord,
@@ -1746,30 +1747,42 @@ export function PhleboKitInventoryModal({
 export interface PhleboQuickActionsModalProps {
   visible: boolean;
   onClose: () => void;
+  dutyStatus?: PhlebotomistShiftStatus;
+  onShiftUpdate?: (nextStatus: PhlebotomistShiftStatus) => void;
   onOpenScanner?: () => void;
   onOpenKitsAndSupplies: () => void;
+  isKitModuleActive?: boolean;
   onOpenTrainingSops: () => void;
   onOpenHelpSupport: () => void;
   onOpenTodayCollections: () => void;
+  onOpenEarnings?: () => void;
   onRefreshBroadcasts: () => void;
 }
 
 export function PhleboQuickActionsModal({
   visible,
   onClose,
+  dutyStatus = 'OFFLINE',
+  onShiftUpdate,
   onOpenScanner,
   onOpenKitsAndSupplies,
+  isKitModuleActive = false,
   onOpenTrainingSops,
   onOpenHelpSupport,
   onOpenTodayCollections,
+  onOpenEarnings,
   onRefreshBroadcasts,
 }: PhleboQuickActionsModalProps) {
   const insets = useSafeAreaInsets();
 
-  const handleAction = (callback: () => void) => {
+  const handleAction = (callback?: () => void) => {
     onClose();
-    setTimeout(() => callback(), 80);
+    if (callback) {
+      setTimeout(() => callback(), 80);
+    }
   };
+
+  const isOnline = dutyStatus === 'ONLINE';
 
   return (
     <Modal visible={visible} transparent animationType="slide" statusBarTranslucent onRequestClose={onClose}>
@@ -1789,33 +1802,33 @@ export function PhleboQuickActionsModal({
           activeOpacity={1}
           style={{
             backgroundColor: '#FFFFFF',
-            borderTopLeftRadius: 20,
-            borderTopRightRadius: 20,
-            paddingHorizontal: 16,
+            borderTopLeftRadius: 24,
+            borderTopRightRadius: 24,
+            paddingHorizontal: 18,
             paddingTop: 12,
-            paddingBottom: Math.max(insets.bottom + 12, 24),
+            paddingBottom: Math.max(insets.bottom + 14, 28),
             borderWidth: 1,
             borderColor: '#E2E8F0',
             shadowColor: '#000',
-            shadowOffset: { width: 0, height: -4 },
-            shadowOpacity: 0.15,
-            shadowRadius: 12,
-            elevation: 10,
+            shadowOffset: { width: 0, height: -6 },
+            shadowOpacity: 0.16,
+            shadowRadius: 16,
+            elevation: 14,
           }}
         >
           {/* Grab Handle */}
           <View style={{ alignItems: 'center', marginBottom: 12 }}>
-            <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: '#CBD5E1' }} />
+            <View style={{ width: 44, height: 4.5, borderRadius: 3, backgroundColor: '#CBD5E1' }} />
           </View>
 
           {/* Sheet Header */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
             <View>
-              <Text style={{ fontSize: 16, fontWeight: '800', color: BRAND_COLORS.navyPrimary }}>
-                ⚡ Quick Field Actions
+              <Text style={{ fontSize: 16.5, fontWeight: '800', color: BRAND_COLORS.navyPrimary }}>
+                ⚡ Quick Field Command
               </Text>
-              <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
-                Instant shortcuts for active field collections &amp; supplies
+              <Text style={{ fontSize: 11.5, color: '#64748B', marginTop: 2 }}>
+                Instant shortcuts for collections, barcode scans &amp; duty status
               </Text>
             </View>
             <TouchableOpacity onPress={onClose} hitSlop={10} style={{ padding: 4 }}>
@@ -1823,122 +1836,214 @@ export function PhleboQuickActionsModal({
             </TouchableOpacity>
           </View>
 
-          {/* Action Grid */}
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-            {/* 1. Today's Tasks */}
+          {/* 1. Fast Duty Status Switcher */}
+          {onShiftUpdate && (
+            <View style={{ marginBottom: 14 }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', marginBottom: 6, letterSpacing: 0.5 }}>
+                Shift Duty Status
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    paddingVertical: 9,
+                    borderRadius: 10,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: dutyStatus === 'ONLINE' ? '#DCFCE7' : '#F8FAFC',
+                    borderWidth: 1.5,
+                    borderColor: dutyStatus === 'ONLINE' ? '#16A34A' : '#E2E8F0',
+                  }}
+                  onPress={() => onShiftUpdate('ONLINE')}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: dutyStatus === 'ONLINE' ? '#16A34A' : '#64748B' }}>
+                    🟢 On Duty
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    paddingVertical: 9,
+                    borderRadius: 10,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: dutyStatus === 'BREAK' ? '#FEF3C7' : '#F8FAFC',
+                    borderWidth: 1.5,
+                    borderColor: dutyStatus === 'BREAK' ? '#D97706' : '#E2E8F0',
+                  }}
+                  onPress={() => onShiftUpdate('BREAK')}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: dutyStatus === 'BREAK' ? '#D97706' : '#64748B' }}>
+                    ☕ Break
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    paddingVertical: 9,
+                    borderRadius: 10,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: dutyStatus === 'OFFLINE' ? '#FEE2E2' : '#F8FAFC',
+                    borderWidth: 1.5,
+                    borderColor: dutyStatus === 'OFFLINE' ? '#DC2626' : '#E2E8F0',
+                  }}
+                  onPress={() => onShiftUpdate('OFFLINE')}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: dutyStatus === 'OFFLINE' ? '#DC2626' : '#64748B' }}>
+                    🔴 Off Duty
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* 2. Primary Hero Action: Camera / Barcode Scanner */}
+          {onOpenScanner && (
             <TouchableOpacity
               style={{
-                width: '48.5%',
-                backgroundColor: '#F0FDFA',
-                borderWidth: 1,
-                borderColor: '#99F6E4',
-                borderRadius: 12,
-                padding: 12,
+                backgroundColor: '#061D42',
+                borderRadius: 14,
+                padding: 14,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 12,
+                marginBottom: 14,
+                shadowColor: '#061D42',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.2,
+                shadowRadius: 8,
+                elevation: 4,
               }}
-              onPress={() => handleAction(onOpenTodayCollections)}
+              activeOpacity={0.85}
+              onPress={() => handleAction(onOpenScanner)}
             >
-              <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#0D9488', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
-                <Ionicons name="clipboard" size={20} color="#FFFFFF" />
-              </View>
-              <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>Today's Tasks</Text>
-              <Text style={{ fontSize: 10, color: '#64748B', marginTop: 2 }}>Assigned pick-ups &amp; drops</Text>
-            </TouchableOpacity>
-
-            {/* 2. Collection Kits & Supplies */}
-            <TouchableOpacity
-              style={{
-                width: '48.5%',
-                backgroundColor: '#EFF6FF',
-                borderWidth: 1,
-                borderColor: '#BFDBFE',
-                borderRadius: 12,
-                padding: 12,
-              }}
-              onPress={() => handleAction(onOpenKitsAndSupplies)}
-            >
-              <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
-                <Ionicons name="briefcase" size={20} color="#FFFFFF" />
-              </View>
-              <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>Kits &amp; Supplies</Text>
-              <Text style={{ fontSize: 10, color: '#64748B', marginTop: 2 }}>Tubes, needles &amp; stock</Text>
-            </TouchableOpacity>
-
-            {/* 3. Barcode Scanner */}
-            {onOpenScanner && (
-              <TouchableOpacity
+              <View
                 style={{
-                  width: '48.5%',
-                  backgroundColor: '#FAF5FF',
-                  borderWidth: 1,
-                  borderColor: '#E9D5FF',
+                  width: 44,
+                  height: 44,
                   borderRadius: 12,
-                  padding: 12,
+                  backgroundColor: '#0D9488',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                 }}
-                onPress={() => handleAction(onOpenScanner)}
               >
-                <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#9333EA', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
-                  <Ionicons name="barcode-outline" size={20} color="#FFFFFF" />
-                </View>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>Scan Barcode</Text>
-                <Text style={{ fontSize: 10, color: '#64748B', marginTop: 2 }}>Kit or Specimen Tube</Text>
-              </TouchableOpacity>
-            )}
-
-            {/* 4. Training & SOPs */}
-            <TouchableOpacity
-              style={{
-                width: '48.5%',
-                backgroundColor: '#FEF3C7',
-                borderWidth: 1,
-                borderColor: '#FDE68A',
-                borderRadius: 12,
-                padding: 12,
-              }}
-              onPress={() => handleAction(onOpenTrainingSops)}
-            >
-              <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#D97706', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
-                <Ionicons name="book" size={20} color="#FFFFFF" />
+                <Ionicons name="barcode-outline" size={24} color="#FFFFFF" />
               </View>
-              <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>Training &amp; SOPs</Text>
-              <Text style={{ fontSize: 10, color: '#64748B', marginTop: 2 }}>Order of Draw &amp; Cold-Chain</Text>
-            </TouchableOpacity>
-
-            {/* 5. Help & Emergency Hotline */}
-            <TouchableOpacity
-              style={{
-                width: '48.5%',
-                backgroundColor: '#FEF2F2',
-                borderWidth: 1,
-                borderColor: '#FECACA',
-                borderRadius: 12,
-                padding: 12,
-              }}
-              onPress={() => handleAction(onOpenHelpSupport)}
-            >
-              <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#DC2626', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
-                <Ionicons name="headset" size={20} color="#FFFFFF" />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={{ fontSize: 14.5, fontWeight: '800', color: '#FFFFFF' }}>
+                  Scan Specimen Barcode
+                </Text>
+                <Text style={{ fontSize: 11.5, color: '#94A3B8', marginTop: 2 }}>
+                  Instant camera inspection for tubes, patient vials &amp; cooler bags
+                </Text>
               </View>
-              <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>Help &amp; Support</Text>
-              <Text style={{ fontSize: 10, color: '#64748B', marginTop: 2 }}>24/7 Helpline &amp; WhatsApp</Text>
+              <Ionicons name="arrow-forward-circle" size={24} color="#2DD4BF" />
             </TouchableOpacity>
+          )}
 
-            {/* 6. Radar Refresh */}
+          {/* 3. Action Shortcuts Rows */}
+          <View style={{ gap: 8 }}>
+            {/* Today's Tasks */}
             <TouchableOpacity
               style={{
-                width: '48.5%',
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 12,
+                padding: 11,
+                borderRadius: 12,
                 backgroundColor: '#F8FAFC',
                 borderWidth: 1,
                 borderColor: '#E2E8F0',
-                borderRadius: 12,
-                padding: 12,
               }}
-              onPress={() => handleAction(onRefreshBroadcasts)}
+              onPress={() => handleAction(onOpenTodayCollections)}
             >
-              <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#475569', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
-                <Ionicons name="radio-outline" size={20} color="#FFFFFF" />
+              <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="calendar-outline" size={19} color="#2563EB" />
               </View>
-              <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>Scan Radar</Text>
-              <Text style={{ fontSize: 10, color: '#64748B', marginTop: 2 }}>Refresh nearby requests</Text>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>Today&apos;s Assigned Tasks</Text>
+                <Text style={{ fontSize: 11, color: '#64748B', marginTop: 1 }}>Check upcoming pickups and sample drops</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+            </TouchableOpacity>
+
+            {/* Earnings & Reports */}
+            {onOpenEarnings && (
+              <TouchableOpacity
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: 11,
+                  borderRadius: 12,
+                  backgroundColor: '#F8FAFC',
+                  borderWidth: 1,
+                  borderColor: '#E2E8F0',
+                }}
+                onPress={() => handleAction(onOpenEarnings)}
+              >
+                <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: '#F0FDFA', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="wallet-outline" size={19} color="#0D9488" />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>Daily Earnings &amp; Ledger</Text>
+                  <Text style={{ fontSize: 11, color: '#64748B', marginTop: 1 }}>Completed trip payouts &amp; cash collections</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+              </TouchableOpacity>
+            )}
+
+            {/* Collection Kits (Only if Active) */}
+            {isKitModuleActive && (
+              <TouchableOpacity
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: 11,
+                  borderRadius: 12,
+                  backgroundColor: '#F8FAFC',
+                  borderWidth: 1,
+                  borderColor: '#E2E8F0',
+                }}
+                onPress={() => handleAction(onOpenKitsAndSupplies)}
+              >
+                <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: '#FAF5FF', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="briefcase-outline" size={19} color="#9333EA" />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>My Collection Kits &amp; Stock</Text>
+                  <Text style={{ fontSize: 11, color: '#64748B', marginTop: 1 }}>Assigned test kits &amp; restock request</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+              </TouchableOpacity>
+            )}
+
+            {/* Emergency SOS & Admin Help Desk */}
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 12,
+                padding: 11,
+                borderRadius: 12,
+                backgroundColor: '#FEF2F2',
+                borderWidth: 1,
+                borderColor: '#FECACA',
+              }}
+              onPress={() => handleAction(onOpenHelpSupport)}
+            >
+              <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: '#DC2626', alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="headset" size={19} color="#FFFFFF" />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#991B1B' }}>Help &amp; Emergency Hotline</Text>
+                <Text style={{ fontSize: 11, color: '#B91C1C', marginTop: 1 }}>Direct call to LabSetu Central Operations Desk</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#DC2626" />
             </TouchableOpacity>
           </View>
         </TouchableOpacity>

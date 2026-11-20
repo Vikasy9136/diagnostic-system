@@ -494,16 +494,16 @@ export function BookingRequestsScreen({
           <Ionicons name="arrow-forward" size={19} color="#FFFFFF" />
         </TouchableOpacity>
 
-        {/* Admin-Assigned Zone & Live GPS Telemetry Bar (Read-Only Zone + Live GPS Sync) */}
+        {/* Live GPS Telemetry Bar & Operational Coverage Status */}
         <View style={styles.gpsTelemetryBar}>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.gpsTelemetryTitle} numberOfLines={1}>
-              📍 {riderFullAddress || (assignedAdminZone ? `${assignedAdminZone.name} (${assignedAdminZone.zoneCode})` : 'Active Service Zone')}
+              📍 {riderFullAddress || (assignedAdminZone ? `${assignedAdminZone.name}` : 'Current Location')}
             </Text>
             <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.gpsTelemetrySub}>
               {isOnline
-                ? `Live GPS Active • ${assignedAdminZone?.radiusKm || 5} km radar coverage • ${inRadiusCount} nearby open request(s)`
-                : 'Offline • Switch Online to receive live nearby pickup popups'}
+                ? `Live GPS Active • ${assignedAdminZone?.radiusKm || 5} km pickup radar • ${inRadiusCount} nearby order(s)`
+                : 'Offline • Switch Online to receive incoming pickup requests'}
             </Text>
             <View
               style={[
@@ -532,19 +532,17 @@ export function BookingRequestsScreen({
                   },
                 ]}
               >
-                {assignedAdminZone
-                  ? assignedAdminZone.isActive
-                    ? `Admin Zone: ${assignedAdminZone.zoneCode} (${assignedAdminZone.city})`
-                    : `Admin Zone Paused: ${assignedAdminZone.zoneCode}`
-                  : riderCoverage.covered
-                  ? `Active Area: ${riderCoverage.matchedZone?.zoneCode || ''} (${riderCoverage.matchedZone?.city || 'Live'})`
-                  : `Outside Pilot Zone (${riderCoverage.distanceToNearestKm} km away)`}
+                {assignedAdminZone && !assignedAdminZone.isActive
+                  ? '⚠️ Area Temporarily Inactive'
+                  : riderCoverage.covered || assignedAdminZone?.isActive
+                  ? '🟢 Operational Service Area • Ready for Pickups'
+                  : `⚠️ Outside Service Area (${riderCoverage.distanceToNearestKm || 2} km from hub)`}
               </Text>
             </View>
           </View>
           <TouchableOpacity style={styles.gpsPickerBtn} onPress={onOpenLocationPicker}>
             <Text maxFontSizeMultiplier={COMPACT_TEXT_SCALE} style={styles.gpsPickerBtnText}>
-              Zone &amp; GPS
+              GPS Sync
             </Text>
           </TouchableOpacity>
         </View>

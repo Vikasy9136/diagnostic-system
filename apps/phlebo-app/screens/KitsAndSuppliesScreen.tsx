@@ -26,18 +26,17 @@ export interface KitsAndSuppliesScreenProps {
 
 type TabFilter = 'all' | 'kits' | 'supplies' | 'low';
 
-const DEFAULT_RAW_SUPPLIES = [
-  { id: 'SUP-EDTA', name: 'EDTA Vacutainer Tubes (Lavender)', code: 'TUBE-EDTA-3ML', category: 'Tubes', onHand: 14, minStock: 5, color: '#9333EA', icon: 'test-tube' },
-  { id: 'SUP-SST', name: 'Serum Clot SST Tubes (Gold / Red)', code: 'TUBE-SST-5ML', category: 'Tubes', onHand: 12, minStock: 5, color: '#D97706', icon: 'test-tube' },
-  { id: 'SUP-FLU', name: 'Fluoride Glucose Tubes (Grey)', code: 'TUBE-FLU-2ML', category: 'Tubes', onHand: 8, minStock: 4, color: '#64748B', icon: 'test-tube' },
-  { id: 'SUP-CIT', name: 'Sodium Citrate Coagulation (Blue)', code: 'TUBE-CIT-2.7ML', category: 'Tubes', onHand: 6, minStock: 3, color: '#2563EB', icon: 'test-tube' },
-  { id: 'SUP-NDL', name: 'Sterile Multi-Sample Needles (22G)', code: 'NDL-22G-100', category: 'Needles', onHand: 24, minStock: 10, color: '#0D9488', icon: 'needle' },
-  { id: 'SUP-SWB', name: '70% Isopropyl Alcohol Swabs', code: 'SWB-ISO-200', category: 'Hygiene', onHand: 45, minStock: 15, color: '#0284C7', icon: 'water-outline' },
-  { id: 'SUP-TRN', name: 'Quick-Release Elastic Tourniquet', code: 'TRN-ELAST-01', category: 'Gear', onHand: 2, minStock: 1, color: '#E11D48', icon: 'band-aid' },
-  { id: 'SUP-BAG', name: 'Biohazard Zip Transport Bags', code: 'BAG-BIO-MED', category: 'Packing', onHand: 18, minStock: 5, color: '#DC2626', icon: 'archive-outline' },
-  { id: 'SUP-GEL', name: 'Conditioned Chiller Ice Gel Packs', code: 'GEL-ICE-400G', category: 'Cold-Chain', onHand: 4, minStock: 2, color: '#06B6D4', icon: 'snowflake' },
-  { id: 'SUP-GLV', name: 'Nitrile Examination Gloves (Medium)', code: 'GLV-NIT-M', category: 'PPE', onHand: 30, minStock: 10, color: '#4F46E5', icon: 'hand-front-left-outline' },
-];
+// Raw supplies dynamically derived from real allocated kit contents
+interface DynamicSupplyItem {
+  id: string;
+  name: string;
+  code: string;
+  category: string;
+  onHand: number;
+  minStock: number;
+  color: string;
+  icon: string;
+}
 
 export function KitsAndSuppliesScreen({
   allocations,
@@ -67,6 +66,37 @@ export function KitsAndSuppliesScreen({
       a.quantityOnHand ?? (a.quantityAllocated - (a.quantityConsumed || 0));
     return onHand <= 3;
   }).length;
+
+  // Dynamically extract real components from allocated kits
+  const dynamicSupplies: DynamicSupplyItem[] = useMemo(() => {
+    const supplyMap: Record<string, DynamicSupplyItem> = {};
+
+    allocations.forEach((alloc) => {
+      const items = (alloc as any).items || (alloc as any).components || [];
+      if (Array.isArray(items)) {
+        items.forEach((it: any) => {
+          const key = it.code || it.name || it.id;
+          if (!key) return;
+          if (!supplyMap[key]) {
+            supplyMap[key] = {
+              id: key,
+              name: it.name || it.tubeType || 'Diagnostic Specimen Tube',
+              code: it.code || key,
+              category: it.category || 'Tubes & Supplies',
+              onHand: it.quantityOnHand ?? it.quantity ?? 0,
+              minStock: it.minStock || 5,
+              color: it.color || '#0D9488',
+              icon: it.icon || 'test-tube',
+            };
+          } else {
+            supplyMap[key].onHand += it.quantityOnHand ?? it.quantity ?? 0;
+          }
+        });
+      }
+    });
+
+    return Object.values(supplyMap);
+  }, [allocations]);
 
   const handleRestock = async (kitCode?: string, kitName?: string) => {
     setRequestingCode(kitCode || 'ALL');
@@ -104,7 +134,7 @@ export function KitsAndSuppliesScreen({
   }, [allocations, activeTab, searchQuery]);
 
   const filteredSupplies = useMemo(() => {
-    return DEFAULT_RAW_SUPPLIES.filter((sup) => {
+    return dynamicSupplies.filter((sup) => {
       if (activeTab === 'kits') return false;
       if (activeTab === 'low' && sup.onHand > sup.minStock) return false;
 
@@ -331,6 +361,28 @@ export function KitsAndSuppliesScreen({
                 );
               })}
             </View>
+          </View>
+        )}
+
+        {filteredKits.length === 0 && filteredSupplies.length === 0 && (
+          <View
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: 14,
+              padding: 24,
+              alignItems: 'center',
+              borderWidth: 1,
+              borderColor: '#E2E8F0',
+              marginBottom: 16,
+            }}
+          >
+            <Ionicons name="briefcase-outline" size={44} color="#94A3B8" style={{ marginBottom: 10 }} />
+            <Text style={{ fontSize: 15, fontWeight: '700', color: '#0F172A', marginBottom: 4 }}>
+              No Kit Batches Allocated Yet
+            </Text>
+            <Text style={{ fontSize: 12, color: '#64748B', textAlign: 'center', lineHeight: 18, maxWidth: 300 }}>
+              Central Supply Warehouse has not assigned collection kit batches to your account yet. Once allocated by Admin, they will sync automatically.
+            </Text>
           </View>
         )}
 

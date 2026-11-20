@@ -32,6 +32,7 @@ interface PhleboDrawerProps {
   onOpenFloatingSettings: () => void;
   onOpenTrainingSops: () => void;
   onOpenMySupplies?: () => void;
+  isKitModuleActive?: boolean;
   onOpenHelpSupport: () => void;
   onLogout: () => void;
 }
@@ -51,6 +52,7 @@ export function PhleboDrawer({
   onOpenFloatingSettings,
   onOpenTrainingSops,
   onOpenMySupplies,
+  isKitModuleActive = false,
   onOpenHelpSupport,
   onLogout,
 }: PhleboDrawerProps) {
@@ -147,15 +149,19 @@ export function PhleboDrawer({
           onOpenTrainingSops();
         },
       },
-      {
-        key: 'supplies',
-        label: 'My Collection Kits & Supplies',
-        icon: 'briefcase-outline',
-        onPress: () => {
-          onClose();
-          onOpenMySupplies?.();
-        },
-      },
+      ...(isKitModuleActive
+        ? [
+            {
+              key: 'supplies' as const,
+              label: 'My Collection Kits & Supplies',
+              icon: 'briefcase-outline' as const,
+              onPress: () => {
+                onClose();
+                onOpenMySupplies?.();
+              },
+            },
+          ]
+        : []),
       {
         key: 'support',
         label: 'Help & Support',

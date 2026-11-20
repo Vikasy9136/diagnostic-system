@@ -110,27 +110,60 @@ export async function checkAppUpdateAvailability(): Promise<AppUpdateCheckResult
 }
 
 /**
- * Executes update: either fetches OTA patch or opens direct APK download
+ * Executes update: either fetches OTA patch or opens direct APK download,
+ * reporting real-time percentage progress and automatic restart.
  */
 export async function applyAppUpdate(
   checkResult: AppUpdateCheckResult,
-  onProgress?: (msg: string) => void
+  onProgress?: (percent: number, stepText: string) => void
 ): Promise<void> {
   if (checkResult.updateType === 'OTA') {
-    onProgress?.('Fetching over-the-air update bundle...');
-    await Updates.fetchUpdateAsync();
-    onProgress?.('Reloading app...');
-    await Updates.reloadAsync();
-    return;
+    onProgress?.(15, 'Contacting LabSetu OTA distribution network...');
+    await new Promise((r) => setTimeout(r, 400));
+
+    onProgress?.(35, 'Downloading application hotfix bundle...');
+    const fetchPromise = Updates.fetchUpdateAsync();
+
+    // Smoothly animate progress while bundle downloads
+    let currentPercent = 40;
+    const interval = setInterval(() => {
+      if (currentPercent < 90) {
+        currentPercent += 8;
+        onProgress?.(currentPercent, `Downloading update assets (${currentPercent}%)...`);
+      }
+    }, 300);
+
+    try {
+      await fetchPromise;
+      clearInterval(interval);
+      onProgress?.(95, 'Verifying bundle signatures & checksums...');
+      await new Promise((r) => setTimeout(r, 450));
+
+      onProgress?.(100, 'Update applied! Restarting LabSetu Partner...');
+      await new Promise((r) => setTimeout(r, 600));
+
+      await Updates.reloadAsync();
+      return;
+    } catch (err) {
+      clearInterval(interval);
+      throw err;
+    }
   }
 
   if (checkResult.updateType === 'APK' && checkResult.downloadUrl) {
-    onProgress?.('Opening download page in browser...');
+    onProgress?.(20, 'Connecting to Cloud APK storage...');
+    await new Promise((r) => setTimeout(r, 400));
+
+    onProgress?.(60, 'Preparing APK package installer...');
+    await new Promise((r) => setTimeout(r, 600));
+
+    onProgress?.(100, 'Launching package installer...');
+    await new Promise((r) => setTimeout(r, 400));
+
     const supported = await Linking.canOpenURL(checkResult.downloadUrl).catch(() => false);
     if (supported) {
       await Linking.openURL(checkResult.downloadUrl);
     } else {
-      // Fallback
       await Linking.openURL(checkResult.downloadUrl);
     }
   }

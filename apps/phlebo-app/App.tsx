@@ -32,7 +32,9 @@ import {
   checkAppUpdateAvailability,
   applyAppUpdate,
   CURRENT_APP_VERSION,
+  type AppUpdateCheckResult,
 } from './services/appUpdateService';
+import { AppUpdateModal } from './components/AppUpdateModal';
 import * as TaskManager from 'expo-task-manager';
 import {
   calculateHaversineDistanceKm,
@@ -429,6 +431,9 @@ function PhleboAppContent() {
   const [gpsSourceLabel, setGpsSourceLabel] = useState('Syncing Admin Zone...');
   const [riderFullAddress, setRiderFullAddress] = useState<string>('');
   const [showQuickActionsModal, setShowQuickActionsModal] = useState(false);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [pendingAppUpdate, setPendingAppUpdate] = useState<AppUpdateCheckResult | null>(null);
+  const [systemModulesConfig, setSystemModulesConfig] = useState<{ kitModuleEnabled?: boolean }>({});
   const [showLocationPickerModal, setShowLocationPickerModal] = useState(false);
   const manualLiveGpsSyncedRef = useRef(false);
   const [dismissedBroadcastIds, setDismissedBroadcastIds] = useState<string[]>([]);
@@ -516,42 +521,8 @@ function PhleboAppContent() {
         const result = await checkAppUpdateAvailability();
 
         if (result.hasUpdate) {
-          if (result.updateType === 'OTA') {
-            showToast({
-              variant: 'INFO',
-              title: 'Downloading update...',
-              subtitle: 'Please wait while new app bundle is fetched.',
-            });
-            await applyAppUpdate(result);
-            showDynamicAlert({
-              variant: 'confirm',
-              title: '🚀 New Update Ready',
-              message:
-                'A new version of LabSetu Partner has been downloaded. Restart the app now to apply changes?',
-              confirmLabel: 'Restart & Update Now',
-              cancelLabel: 'Later',
-              onConfirm: async () => {
-                try {
-                  await Updates.reloadAsync();
-                } catch {
-                  // Reload fallback
-                }
-              },
-            });
-          } else if (result.updateType === 'APK') {
-            showDynamicAlert({
-              variant: 'confirm',
-              title: `🚀 Update Available (${result.latestVersion})`,
-              message: `A new version of LabSetu Partner APK is available to install.\n\nWhat's New:\n${result.releaseNotes || 'New floating quick-action menu, notification bar alerts, and audio fixes.'}\n\nDownload and install now?`,
-              confirmLabel: 'Download & Install',
-              cancelLabel: 'Later',
-              onConfirm: () => {
-                void applyAppUpdate(result, (msg) => {
-                  showToast({ variant: 'INFO', title: 'Opening Update', subtitle: msg });
-                });
-              },
-            });
-          }
+          setPendingAppUpdate(result);
+          setShowUpdateModal(true);
         } else if (interactive) {
           showToast({
             variant: 'SUCCESS',
@@ -904,6 +875,21 @@ function PhleboAppContent() {
       )
     );
 
+    // 8. Live System Modules Feature Flags (e.g. kitModuleEnabled)
+    unsubs.push(
+      onSnapshot(
+        doc(db, 'system_config', 'modules'),
+        (snap) => {
+          if (snap.exists()) {
+            setSystemModulesConfig(snap.data() as any);
+          }
+        },
+        () => {
+          setSystemModulesConfig({});
+        }
+      )
+    );
+
     return () => unsubs.forEach((u) => u());
   }, [session?.firebaseUser, myPhleboId, phleboEmail]);
 
@@ -911,6 +897,12 @@ function PhleboAppContent() {
   const displayCourierId =
     myPhleboProfile?.userCode || session?.profile.userCode || effectivePhleboId || 'ID Pending';
   const unreadNotifCount = notifications.filter((n) => !n.read).length;
+
+  const isKitModuleActive = Boolean(
+    systemModulesConfig?.kitModuleEnabled ||
+    (myPhleboProfile as any)?.kitModuleEnabled ||
+    kitAllocations.length > 0
+  );
 
   const handleMarkNotificationRead = async (id: string) => {
     try {
@@ -4186,6 +4178,7 @@ function PhleboAppContent() {
                 payoutBankAccount={payoutBankAccount}
                 payoutIfsc={payoutIfsc}
                 savingPayoutProfile={savingPayoutProfile}
+                isKitModuleActive={isKitModuleActive}
                 onBack={handleNavigateBackHome}
                 onShiftUpdate={(next) => void handleShiftUpdate(next)}
                 onRequestBackgroundAlertPermission={() =>
@@ -4347,11 +4340,24 @@ function PhleboAppContent() {
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.centerFabButton}
+              style={[
+                styles.centerFabButton,
+                {
+                  backgroundColor: '#061D42',
+                  borderWidth: 2,
+                  borderColor: '#2DD4BF',
+                  shadowColor: '#0D9488',
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 0.35,
+                  shadowRadius: 8,
+                  elevation: 6,
+                },
+              ]}
               activeOpacity={0.85}
               onPress={() => setShowQuickActionsModal(true)}
+              accessibilityLabel="Quick Field Actions"
             >
-              <Ionicons name="add" size={28} color="#FFFFFF" />
+              <Ionicons name="flash" size={24} color="#2DD4BF" />
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -4438,6 +4444,7 @@ function PhleboAppContent() {
         onOpenFloatingSettings={() => setFloatingSettingsVisible(true)}
         onOpenTrainingSops={handleOpenTrainingSops}
         onOpenMySupplies={handleOpenMySupplies}
+        isKitModuleActive={isKitModuleActive}
         onOpenHelpSupport={handleOpenHelpSupport}
         onLogout={handleSignOut}
       />
@@ -4445,14 +4452,18 @@ function PhleboAppContent() {
       <PhleboQuickActionsModal
         visible={showQuickActionsModal}
         onClose={() => setShowQuickActionsModal(false)}
+        dutyStatus={dutyStatus}
+        onShiftUpdate={(next) => void handleShiftUpdate(next)}
         onOpenScanner={() => {
           setCameraStatusText('Align kit or tube barcode within green frame');
           setCameraModal({ mode: 'BARCODE', specimenId: 'QUICK_SCAN' });
         }}
         onOpenKitsAndSupplies={handleOpenMySupplies}
+        isKitModuleActive={isKitModuleActive}
         onOpenTrainingSops={handleOpenTrainingSops}
         onOpenHelpSupport={handleOpenHelpSupport}
         onOpenTodayCollections={handleOpenTodayCollections}
+        onOpenEarnings={() => setBottomTab('earnings')}
         onRefreshBroadcasts={() => {
           const firstNearby = openPoolWithDistance.find((x) => x.inBroadcastRadius);
           if (firstNearby) {
@@ -4540,6 +4551,17 @@ function PhleboAppContent() {
       />
 
       <ToastNotificationBanner toast={toastState} onDismiss={handleDismissToast} />
+
+      <AppUpdateModal
+        visible={showUpdateModal}
+        updateData={pendingAppUpdate}
+        onClose={() => setShowUpdateModal(false)}
+        onStartUpdate={async (onProgress) => {
+          if (pendingAppUpdate) {
+            await applyAppUpdate(pendingAppUpdate, onProgress);
+          }
+        }}
+      />
     </SafeAreaView>
   );
 }
