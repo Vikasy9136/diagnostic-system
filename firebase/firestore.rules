@@ -323,7 +323,8 @@ service cloud.firestore {
       // Field Phlebotomists / Couriers read assigned orders or open dispatch pool, accept/collect/deliver
       allow read: if isAuthenticated() && isAccountActive()
         && (
-          resource.data.status == 'READY_FOR_PICKUP'
+          isPhlebotomist()
+          || resource.data.status in ['READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO', 'ACCEPTED', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED_TO_LAB']
           || resource.data.get('phlebotomistId', '') == request.auth.uid
           || (getPhlebotomistId() != null && resource.data.get('phlebotomistId', '') == getPhlebotomistId())
           || (normalizedEmail() != '' && (

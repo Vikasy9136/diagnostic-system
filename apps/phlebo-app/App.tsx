@@ -927,7 +927,7 @@ function PhleboAppContent() {
     return () => unsubs.forEach((u) => u());
   }, [session?.firebaseUser, myPhleboId, phleboEmail]);
 
-  const effectivePhleboId = myPhleboId || myPhleboProfile?.id || '';
+  const effectivePhleboId = myPhleboId || myPhleboProfile?.id || session?.firebaseUser?.uid || '';
   const displayCourierId =
     myPhleboProfile?.userCode || session?.profile.userCode || effectivePhleboId || 'ID Pending';
   const unreadNotifCount = notifications.filter((n) => !n.read).length;
@@ -1306,33 +1306,99 @@ function PhleboAppContent() {
     zonesLoaded,
   ]);
 
-  // Real-time browser GPS watch while On Duty
+  // Real-time GPS watch while On Duty (Native Android/iOS + Web)
   useEffect(() => {
-    if (!session || !isOnline || Platform.OS !== 'web') return;
-    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+    if (!session || !isOnline) return;
 
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        setRiderLocation({
-          latitude: Number(pos.coords.latitude.toFixed(5)),
-          longitude: Number(pos.coords.longitude.toFixed(5)),
-          speedKmph:
-            typeof pos.coords.speed === 'number' && pos.coords.speed >= 0
-              ? Math.round(pos.coords.speed * 3.6)
-              : undefined,
-          accuracyMeters: Math.round(pos.coords.accuracy || 0),
-          updatedAt: new Date().toISOString(),
-        });
-        setGpsSourceLabel('GPS Live');
-      },
-      () => {
-        // Keep manual / profile coordinates gracefully if GPS denied
-      },
-      { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 }
-    );
+    let isCancelled = false;
+    let nativeWatchSub: Location.LocationSubscription | null = null;
+    let webWatchId: number | null = null;
+
+    if (Platform.OS === 'web') {
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+        webWatchId = navigator.geolocation.watchPosition(
+          (pos) => {
+            if (isCancelled) return;
+            setRiderLocation({
+              latitude: Number(pos.coords.latitude.toFixed(5)),
+              longitude: Number(pos.coords.longitude.toFixed(5)),
+              speedKmph:
+                typeof pos.coords.speed === 'number' && pos.coords.speed >= 0
+                  ? Math.round(pos.coords.speed * 3.6)
+                  : undefined,
+              accuracyMeters: Math.round(pos.coords.accuracy || 0),
+              updatedAt: new Date().toISOString(),
+            });
+            setGpsSourceLabel('Device GPS Live');
+          },
+          () => {
+            // Keep manual / profile coordinates gracefully if GPS denied
+          },
+          { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 }
+        );
+      }
+    } else {
+      // Native Android / iOS Device GPS
+      void (async () => {
+        try {
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status !== 'granted' || isCancelled) return;
+
+          // 1. Immediate position fix
+          const instant = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          }).catch(() => null);
+
+          if (instant?.coords && !isCancelled) {
+            setRiderLocation({
+              latitude: Number(instant.coords.latitude.toFixed(5)),
+              longitude: Number(instant.coords.longitude.toFixed(5)),
+              speedKmph:
+                typeof instant.coords.speed === 'number' && instant.coords.speed >= 0
+                  ? Math.round(instant.coords.speed * 3.6)
+                  : undefined,
+              accuracyMeters: Math.round(instant.coords.accuracy || 0),
+              updatedAt: new Date().toISOString(),
+            });
+            setGpsSourceLabel('Device GPS Live');
+          }
+
+          // 2. Continuous position watch
+          nativeWatchSub = await Location.watchPositionAsync(
+            {
+              accuracy: Location.Accuracy.Balanced,
+              timeInterval: 4000,
+              distanceInterval: 5,
+            },
+            (loc) => {
+              if (isCancelled || !loc?.coords) return;
+              setRiderLocation({
+                latitude: Number(loc.coords.latitude.toFixed(5)),
+                longitude: Number(loc.coords.longitude.toFixed(5)),
+                speedKmph:
+                  typeof loc.coords.speed === 'number' && loc.coords.speed >= 0
+                    ? Math.round(loc.coords.speed * 3.6)
+                    : undefined,
+                accuracyMeters: Math.round(loc.coords.accuracy || 0),
+                updatedAt: new Date().toISOString(),
+              });
+              setGpsSourceLabel('Device GPS Live');
+            }
+          );
+        } catch (err) {
+          console.warn('Native GPS watcher error:', err);
+        }
+      })();
+    }
 
     return () => {
-      navigator.geolocation.clearWatch(watchId);
+      isCancelled = true;
+      if (webWatchId !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
+        navigator.geolocation.clearWatch(webWatchId);
+      }
+      if (nativeWatchSub) {
+        nativeWatchSub.remove();
+      }
     };
   }, [session, isOnline]);
 
@@ -1596,22 +1662,43 @@ function PhleboAppContent() {
   const openPoolWithDistance = useMemo<OpenPoolEntry[]>(() => {
     return openPoolOrders
       .map((order) => {
-        const distFromRiderKm = calculateHaversineDistanceKm(
-          riderLocation.latitude,
-          riderLocation.longitude,
-          order.pickupLocation?.latitude ?? riderLocation.latitude,
-          order.pickupLocation?.longitude ?? riderLocation.longitude
+        const hasOrderCoords =
+          typeof order.pickupLocation?.latitude === 'number' &&
+          typeof order.pickupLocation?.longitude === 'number' &&
+          (Math.abs(order.pickupLocation.latitude) > 0.01 || Math.abs(order.pickupLocation.longitude) > 0.01);
+
+        const distFromRiderKm = hasOrderCoords
+          ? calculateHaversineDistanceKm(
+              riderLocation.latitude,
+              riderLocation.longitude,
+              order.pickupLocation.latitude,
+              order.pickupLocation.longitude
+            )
+          : 0;
+
+        const maxRadiusKm = Math.max(order.broadcastRadiusKm || 0, defaultBroadcastKm, 25);
+
+        // Fallback checks: If rider is in the same zone or pincode matches, consider in radius
+        const isPinMatch = Boolean(
+          order.pickupLocation?.pincode &&
+          assignedAdminZone?.pincodes?.includes(order.pickupLocation.pincode)
         );
-        const maxRadiusKm = Math.max(order.broadcastRadiusKm || 0, defaultBroadcastKm);
+        const isZoneMatch = Boolean(
+          order.serviceZoneId &&
+          (order.serviceZoneId === assignedAdminZone?.id || order.serviceZoneId === 'ZONE-PILOT-EXPANSION')
+        );
+
+        const inBroadcastRadius = !hasOrderCoords || distFromRiderKm <= maxRadiusKm || isPinMatch || isZoneMatch;
+
         return {
           order,
-          distFromRiderKm,
-          inBroadcastRadius: distFromRiderKm <= maxRadiusKm,
+          distFromRiderKm: Number(distFromRiderKm.toFixed(1)),
+          inBroadcastRadius,
           maxRadiusKm,
         };
       })
       .sort((a, b) => (a.distFromRiderKm ?? 999) - (b.distFromRiderKm ?? 999));
-  }, [openPoolOrders, riderLocation.latitude, riderLocation.longitude, defaultBroadcastKm]);
+  }, [openPoolOrders, riderLocation.latitude, riderLocation.longitude, defaultBroadcastKm, assignedAdminZone]);
 
   const riderCoverage = useMemo(
     () =>
@@ -1625,7 +1712,10 @@ function PhleboAppContent() {
 
   // Real-time incoming 1-5km pickup alert watcher (Direct Screen Alert + Continuous Ringing + Background Push)
   useEffect(() => {
-    const currentPoolIds = new Set(openPoolWithDistance.map((x) => x.order.id));
+    const currentPoolIds = new Set([
+      ...openPoolWithDistance.map((x) => x.order.id),
+      ...activeAssignedOrders.filter((o) => o.status === OrderStatus.ASSIGNED_TO_PHLEBO).map((o) => o.id),
+    ]);
 
     // 1. Immediate sound & modal suppression if the active ringing pickup was claimed by another rider, cancelled, or expired
     if (activeRingingOrderIdRef.current && !currentPoolIds.has(activeRingingOrderIdRef.current)) {
@@ -1665,14 +1755,31 @@ function PhleboAppContent() {
       }
     }
 
-    if (!session || !isOnline || !effectivePhleboId) return;
+    if (!session || !isOnline) return;
 
     const nearby = openPoolWithDistance.filter((x) => x.inBroadcastRadius);
 
+    // Also include direct assigned orders awaiting acceptance
+    const unacknowledgedAssigned = activeAssignedOrders
+      .filter((o) => o.status === OrderStatus.ASSIGNED_TO_PHLEBO)
+      .map((order) => ({
+        order,
+        distFromRiderKm: calculateHaversineDistanceKm(
+          riderLocation.latitude,
+          riderLocation.longitude,
+          order.pickupLocation?.latitude ?? riderLocation.latitude,
+          order.pickupLocation?.longitude ?? riderLocation.longitude
+        ),
+        inBroadcastRadius: true,
+        maxRadiusKm: 50,
+      }));
+
+    const allCandidates = [...nearby, ...unacknowledgedAssigned];
+
     // 2. Price Hike or Search Retry detection: if lab bumped incentive or retried search, re-arm alert (unless phlebo already declined)
-    for (const x of nearby) {
+    for (const x of allCandidates) {
       const oId = x.order.id;
-      if (declinedOrderIds.includes(oId) || x.order.declinedPhleboIds?.includes(effectivePhleboId)) {
+      if (declinedOrderIds.includes(oId) || (effectivePhleboId && x.order.declinedPhleboIds?.includes(effectivePhleboId))) {
         continue;
       }
       const prevHike = seenHikeMapRef.current.get(oId) ?? 0;
@@ -1688,11 +1795,11 @@ function PhleboAppContent() {
       }
     }
 
-    const newlyArrived = nearby.filter(
+    const newlyArrived = allCandidates.filter(
       (x) =>
         !alertedBroadcastIdsRef.current.has(x.order.id) &&
         !declinedOrderIds.includes(x.order.id) &&
-        !x.order.declinedPhleboIds?.includes(effectivePhleboId)
+        (!effectivePhleboId || !x.order.declinedPhleboIds?.includes(effectivePhleboId))
     );
     if (newlyArrived.length === 0) return;
 

@@ -1565,8 +1565,8 @@ export function SmallLabNewBookingTab({
                         ? 'Opening Checkout...'
                         : 'Dispatching Booking...'
                       : payImmediatelyOnBook
-                      ? `💳 Pay ${formatInr(resolvedDropInfo.split.grossAmountInr)} & Dispatch Booking →`
-                      : '🚚 Dispatch Booking (Pay Later Before Drop) →'}
+                        ? `💳 Pay ${formatInr(resolvedDropInfo.split.grossAmountInr)} & Dispatch Booking →`
+                        : '🚚 Dispatch Booking (Pay Later Before Drop) →'}
                   </button>
                 </div>
               </div>
