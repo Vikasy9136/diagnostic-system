@@ -914,11 +914,16 @@ class FloatingDispatchOverlayService : Service() {
       scaleType = ImageView.ScaleType.FIT_CENTER
       val pad = dp(7)
       setPadding(pad, pad, pad, pad)
-      try {
-        val appIconDrawable = packageManager.getApplicationIcon(packageName)
-        setImageDrawable(appIconDrawable)
-      } catch (_: Exception) {
-        setImageResource(android.R.drawable.sym_def_app_icon)
+      val resId = resources.getIdentifier("phlebo_bubble_logo", "drawable", packageName)
+      if (resId != 0) {
+        setImageResource(resId)
+      } else {
+        try {
+          val appIconDrawable = packageManager.getApplicationIcon(packageName)
+          setImageDrawable(appIconDrawable)
+        } catch (_: Exception) {
+          setImageResource(android.R.drawable.sym_def_app_icon)
+        }
       }
     }
     val logoLp = FrameLayout.LayoutParams(
@@ -1193,9 +1198,14 @@ class FloatingDispatchOverlayService : Service() {
       scaleType = ImageView.ScaleType.FIT_CENTER
       val p = dp(4)
       setPadding(p, p, p, p)
-      try {
-        setImageDrawable(packageManager.getApplicationIcon(packageName))
-      } catch (_: Exception) {}
+      val resId = resources.getIdentifier("phlebo_bubble_logo", "drawable", packageName)
+      if (resId != 0) {
+        setImageResource(resId)
+      } else {
+        try {
+          setImageDrawable(packageManager.getApplicationIcon(packageName))
+        } catch (_: Exception) {}
+      }
     }
     appIconCard.addView(
       headerAppLogo,
@@ -2185,6 +2195,14 @@ module.exports = function withFloatingDispatchOverlay(config) {
       }
       if (fs.existsSync(notificationAlertSrc)) {
         fs.copyFileSync(notificationAlertSrc, path.join(rawResPath, 'notification_alert.wav'));
+      }
+
+      // Copy brand logo to Android drawable resources for native FloatingDispatchOverlayService
+      const drawableResPath = path.join(projectRoot, 'app', 'src', 'main', 'res', 'drawable');
+      fs.mkdirSync(drawableResPath, { recursive: true });
+      const logoSrc = path.join(__dirname, '..', 'assets', 'icon.png');
+      if (fs.existsSync(logoSrc)) {
+        fs.copyFileSync(logoSrc, path.join(drawableResPath, 'phlebo_bubble_logo.png'));
       }
 
       return mod;

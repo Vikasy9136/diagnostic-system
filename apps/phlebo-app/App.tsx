@@ -518,7 +518,7 @@ function PhleboAppContent() {
           showToast({
             variant: 'INFO',
             title: 'Checking for updates...',
-            subtitle: 'Connecting to LabSetu release servers.',
+            subtitle: 'Checking for the latest app version.',
           });
         }
 
@@ -531,7 +531,7 @@ function PhleboAppContent() {
           showToast({
             variant: 'SUCCESS',
             title: 'App is Up to Date',
-            subtitle: `You are running the latest LabSetu Partner release (${CURRENT_APP_VERSION}).`,
+            subtitle: `You are running the latest version (${CURRENT_APP_VERSION}).`,
           });
         }
       } catch (err: any) {
@@ -4032,7 +4032,7 @@ function PhleboAppContent() {
               style={[styles.ctaButton, { width: '100%' }]}
               onPress={() => setBottomTab('profile')}
             >
-              <Text style={styles.ctaButtonText}>View Payout Account &amp; Ledger</Text>
+              <Text style={styles.ctaButtonText}>View Bank Account &amp; Payouts</Text>
             </TouchableOpacity>
           </View>
         </View>

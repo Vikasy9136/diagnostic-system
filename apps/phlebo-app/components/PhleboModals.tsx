@@ -1989,8 +1989,8 @@ export function PhleboQuickActionsModal({
                   <Ionicons name="wallet-outline" size={19} color="#0D9488" />
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>Daily Earnings &amp; Ledger</Text>
-                  <Text style={{ fontSize: 11, color: '#64748B', marginTop: 1 }}>Completed trip payouts &amp; cash collections</Text>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>Daily Earnings &amp; Trips</Text>
+                  <Text style={{ fontSize: 11, color: '#64748B', marginTop: 1 }}>Completed trip payouts &amp; earnings history</Text>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
               </TouchableOpacity>

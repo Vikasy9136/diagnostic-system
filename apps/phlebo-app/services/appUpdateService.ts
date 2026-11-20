@@ -118,10 +118,10 @@ export async function applyAppUpdate(
   onProgress?: (percent: number, stepText: string) => void
 ): Promise<void> {
   if (checkResult.updateType === 'OTA') {
-    onProgress?.(15, 'Contacting LabSetu OTA distribution network...');
+    onProgress?.(15, 'Connecting to update server...');
     await new Promise((r) => setTimeout(r, 400));
 
-    onProgress?.(35, 'Downloading application hotfix bundle...');
+    onProgress?.(35, 'Downloading update...');
     const fetchPromise = Updates.fetchUpdateAsync();
 
     // Smoothly animate progress while bundle downloads
@@ -129,17 +129,17 @@ export async function applyAppUpdate(
     const interval = setInterval(() => {
       if (currentPercent < 90) {
         currentPercent += 8;
-        onProgress?.(currentPercent, `Downloading update assets (${currentPercent}%)...`);
+        onProgress?.(currentPercent, `Downloading update (${currentPercent}%)...`);
       }
     }, 300);
 
     try {
       await fetchPromise;
       clearInterval(interval);
-      onProgress?.(95, 'Verifying bundle signatures & checksums...');
+      onProgress?.(95, 'Installing update...');
       await new Promise((r) => setTimeout(r, 450));
 
-      onProgress?.(100, 'Update applied! Restarting LabSetu Partner...');
+      onProgress?.(100, 'Update completed! Restarting app...');
       await new Promise((r) => setTimeout(r, 600));
 
       await Updates.reloadAsync();
@@ -151,13 +151,13 @@ export async function applyAppUpdate(
   }
 
   if (checkResult.updateType === 'APK' && checkResult.downloadUrl) {
-    onProgress?.(20, 'Connecting to Cloud APK storage...');
+    onProgress?.(20, 'Connecting to server...');
     await new Promise((r) => setTimeout(r, 400));
 
-    onProgress?.(60, 'Preparing APK package installer...');
+    onProgress?.(60, 'Preparing update package...');
     await new Promise((r) => setTimeout(r, 600));
 
-    onProgress?.(100, 'Launching package installer...');
+    onProgress?.(100, 'Opening update installer...');
     await new Promise((r) => setTimeout(r, 400));
 
     const supported = await Linking.canOpenURL(checkResult.downloadUrl).catch(() => false);

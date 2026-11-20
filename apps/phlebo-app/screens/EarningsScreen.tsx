@@ -217,15 +217,15 @@ export function EarningsScreen({
         </View>
 
         <Text style={[styles.sectionHeaderTitle, { marginTop: 12, marginBottom: 10 }]}>
-          Trip Settlement Ledger ({earningRows.length})
+          Trip History ({earningRows.length})
         </Text>
 
         {earningRows.length === 0 ? (
           <View style={styles.emptyBox}>
             <Ionicons name="receipt-outline" size={32} color={BRAND_COLORS.tealPrimary} />
-            <Text style={[styles.emptyTitle, { marginTop: 8 }]}>No Courier Payouts Yet</Text>
+            <Text style={[styles.emptyTitle, { marginTop: 8 }]}>No Completed Trips Yet</Text>
             <Text style={styles.emptySub}>
-              Claim and deliver sample orders to see live settlement rows.
+              Accept and deliver sample orders to see your trip history and earnings.
             </Text>
           </View>
         ) : (

@@ -10,7 +10,6 @@ import {
 } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
-import { BRAND_COLORS } from './LabSetuBrand';
 import { type AppUpdateCheckResult } from '../services/appUpdateService';
 
 interface AppUpdateModalProps {
@@ -28,10 +27,10 @@ export function AppUpdateModal({
 }: AppUpdateModalProps) {
   const [downloading, setDownloading] = useState(false);
   const [downloadPercent, setDownloadPercent] = useState(0);
-  const [downloadStepText, setDownloadStepText] = useState('Connecting to LabSetu release servers...');
+  const [downloadStepText, setDownloadStepText] = useState('Connecting to update server...');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Rotation animation for the spinning circle ring
+  // Rotation animation for the circular spinner
   const spinAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -51,8 +50,8 @@ export function AppUpdateModal({
 
   if (!visible || !updateData) return null;
 
-  const radius = 54;
-  const strokeWidth = 8;
+  const radius = 48;
+  const strokeWidth = 7;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (circumference * downloadPercent) / 100;
 
@@ -74,7 +73,7 @@ export function AppUpdateModal({
       });
     } catch (err: any) {
       setDownloading(false);
-      setErrorMsg(err?.message || 'Failed to complete update download. Please retry.');
+      setErrorMsg(err?.message || 'Update failed to download. Please check your internet and try again.');
     }
   };
 
@@ -82,163 +81,168 @@ export function AppUpdateModal({
 
   return (
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent>
-      <View style={modalStyles.backdrop}>
-        <View style={modalStyles.card}>
-          {/* Header Strip */}
-          <View style={modalStyles.header}>
-            <View style={modalStyles.headerIcon}>
-              <Ionicons name="rocket-outline" size={24} color="#FFFFFF" />
-            </View>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={modalStyles.title}>
-                {downloading ? 'Downloading Update...' : 'New Update Available!'}
-              </Text>
-              <Text style={modalStyles.versionRow}>
-                Current: <Text style={{ fontWeight: '700' }}>v{updateData.currentVersion}</Text> → New: <Text style={{ fontWeight: '700', color: '#0D9488' }}>v{updateData.latestVersion}</Text>
-              </Text>
-            </View>
-            {!downloading && !isMandatory && (
-              <TouchableOpacity onPress={onClose} hitSlop={10} style={{ padding: 4 }}>
-                <Ionicons name="close" size={22} color="#94A3B8" />
-              </TouchableOpacity>
-            )}
-          </View>
+      <View style={styles.backdrop}>
+        <View style={styles.card}>
+          {/* Top Brand Accent Strip */}
+          <View style={styles.topAccentStrip} />
 
-          {downloading ? (
-            /* ============================================================== */
-            /* DOWNLOADING CIRCULAR PROGRESS WITH ROTATING ANIMATION */
-            /* ============================================================== */
-            <View style={modalStyles.downloadContainer}>
-              <View style={modalStyles.circleContainer}>
-                {/* Continuous rotating pulse behind the ring */}
-                <Animated.View
-                  style={[
-                    modalStyles.spinnerWrapper,
-                    { transform: [{ rotate: spin }] },
-                  ]}
-                >
-                  <Svg width={140} height={140}>
+          {/* Close Button (top-right) */}
+          {!downloading && !isMandatory && (
+            <TouchableOpacity
+              style={styles.closeBtn}
+              onPress={onClose}
+              hitSlop={12}
+              accessibilityLabel="Close"
+            >
+              <Text style={styles.closeBtnText}>✕</Text>
+            </TouchableOpacity>
+          )}
+
+          <View style={styles.body}>
+            {downloading ? (
+              /* ============================================================== */
+              /* DOWNLOADING STATE WITH CIRCULAR PROGRESS */
+              /* ============================================================== */
+              <View style={styles.downloadSection}>
+                <View style={styles.circleContainer}>
+                  {/* Rotating dashed ring */}
+                  <Animated.View
+                    style={[
+                      styles.spinnerWrapper,
+                      { transform: [{ rotate: spin }] },
+                    ]}
+                  >
+                    <Svg width={124} height={124}>
+                      <Circle
+                        cx={62}
+                        cy={62}
+                        r={radius}
+                        stroke="rgba(13, 148, 136, 0.18)"
+                        strokeWidth={strokeWidth + 2}
+                        strokeDasharray="14, 10"
+                        fill="none"
+                      />
+                    </Svg>
+                  </Animated.View>
+
+                  {/* SVG Progress Ring */}
+                  <Svg width={124} height={124} style={styles.svgRing}>
                     <Circle
-                      cx={70}
-                      cy={70}
+                      cx={62}
+                      cy={62}
                       r={radius}
-                      stroke="rgba(13, 148, 136, 0.15)"
-                      strokeWidth={strokeWidth + 2}
-                      strokeDasharray="18, 12"
+                      stroke="#E2E8F0"
+                      strokeWidth={strokeWidth}
                       fill="none"
                     />
+                    <Circle
+                      cx={62}
+                      cy={62}
+                      r={radius}
+                      stroke="#0D9488"
+                      strokeWidth={strokeWidth}
+                      strokeDasharray={circumference}
+                      strokeDashoffset={strokeDashoffset}
+                      strokeLinecap="round"
+                      fill="none"
+                      transform="rotate(-90 62 62)"
+                    />
                   </Svg>
-                </Animated.View>
 
-                {/* SVG Progress Ring */}
-                <Svg width={140} height={140} style={modalStyles.svgRing}>
-                  {/* Background Track */}
-                  <Circle
-                    cx={70}
-                    cy={70}
-                    r={radius}
-                    stroke="#E2E8F0"
-                    strokeWidth={strokeWidth}
-                    fill="none"
-                  />
-                  {/* Animated Filled Stroke */}
-                  <Circle
-                    cx={70}
-                    cy={70}
-                    r={radius}
-                    stroke="#0D9488"
-                    strokeWidth={strokeWidth}
-                    strokeDasharray={circumference}
-                    strokeDashoffset={strokeDashoffset}
-                    strokeLinecap="round"
-                    fill="none"
-                    transform="rotate(-90 70 70)"
-                  />
-                </Svg>
+                  {/* Center Content */}
+                  <View style={styles.centerLabelContainer}>
+                    <Text style={styles.percentText}>{Math.round(downloadPercent)}%</Text>
+                    <Text style={styles.centerSubLabel}>
+                      {downloadPercent >= 100 ? 'Finalizing' : 'Downloading'}
+                    </Text>
+                  </View>
+                </View>
 
-                {/* Center Content: Percentage & Icon */}
-                <View style={modalStyles.centerLabelContainer}>
-                  <Text style={modalStyles.percentText}>{Math.round(downloadPercent)}%</Text>
-                  <Text style={modalStyles.centerSubLabel}>
-                    {downloadPercent >= 100 ? 'Finalizing' : 'Downloading'}
+                <Text style={styles.downloadTitle}>
+                  {downloadPercent >= 100 ? 'Restarting App...' : 'Downloading Update...'}
+                </Text>
+
+                <View style={styles.stepBox}>
+                  <Ionicons
+                    name={downloadPercent >= 100 ? 'checkmark-circle' : 'cloud-download-outline'}
+                    size={16}
+                    color={downloadPercent >= 100 ? '#16A34A' : '#0D9488'}
+                  />
+                  <Text style={styles.stepText} numberOfLines={2}>
+                    {downloadStepText}
                   </Text>
                 </View>
-              </View>
 
-              {/* Live Step Caption */}
-              <View style={modalStyles.stepBox}>
-                <Ionicons
-                  name={downloadPercent >= 100 ? 'checkmark-circle' : 'cloud-download-outline'}
-                  size={18}
-                  color={downloadPercent >= 100 ? '#16A34A' : '#0D9488'}
-                />
-                <Text style={modalStyles.stepText} numberOfLines={2}>
-                  {downloadStepText}
+                <Text style={styles.restartHint}>
+                  The app will automatically restart once finished. Please keep this screen open.
                 </Text>
               </View>
-
-              <Text style={modalStyles.autoRestartHint}>
-                ⚡ App will automatically restart as soon as the download finishes. Please do not close the app.
-              </Text>
-            </View>
-          ) : (
-            /* ============================================================== */
-            /* UPDATE OVERVIEW & RELEASE NOTES */
-            /* ============================================================== */
-            <View style={modalStyles.bodyContainer}>
-              <View style={modalStyles.patchBanner}>
-                <Ionicons name="sparkles" size={18} color="#0D9488" />
-                <Text style={modalStyles.patchBannerText}>
-                  {updateData.updateType === 'OTA'
-                    ? 'Instant Hotfix Patch: Fast in-app download with automatic reload.'
-                    : 'Full Application Release: Includes native performance improvements.'}
-                </Text>
-              </View>
-
-              <Text style={modalStyles.sectionTitle}>What&apos;s New:</Text>
-              <View style={modalStyles.releaseNotesBox}>
-                <Text style={modalStyles.releaseNotesText}>
-                  {updateData.releaseNotes ||
-                    '• Enhanced Rapido-style incoming booking alerts\n• Separate dynamic Profile & secure bank management\n• Direct automatic update download with rotating circle\n• Performance optimizations and bug fixes.'}
-                </Text>
-              </View>
-
-              {errorMsg && (
-                <View style={modalStyles.errorBox}>
-                  <Ionicons name="alert-circle" size={18} color="#DC2626" />
-                  <Text style={modalStyles.errorText}>{errorMsg}</Text>
+            ) : (
+              /* ============================================================== */
+              /* UPDATE DETAILS & PROMPT (CLEAN NORMAL ENGLISH) */
+              /* ============================================================== */
+              <View style={styles.overviewSection}>
+                {/* Center App / Sparkles Badge */}
+                <View style={styles.iconBadge}>
+                  <Ionicons name="sparkles" size={26} color="#0D9488" />
                 </View>
-              )}
 
-              {/* Action Buttons */}
-              <View style={modalStyles.actionRow}>
-                {!isMandatory && (
-                  <TouchableOpacity
-                    style={modalStyles.btnSecondary}
-                    onPress={onClose}
-                    activeOpacity={0.75}
-                  >
-                    <Text style={modalStyles.btnSecondaryText}>Later</Text>
-                  </TouchableOpacity>
+                <Text style={styles.title}>App Update Available</Text>
+
+                <View style={styles.versionPill}>
+                  <Text style={styles.versionPillText}>
+                    New Version v{updateData.latestVersion}
+                  </Text>
+                </View>
+
+                <Text style={styles.message}>
+                  A fresh update is ready to install with improvements and bug fixes for a smoother experience.
+                </Text>
+
+                <View style={styles.whatsNewBox}>
+                  <Text style={styles.whatsNewHeading}>What&apos;s New:</Text>
+                  <Text style={styles.whatsNewContent}>
+                    {updateData.releaseNotes ||
+                      '• Faster pickup alerts & smooth navigation\n• Live GPS & performance improvements\n• Bug fixes and stability enhancements'}
+                  </Text>
+                </View>
+
+                {errorMsg && (
+                  <View style={styles.errorBox}>
+                    <Ionicons name="alert-circle" size={16} color="#DC2626" />
+                    <Text style={styles.errorText}>{errorMsg}</Text>
+                  </View>
                 )}
-                <TouchableOpacity
-                  style={[modalStyles.btnPrimary, { flex: isMandatory ? 1 : 1.6 }]}
-                  onPress={handleStart}
-                  activeOpacity={0.85}
-                >
-                  <Ionicons name="download-outline" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
-                  <Text style={modalStyles.btnPrimaryText}>Update &amp; Restart Now</Text>
-                </TouchableOpacity>
+
+                <View style={styles.actionRow}>
+                  {!isMandatory && (
+                    <TouchableOpacity
+                      style={styles.btnSecondary}
+                      onPress={onClose}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.btnSecondaryText}>Later</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    style={[styles.btnPrimary, { flex: isMandatory ? 1 : 1.5 }]}
+                    onPress={handleStart}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="download-outline" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.btnPrimaryText}>Update Now</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-            </View>
-          )}
+            )}
+          </View>
         </View>
       </View>
     </Modal>
   );
 }
 
-const modalStyles = StyleSheet.create({
+const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(6, 29, 66, 0.72)',
@@ -248,62 +252,122 @@ const modalStyles = StyleSheet.create({
   },
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 22,
+    borderRadius: 24,
     width: '100%',
-    maxWidth: 390,
+    maxWidth: 360,
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.22,
     shadowRadius: 20,
-    elevation: 12,
+    elevation: 16,
+    position: 'relative',
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: '#061D42',
-    paddingHorizontal: 18,
-    paddingVertical: 16,
-  },
-  headerIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
+  topAccentStrip: {
+    height: 4,
     backgroundColor: '#0D9488',
+    width: '100%',
+  },
+  closeBtn: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#F1F5F9',
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 10,
+  },
+  closeBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  body: {
+    paddingHorizontal: 22,
+    paddingTop: 24,
+    paddingBottom: 22,
+  },
+  overviewSection: {
+    alignItems: 'center',
+  },
+  iconBadge: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: '#CCFBF1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
   },
   title: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '800',
-    color: '#FFFFFF',
+    color: '#0F172A',
+    textAlign: 'center',
+    marginBottom: 6,
   },
-  versionRow: {
+  versionPill: {
+    backgroundColor: '#F0FDFA',
+    borderWidth: 1,
+    borderColor: '#99F6E4',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 20,
+    marginBottom: 12,
+  },
+  versionPillText: {
     fontSize: 12,
-    color: '#94A3B8',
-    marginTop: 2,
+    fontWeight: '700',
+    color: '#0D9488',
   },
-  downloadContainer: {
+  message: {
+    fontSize: 13,
+    color: '#475569',
+    textAlign: 'center',
+    lineHeight: 19,
+    marginBottom: 16,
+  },
+  whatsNewBox: {
+    width: '100%',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 18,
+  },
+  whatsNewHeading: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 5,
+  },
+  whatsNewContent: {
+    fontSize: 12,
+    color: '#64748B',
+    lineHeight: 18,
+  },
+  downloadSection: {
     alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingTop: 32,
-    paddingBottom: 28,
+    paddingVertical: 12,
   },
   circleContainer: {
-    width: 140,
-    height: 140,
+    width: 124,
+    height: 124,
     position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 20,
+    marginBottom: 18,
   },
   spinnerWrapper: {
     position: 'absolute',
     top: 0,
     left: 0,
-    width: 140,
-    height: 140,
+    width: 124,
+    height: 124,
   },
   svgRing: {
     position: 'absolute',
@@ -315,17 +379,22 @@ const modalStyles = StyleSheet.create({
     justifyContent: 'center',
   },
   percentText: {
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: '900',
     color: '#0F172A',
-    letterSpacing: -0.5,
   },
   centerSubLabel: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '700',
     color: '#0D9488',
     textTransform: 'uppercase',
     marginTop: 2,
+  },
+  downloadTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 12,
   },
   stepBox: {
     flexDirection: 'row',
@@ -334,64 +403,23 @@ const modalStyles = StyleSheet.create({
     backgroundColor: '#F0FDFA',
     borderWidth: 1,
     borderColor: '#99F6E4',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
     borderRadius: 10,
     width: '100%',
-    marginBottom: 14,
+    marginBottom: 12,
   },
   stepText: {
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: '600',
     color: '#0F766E',
     flex: 1,
   },
-  autoRestartHint: {
+  restartHint: {
     fontSize: 11.5,
     color: '#64748B',
     textAlign: 'center',
     lineHeight: 16,
-  },
-  bodyContainer: {
-    padding: 20,
-  },
-  patchBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#F0FDFA',
-    borderWidth: 1,
-    borderColor: '#CCFBF1',
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 14,
-  },
-  patchBannerText: {
-    fontSize: 12,
-    color: '#0F766E',
-    flex: 1,
-    lineHeight: 16,
-    fontWeight: '600',
-  },
-  sectionTitle: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#334155',
-    marginBottom: 6,
-  },
-  releaseNotesBox: {
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 16,
-    maxHeight: 120,
-  },
-  releaseNotesText: {
-    fontSize: 12,
-    color: '#475569',
-    lineHeight: 18,
   },
   errorBox: {
     flexDirection: 'row',
@@ -403,6 +431,7 @@ const modalStyles = StyleSheet.create({
     borderRadius: 10,
     padding: 10,
     marginBottom: 14,
+    width: '100%',
   },
   errorText: {
     fontSize: 12,
@@ -412,7 +441,7 @@ const modalStyles = StyleSheet.create({
   actionRow: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 4,
+    width: '100%',
   },
   btnSecondary: {
     flex: 1,
@@ -438,9 +467,9 @@ const modalStyles = StyleSheet.create({
     justifyContent: 'center',
     shadowColor: '#0D9488',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowOpacity: 0.28,
+    shadowRadius: 6,
+    elevation: 3,
   },
   btnPrimaryText: {
     fontSize: 13.5,
