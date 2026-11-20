@@ -163,6 +163,7 @@ export interface OrderLiveTrackingModalProps {
   titlePrefix?: string;
   headerBadges?: ReactNode;
   phleboCourier?: PhlebotomistProfile | null;
+  nearbyPhlebos?: PhlebotomistProfile[];
   fallbackDropLat?: number;
   fallbackDropLng?: number;
   fallbackDropAddress?: string;
@@ -180,6 +181,7 @@ export function OrderLiveTrackingModal({
   titlePrefix = 'Live Route & Custody Map',
   headerBadges,
   phleboCourier,
+  nearbyPhlebos,
   fallbackDropLat = 19.076,
   fallbackDropLng = 72.8777,
   fallbackDropAddress,
@@ -269,6 +271,7 @@ export function OrderLiveTrackingModal({
           pickupLocation={memoizedPickup}
           dropLocation={memoizedDrop}
           phleboLocation={livePhleboPos}
+          nearbyPhlebos={nearbyPhlebos}
           heightPx={290}
         />
       </div>
@@ -337,19 +340,45 @@ export function OrderLiveTrackingModal({
         </div>
       )}
 
-      {order.sampleCollectionPhotoUrl && (
-        <div style={{ marginBottom: '14px' }}>
-          <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px' }}>
-            Phlebotomist Sample Collection Photo Proof
+      {(order.sampleCollectionPhotoUrl || order.phleboSelfieUrl) && (
+        <div style={{ marginBottom: '16px' }}>
+          <div style={{ fontSize: '0.84rem', fontWeight: 700, marginBottom: '8px', color: '#0F172A' }}>
+            Verification Proof Photos (Sample &amp; Phlebotomist Attendance)
           </div>
-          <a href={order.sampleCollectionPhotoUrl} target="_blank" rel="noreferrer">
-            <img
-              src={order.sampleCollectionPhotoUrl}
-              alt="Collected sample proof"
-              className="sample-proof-thumb"
-              style={{ maxWidth: '100%', maxHeight: '220px', borderRadius: '10px', border: '1px solid #CBD5E1' }}
-            />
-          </a>
+          <div style={{ display: 'grid', gridTemplateColumns: order.sampleCollectionPhotoUrl && order.phleboSelfieUrl ? '1fr 1fr' : '1fr', gap: '12px' }}>
+            {order.sampleCollectionPhotoUrl && (
+              <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '10px', padding: '10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#334155' }}>🧪 Specimen Tubes Proof</span>
+                  <span style={{ fontSize: '0.7rem', color: '#15803D', background: '#DCFCE7', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>✓ Verified</span>
+                </div>
+                <a href={order.sampleCollectionPhotoUrl} target="_blank" rel="noreferrer" title="Click to enlarge specimen photo">
+                  <img
+                    src={order.sampleCollectionPhotoUrl}
+                    alt="Collected sample proof"
+                    className="sample-proof-thumb"
+                    style={{ width: '100%', height: '140px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #CBD5E1' }}
+                  />
+                </a>
+              </div>
+            )}
+            {order.phleboSelfieUrl && (
+              <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '10px', padding: '10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#334155' }}>🤳 Phlebotomist Site Selfie</span>
+                  <span style={{ fontSize: '0.7rem', color: '#15803D', background: '#DCFCE7', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>✓ Present At Site</span>
+                </div>
+                <a href={order.phleboSelfieUrl} target="_blank" rel="noreferrer" title="Click to enlarge phlebo selfie">
+                  <img
+                    src={order.phleboSelfieUrl}
+                    alt="Phlebotomist site selfie"
+                    className="sample-proof-thumb"
+                    style={{ width: '100%', height: '140px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #CBD5E1' }}
+                  />
+                </a>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

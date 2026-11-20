@@ -20,9 +20,14 @@ import {
   OrderPriority,
   OrderStatus,
   type PatientRecord,
+  type PaymentSlipData,
   type PhlebotomistProfile,
   type PickupOrder,
   type PlatformNotification,
+  DEFAULT_SUPPORT_CONTACTS,
+  type SupportContactsConfig,
+  type PlatformSopDocument,
+  type PlatformFaqDocument,
   ROLE_LABELS,
   type ServiceZoneRecord,
   type SettlementRecord,
@@ -35,7 +40,7 @@ import {
   resolveSmallLabTab,
 } from '@diagnostic/shared';
 import { type VerifiedPortalSession } from '../components/LoginPage';
-import { DashboardShell, OrderLiveTrackingModal } from '../components/shared';
+import { DashboardShell, OrderLiveTrackingModal, PaymentSlipModal } from '../components/shared';
 import { useDashboardPageRouter } from './useDashboardPageRouter';
 import {
   cancelSmallLabOrder,
@@ -49,10 +54,13 @@ import {
   subscribeOrders,
   subscribePatients,
   subscribePhlebotomists,
+  subscribePlatformFaqs,
+  subscribePlatformSops,
   subscribeReports,
   subscribeServiceZones,
   subscribeSettings,
   subscribeSettlements,
+  subscribeSupportContacts,
   subscribeTestCatalog,
   updateOrderCustodyTransition,
 } from '../services/firestoreService';
@@ -168,9 +176,15 @@ export function SmallLabDashboard({
   const [payImmediatelyOnBook, setPayImmediatelyOnBook] = useState(true);
   const [payingSettlementId, setPayingSettlementId] = useState<string | null>(null);
   const [submittingBooking, setSubmittingBooking] = useState(false);
+  const [bookingStep, setBookingStep] = useState<1 | 2 | 3 | 4>(1);
+  const [currentPaymentSlip, setCurrentPaymentSlip] = useState<PaymentSlipData | null>(null);
+  const [supportContacts, setSupportContacts] = useState<SupportContactsConfig>(DEFAULT_SUPPORT_CONTACTS);
+  const [platformSops, setPlatformSops] = useState<PlatformSopDocument[]>([]);
+  const [platformFaqs, setPlatformFaqs] = useState<PlatformFaqDocument[]>([]);
 
   useEffect(() => {
     if (!session.firebaseUser) return;
+    const noop = () => {};
     const unsubs = [
       subscribeLabs(setLabs),
       subscribePhlebotomists(setPhlebotomists),
@@ -181,6 +195,9 @@ export function SmallLabDashboard({
       subscribeSettlements(session.profile, setSettlements),
       subscribeNotifications(session.profile, setNotifications),
       subscribeServiceZones(setServiceZones),
+      subscribeSupportContacts(setSupportContacts, noop),
+      subscribePlatformSops(setPlatformSops, noop),
+      subscribePlatformFaqs(setPlatformFaqs, noop),
       subscribeSettings(
         () => {},
         (cfg) => {
@@ -718,12 +735,6 @@ export function SmallLabDashboard({
         commissionConfig: commConfig,
       });
 
-      setSelectedTestCodes([]);
-      setAdhocPatientName('');
-      setAdhocPatientPhone('');
-      setAdhocPatientAlternatePhone('');
-      setClinicalNote('');
-
       const settlementId = `STL-${created.orderNumber.replace('BK-', '')}`;
       if (payImmediatelyOnBook && (created.totalAmountInr || 0) >= 1) {
         try {
@@ -739,41 +750,113 @@ export function SmallLabDashboard({
           });
 
           if (checkoutRes.status === 'PAID') {
+            // Payment succeeded: now safely clear booking inputs
+            setSelectedTestCodes([]);
+            setAdhocPatientName('');
+            setAdhocPatientPhone('');
+            setAdhocPatientAlternatePhone('');
+            setClinicalNote('');
+            setBookingStep(1);
+
+            try {
+              await markOrderPaidByLab({
+                orderId: created.id,
+                actorEmail: session.profile.email,
+                actorName: session.profile.displayName,
+                paymentMethod: 'UPI_AT_LAB',
+                notes: `Razorpay Online #${checkoutRes.result.paymentId}`,
+              });
+            } catch (markErr) {
+              console.warn('Failed to auto-mark order paid:', markErr);
+            }
+
+            const grossInr = created.totalAmountInr || resolvedDropInfo.split.grossAmountInr;
+            const phleboFeeInr = created.courierFeeInr || resolvedDropInfo.split.courierFeeInr || 0;
+            const slipData: PaymentSlipData = {
+              receiptNumber: `RCP-${created.orderNumber.replace('BK-', '')}-${Date.now().toString().slice(-4)}`,
+              paymentId: checkoutRes.result.paymentId,
+              orderId: created.id,
+              orderNumber: created.orderNumber,
+              paidAt: new Date().toISOString(),
+              paymentMethod: 'Razorpay Online (UPI/Card/NetBanking)',
+              amountInr: grossInr,
+              payerName: myLabFacility.name,
+              payerRole: 'Referring Diagnostic Center',
+              payerId: myLabFacility.id,
+              payerPhone: myLabFacility.phone,
+              payerAddress: `${myLabFacility.address}, ${myLabFacility.pincode}`,
+              receiverName: resolvedDropInfo.targetLabName,
+              receiverRole: dropMode === 'LARGE_LAB' ? 'Testing Hub Lab' : 'Own Facility Processing',
+              receiverId: resolvedDropInfo.targetLabId,
+              receiverAddress: resolvedDropInfo.deliveryAddress,
+              patientName: created.patient?.pseudonym || 'Patient',
+              patientAge: created.patient?.age,
+              patientGender: created.patient?.gender,
+              patientId: created.patient?.id,
+              items: (created.specimens || []).map((s) => ({
+                code: s.testCode,
+                name: s.testName,
+                specimenType: s.specimenType,
+                rateInr: 0,
+              })),
+              logisticsFeeInr: phleboFeeInr,
+              subtotalInr: Math.max(0, grossInr - phleboFeeInr),
+              totalAmountInr: grossInr,
+              status: 'PAID',
+              notes: `Broadcast Radius: ${broadcastRadiusKm} km • Handover Receiving OTP: ${created.handoverOtp}`,
+            };
+
+            setCurrentPaymentSlip(slipData);
             setActiveTab('bookings');
             setCustodyModalOrder(created);
             onShowAlert({
               variant: 'success',
-              title: `Paid & Booking ${created.orderNumber} Dispatched`,
-              message: `Online payment (${checkoutRes.result.paymentId}) confirmed. Live broadcast triggered within ${broadcastRadiusKm} km!`,
+              title: `Payment Confirmed & Booking ${created.orderNumber} Dispatched`,
+              message: `Razorpay payment (${checkoutRes.result.paymentId}) verified. Official digital receipt generated!`,
               detail: `Handover Receiving OTP: ${created.handoverOtp} • Destination: ${resolvedDropInfo.targetLabName}`,
             });
           } else {
-            setActiveTab('payments');
+            // Payment was cancelled or dismissed by user!
+            // CRITICAL: DO NOT CLEAR FORM STATE. Stay on Step 4 so user can retry or switch payment mode!
+            setActiveTab('new-booking');
+            setBookingStep(4);
             onShowAlert({
               variant: 'warning',
-              title: `Booking ${created.orderNumber} Created (Payment Pending)`,
-              message: checkoutRes.message,
-              detail: `Handover Receiving OTP: ${created.handoverOtp} • Click Pay Now below to complete payment.`,
+              title: `Payment Cancelled — Booking Details Preserved`,
+              message:
+                checkoutRes.message ||
+                'Payment window was closed or cancelled. All patient details, selected tests, and quotes are preserved on Step 4.',
+              detail: `Booking ${created.orderNumber} is registered. You can retry paying now or switch to Pay on Invoice.`,
             });
           }
         } catch (payErr) {
-          setActiveTab('payments');
+          // Keep form on Step 4
+          setActiveTab('new-booking');
+          setBookingStep(4);
           onShowAlert({
             variant: 'error',
-            title: `Booking Saved, Payment Incomplete (${created.orderNumber})`,
+            title: `Payment Incomplete (${created.orderNumber})`,
             message:
               payErr instanceof Error
                 ? payErr.message
-                : 'Your booking is saved, but payment did not complete. Retry in Payments.',
-            detail: `Invoice ${settlementId} is ready for retry in the Payments tab.`,
+                : 'Payment checkout encountered an issue. Your booking details are preserved on Step 4.',
+            detail: `You can retry checkout or switch to Pay Later / Invoicing.`,
           });
         }
       } else {
+        // Pay on Invoice / Pay Later
+        setSelectedTestCodes([]);
+        setAdhocPatientName('');
+        setAdhocPatientPhone('');
+        setAdhocPatientAlternatePhone('');
+        setClinicalNote('');
+        setBookingStep(1);
+
         setActiveTab('bookings');
         setCustodyModalOrder(created);
         onShowAlert({
           variant: 'success',
-          title: `Booking ${created.orderNumber} Dispatched`,
+          title: `Booking ${created.orderNumber} Dispatched (Pay on Invoice)`,
           message: `Live pickup broadcasted within ${broadcastRadiusKm} km -> Drop at ${resolvedDropInfo.targetLabName}.`,
           detail: `Handover Receiving OTP: ${created.handoverOtp} • Barcodes: ${created.specimens
             .map((s) => s.barcode)
@@ -926,6 +1009,82 @@ export function SmallLabDashboard({
     );
   }
 
+  function handleViewOrderPaymentSlip(order: PickupOrder) {
+    const grossInr = order.totalAmountInr || 0;
+    const phleboFeeInr = order.courierFeeInr || 0;
+    const slipData: PaymentSlipData = {
+      receiptNumber: `RCP-${order.orderNumber.replace('BK-', '')}`,
+      paymentId: order.paymentStatus === 'PAID' ? 'ONLINE-VERIFIED' : 'INV-SETTLED',
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      paidAt: order.updatedAt || order.createdAt,
+      paymentMethod: order.paymentStatus === 'PAID' ? 'Razorpay Online' : 'Consolidated Lab Invoicing',
+      amountInr: grossInr,
+      payerName: order.smallLabName || myLabFacility.name,
+      payerRole: 'Referring Diagnostic Center',
+      payerId: order.smallLabId || myLabFacility.id,
+      payerAddress: `${myLabFacility.address}, ${myLabFacility.pincode}`,
+      receiverName: order.targetLabName,
+      receiverRole: order.dropType === 'LARGE_LAB' ? 'Testing Hub Lab' : 'Own Facility Processing',
+      receiverId: order.targetLabId,
+      patientName: order.patient?.pseudonym || 'Patient',
+      patientAge: order.patient?.age,
+      patientGender: order.patient?.gender,
+      patientId: order.patient?.id,
+      items: (order.specimens || []).map((s) => ({
+        code: s.testCode,
+        name: s.testName,
+        specimenType: s.specimenType,
+        rateInr: 0,
+      })),
+      logisticsFeeInr: phleboFeeInr,
+      subtotalInr: Math.max(0, grossInr - phleboFeeInr),
+      totalAmountInr: grossInr,
+      status: 'PAID',
+      notes: `Handover OTP: ${order.handoverOtp}`,
+    };
+    setCurrentPaymentSlip(slipData);
+  }
+
+  function handleViewSettlementPaymentSlip(settlement: SettlementRecord) {
+    const matchingOrder = orders.find((o) => o.id === settlement.orderId);
+    const grossInr = settlement.grossAmountInr || 0;
+    const phleboFeeInr = settlement.phleboPayoutInr || 0;
+    const slipData: PaymentSlipData = {
+      receiptNumber: `RCP-${settlement.id.replace('STL-', '')}`,
+      paymentId: settlement.razorpayPaymentId || 'SETTLEMENT-VERIFIED',
+      orderId: settlement.orderId,
+      orderNumber: settlement.orderNumber,
+      paidAt: settlement.createdAt,
+      paymentMethod: settlement.paymentMethod || 'Razorpay Gateway',
+      amountInr: grossInr,
+      payerName: settlement.smallLabName || myLabFacility.name,
+      payerRole: 'Referring Diagnostic Center',
+      payerId: settlement.smallLabId || myLabFacility.id,
+      payerAddress: `${myLabFacility.address}, ${myLabFacility.pincode}`,
+      receiverName: settlement.targetLabName || 'Reference Testing Hub',
+      receiverRole: 'Partner Reference Testing Hub',
+      receiverId: settlement.targetLabId,
+      patientName: matchingOrder?.patient?.pseudonym || 'Registered Patient',
+      patientAge: matchingOrder?.patient?.age,
+      patientGender: matchingOrder?.patient?.gender,
+      patientId: matchingOrder?.patient?.id,
+      items:
+        matchingOrder?.specimens?.map((s) => ({
+          code: s.testCode,
+          name: s.testName,
+          specimenType: s.specimenType,
+          rateInr: 0,
+        })) || [],
+      logisticsFeeInr: phleboFeeInr,
+      subtotalInr: Math.max(0, grossInr - phleboFeeInr),
+      totalAmountInr: grossInr,
+      status: 'PAID',
+      notes: `Settlement Ref: ${settlement.id} • Order: ${settlement.orderNumber}`,
+    };
+    setCurrentPaymentSlip(slipData);
+  }
+
   const navItems: SidebarNavItem<SmallLabTab>[] = [
     { id: 'dashboard', icon: '📊', label: 'Dashboard', path: getPathForTab('dashboard') },
     { id: 'new-booking', icon: '➕', label: 'New Booking', path: getPathForTab('new-booking') },
@@ -1073,6 +1232,8 @@ export function SmallLabDashboard({
             onBroadcastRadiusKmChange={setBroadcastRadiusKm}
             payImmediatelyOnBook={payImmediatelyOnBook}
             onPayImmediatelyOnBookChange={setPayImmediatelyOnBook}
+            bookingStep={bookingStep}
+            onBookingStepChange={setBookingStep}
             submittingBooking={submittingBooking}
             onSubmitBooking={handleCreateBooking}
             onShowAlert={onShowAlert}
@@ -1136,6 +1297,7 @@ export function SmallLabDashboard({
             onPaySettlement={handlePaySettlement}
             onMarkPaidByLab={handleMarkPaidByLab}
             onPrintBarcodes={setBarcodeOrderToPrint}
+            onViewPaymentSlip={handleViewOrderPaymentSlip}
             onOpenSelfQc={(o) => {
               setSelfQcOrder(o);
               setSelfQcTemp(String(o.arrivalTemperatureCelsius ?? '4.2'));
@@ -1183,6 +1345,7 @@ export function SmallLabDashboard({
               );
               return Promise.resolve();
             }}
+            onViewPaymentSlip={handleViewSettlementPaymentSlip}
           />
         )}
 
@@ -1191,6 +1354,9 @@ export function SmallLabDashboard({
             facilityName={myLabFacility.name}
             facilityId={myLabFacility.id}
             accountEmail={session.profile.email}
+            supportContacts={supportContacts}
+            platformSops={platformSops}
+            platformFaqs={platformFaqs}
           />
         )}
       </DashboardShell>
@@ -1246,6 +1412,11 @@ export function SmallLabDashboard({
       <SmallLabPrintBarcodesModal
         order={barcodeOrderToPrint}
         onClose={() => setBarcodeOrderToPrint(null)}
+      />
+
+      <PaymentSlipModal
+        slip={currentPaymentSlip}
+        onClose={() => setCurrentPaymentSlip(null)}
       />
 
       {isSuspendedForUnsettledFees && (

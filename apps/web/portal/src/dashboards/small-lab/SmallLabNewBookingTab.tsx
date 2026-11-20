@@ -95,6 +95,8 @@ export interface SmallLabNewBookingTabProps {
   onBroadcastRadiusKmChange: (km: number) => void;
   payImmediatelyOnBook: boolean;
   onPayImmediatelyOnBookChange: (val: boolean) => void;
+  bookingStep?: 1 | 2 | 3 | 4;
+  onBookingStepChange?: (step: 1 | 2 | 3 | 4) => void;
   submittingBooking: boolean;
   onSubmitBooking: (e: FormEvent) => Promise<void>;
   onShowAlert?: (params: {
@@ -170,12 +172,19 @@ export function SmallLabNewBookingTab({
   onBroadcastRadiusKmChange,
   payImmediatelyOnBook,
   onPayImmediatelyOnBookChange,
+  bookingStep,
+  onBookingStepChange,
   submittingBooking,
   onSubmitBooking,
   onShowAlert,
 }: SmallLabNewBookingTabProps) {
   // 4-Step Wizard State: 1 = Patient Details, 2 = Test Selection, 3 = Collection & Pickup, 4 = Review & Confirm
-  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1);
+  const [internalStep, setInternalStep] = useState<1 | 2 | 3 | 4>(1);
+  const currentStep = bookingStep ?? internalStep;
+  const setCurrentStep = (step: 1 | 2 | 3 | 4) => {
+    setInternalStep(step);
+    onBookingStepChange?.(step);
+  };
   const [patientMode, setPatientMode] = useState<'EXISTING' | 'NEW'>('EXISTING');
   const [showSupportModal, setShowSupportModal] = useState(false);
   const [testCategoryFilter, setTestCategoryFilter] = useState('ALL');

@@ -25,8 +25,12 @@ import {
   DEFAULT_COMMISSION_CONFIG as SHARED_DEFAULT_COMMISSION_CONFIG,
   DEFAULT_INVENTORY_KITS,
   DEFAULT_INVENTORY_MATERIALS,
+  DEFAULT_PLATFORM_FAQS,
+  DEFAULT_PLATFORM_SOPS,
   DEFAULT_STARTER_SERVICE_ZONES,
   DEFAULT_SUPPORT_CONTACTS,
+  type PlatformFaqDocument,
+  type PlatformSopDocument,
   type SupportContactsConfig,
   type DiagnosticReportRecord,
   type DiagnosticTestItem,
@@ -393,9 +397,9 @@ export async function saveServiceZone(
   const now = new Date().toISOString();
   const cleanCode = normalizeIdentifierCode(
     zone.zoneCode ||
-      `ZONE-${String(zone.city || 'IND').slice(0, 3)}-${String(zone.name || 'NEW')
-        .replace(/[^a-zA-Z0-9]+/g, '-')
-        .slice(0, 14)}`
+    `ZONE-${String(zone.city || 'IND').slice(0, 3)}-${String(zone.name || 'NEW')
+      .replace(/[^a-zA-Z0-9]+/g, '-')
+      .slice(0, 14)}`
   );
   const id = normalizeIdentifierCode(zone.id || cleanCode) || `ZONE-${Date.now()}`;
   const full = stripUndefinedFields<ServiceZoneRecord>({
@@ -520,19 +524,21 @@ export function subscribePhlebotomists(
 export function subscribePatients(
   profile: UserProfile,
   onData: (list: PatientRecord[]) => void,
-  onError?: (err: Error) => void
+  onError?: (err: Error) => void,
+  targetLabId?: string
 ): Unsubscribe {
   const colRef = collection(db, 'patients');
-  const q =
-    profile.role === UserRole.SMALL_LAB && profile.labId
-      ? query(colRef, where('smallLabId', '==', profile.labId))
-      : colRef;
+  const labId = targetLabId || (profile.role === UserRole.SMALL_LAB ? profile.labId : undefined);
+  const q = labId
+    ? query(colRef, where('smallLabId', '==', labId))
+    : colRef;
 
   return onSnapshot(
     q,
     (snap) => {
       const list = snap.docs
         .map((d) => ({ id: d.id, ...(d.data() as Omit<PatientRecord, 'id'>) }))
+        .filter((p) => !labId || p.smallLabId === labId)
         .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
       onData(list);
     },
@@ -594,7 +600,7 @@ export function subscribeOrders(
       (err) => onError?.(err)
     );
 
-    let unsubMine: Unsubscribe = () => {};
+    let unsubMine: Unsubscribe = () => { };
     if (phleboId) {
       unsubMine = onSnapshot(
         query(colRef, where('phlebotomistId', '==', phleboId)),
@@ -673,7 +679,7 @@ export function subscribeOrders(
       },
       (err) => onError?.(err)
     );
-    let u2: Unsubscribe = () => {};
+    let u2: Unsubscribe = () => { };
     if (!profile.parentLabId) {
       u2 = onSnapshot(
         query(colRef, where('targetParentLabId', '==', profile.labId)),
@@ -765,7 +771,7 @@ export function subscribeReports(
       },
       (err) => onError?.(err)
     );
-    let u2: Unsubscribe = () => {};
+    let u2: Unsubscribe = () => { };
     if (!profile.parentLabId) {
       u2 = onSnapshot(
         query(colRef, where('targetParentLabId', '==', profile.labId)),
@@ -821,7 +827,7 @@ export function subscribeSettlements(
       },
       (err) => onError?.(err)
     );
-    let u2: Unsubscribe = () => {};
+    let u2: Unsubscribe = () => { };
     if (!profile.parentLabId) {
       u2 = onSnapshot(
         query(colRef, where('targetParentLabId', '==', profile.labId)),
@@ -847,7 +853,7 @@ export function subscribeSettlements(
   } else if (profile.role === UserRole.PHLEBOTOMIST) {
     if (!profile.phlebotomistId) {
       onData([]);
-      return () => {};
+      return () => { };
     }
     q = query(colRef, where('phlebotomistId', '==', profile.phlebotomistId));
   }
@@ -886,7 +892,7 @@ export function subscribePayouts(
     );
   } else if (profile.role === UserRole.SMALL_LAB) {
     onData([]);
-    return () => {};
+    return () => { };
   }
 
   return onSnapshot(
@@ -1121,10 +1127,10 @@ export async function provisionRoleUser(
     ...(manualPhleboId ? { phlebotomistId: manualPhleboId } : {}),
     ...(extra?.assignedZoneName || extra?.assignedZoneCode
       ? {
-          assignedZone: extra.assignedZoneCode
-            ? `${extra.assignedZoneCode} • ${extra.assignedZoneName || ''}`.trim()
-            : extra.assignedZoneName,
-        }
+        assignedZone: extra.assignedZoneCode
+          ? `${extra.assignedZoneCode} • ${extra.assignedZoneName || ''}`.trim()
+          : extra.assignedZoneName,
+      }
       : {}),
     ...(extra?.assignedCity || extra?.city
       ? { assignedCity: (extra.assignedCity || extra.city || '').trim() }
@@ -1206,10 +1212,10 @@ export async function provisionRoleUser(
 
   const finalCode = normalizeIdentifierCode(
     createdProfile?.userCode ||
-      createdProfile?.labId ||
-      createdProfile?.phlebotomistId ||
-      createdProfile?.employeeId ||
-      sequentialFallbackCode
+    createdProfile?.labId ||
+    createdProfile?.phlebotomistId ||
+    createdProfile?.employeeId ||
+    sequentialFallbackCode
   );
 
   const fallbackProfile: UserProfile = {
@@ -1230,8 +1236,8 @@ export async function provisionRoleUser(
     ...(apiPayload.employeeId
       ? { employeeId: apiPayload.employeeId }
       : isEmpAdmin
-      ? { employeeId: finalCode }
-      : {}),
+        ? { employeeId: finalCode }
+        : {}),
     ...(apiPayload.primaryDepartmentId
       ? { primaryDepartmentId: apiPayload.primaryDepartmentId }
       : {}),
@@ -1270,10 +1276,10 @@ export async function provisionRoleUser(
   const profile: UserProfile = stripUndefinedFields<UserProfile>(
     createdProfile
       ? {
-          ...createdProfile,
-          userCode: createdProfile.userCode || finalCode,
-          userCodeUpper: normalizeIdentifierCode(createdProfile.userCode || finalCode),
-        }
+        ...createdProfile,
+        userCode: createdProfile.userCode || finalCode,
+        userCodeUpper: normalizeIdentifierCode(createdProfile.userCode || finalCode),
+      }
       : fallbackProfile
   );
 
@@ -1313,8 +1319,8 @@ export async function provisionRoleUser(
           ...(typeof extra?.serviceRadiusKm === 'number'
             ? { serviceRadiusKm: extra.serviceRadiusKm }
             : isLarge
-            ? { serviceRadiusKm: 15 }
-            : {}),
+              ? { serviceRadiusKm: 15 }
+              : {}),
           phone: profile.phoneNumber || '',
           email: normalized,
           nablNumber:
@@ -1325,9 +1331,9 @@ export async function provisionRoleUser(
           ...(isLarge ? { cutoffWindow: '08:30 PM Daily Cutoff', courierEtaMins: 20 } : {}),
           ...(profile.initialPasswordSet
             ? {
-                initialPasswordSet: true,
-                initialPasswordUpdatedAt: profile.initialPasswordUpdatedAt || now,
-              }
+              initialPasswordSet: true,
+              initialPasswordUpdatedAt: profile.initialPasswordUpdatedAt || now,
+            }
             : {}),
           rating: 5.0,
           ...(extra?.exteriorPhotoUrl ? { exteriorPhotoUrl: extra.exteriorPhotoUrl } : {}),
@@ -1416,11 +1422,10 @@ export async function provisionRoleUser(
         },
         message: {
           subject: `Welcome to LabSetu — ${ROLE_LABELS[profile.role]} Account Ready (${profile.userCode || finalCode})`,
-          text: `Hello ${profile.displayName}, Admin (${ADMIN_LOGIN_EMAIL}) has created your ${ROLE_LABELS[profile.role]} account (${normalized} | Assigned ID: ${profile.userCode || finalCode}). ${
-            profile.role === UserRole.PHLEBOTOMIST
-              ? 'Please open the LabSetu Mobile App and sign in using Email OTP or your password.'
-              : `Sign in at ${window.location.origin}/login using Google Sign-In, Email/ID & Password, or Email OTP.`
-          }`,
+          text: `Hello ${profile.displayName}, Admin (${ADMIN_LOGIN_EMAIL}) has created your ${ROLE_LABELS[profile.role]} account (${normalized} | Assigned ID: ${profile.userCode || finalCode}). ${profile.role === UserRole.PHLEBOTOMIST
+            ? 'Please open the LabSetu Mobile App and sign in using Email OTP or your password.'
+            : `Sign in at ${window.location.origin}/login using Google Sign-In, Email/ID & Password, or Email OTP.`
+            }`,
         },
         createdAt: now,
       });
@@ -1903,8 +1908,8 @@ export async function createLiveBooking(params: {
     typeof params.largeLabB2bTotalInr === 'number'
       ? params.largeLabB2bTotalInr
       : params.selectedTests.every((t) => typeof t.largeLabB2bRateInr === 'number')
-      ? params.selectedTests.reduce((sum, t) => sum + (t.largeLabB2bRateInr || 0), 0)
-      : undefined;
+        ? params.selectedTests.reduce((sum, t) => sum + (t.largeLabB2bRateInr || 0), 0)
+        : undefined;
 
   const pricingOrgId = params.targetLab.parentLabId || params.targetLab.id;
   const pricingSplit = computeOrderPricingSplit({
@@ -1951,9 +1956,6 @@ export async function createLiveBooking(params: {
     resolvedPickup.longitude,
     resolvedPickup.pincode
   );
-  if (!coverage.covered) {
-    throw new Error(coverage.message);
-  }
 
   const resolvedDelivery = params.deliveryLocation || {
     address: params.targetLab.address,
@@ -1964,15 +1966,15 @@ export async function createLiveBooking(params: {
     typeof params.distanceKm === 'number'
       ? params.distanceKm
       : calculateHaversineDistanceKm(
-          resolvedPickup.latitude,
-          resolvedPickup.longitude,
-          resolvedDelivery.latitude,
-          resolvedDelivery.longitude
-        );
+        resolvedPickup.latitude,
+        resolvedPickup.longitude,
+        resolvedDelivery.latitude,
+        resolvedDelivery.longitude
+      );
   const broadcastRadiusKm =
     params.broadcastRadiusKm ??
     params.commissionConfig.defaultBroadcastRadiusKm ??
-    5;
+    (coverage.covered ? 10 : 25);
 
   const custodyEvent: CustodyEvent = {
     id: `EVT-${Date.now()}`,
@@ -1982,13 +1984,12 @@ export async function createLiveBooking(params: {
     operatorId: params.operatorUid,
     operatorName: params.sessionUser.displayName,
     operatorRole: params.sessionUser.role,
-    notes: `Booking created by ${params.smallLab.name} -> ${params.targetLab.name} (${
-      dropType === 'LARGE_LAB'
-        ? 'Partner Reference Lab'
-        : dropType === 'SELF_DROP'
+    notes: `Booking created by ${params.smallLab.name} -> ${params.targetLab.name} (${dropType === 'LARGE_LAB'
+      ? 'Partner Reference Lab'
+      : dropType === 'SELF_DROP'
         ? 'Self Lab Return Drop'
         : 'Custom Drop Address'
-    })`,
+      })`,
   };
 
   const hasPhlebo = Boolean(params.phlebotomist?.id);
@@ -2023,6 +2024,11 @@ export async function createLiveBooking(params: {
     scheduledPickupAt: params.scheduledPickupAt,
     totalAmountInr: pricingSplit.grossAmountInr,
     courierFeeInr: pricingSplit.courierFeeInr,
+    baseCourierFeeInr: pricingSplit.courierFeeInr,
+    surgeIncentiveInr: 0,
+    searchStatus: hasPhlebo ? 'ASSIGNED' : 'SEARCHING',
+    broadcastExpiresAt: hasPhlebo ? undefined : new Date(Date.now() + 45000).toISOString(),
+    searchRetryCount: 0,
     largeLabB2bAmountInr: pricingSplit.labPayoutInr,
     platformFeeInr: pricingSplit.platformFeeInr,
     ...(params.matchedPackageNames?.length
@@ -2035,10 +2041,13 @@ export async function createLiveBooking(params: {
     broadcastRadiusKm,
     ...(coverage.matchedZone
       ? {
-          serviceZoneId: coverage.matchedZone.id,
-          serviceZoneName: coverage.matchedZone.name,
-        }
-      : {}),
+        serviceZoneId: coverage.matchedZone.id,
+        serviceZoneName: coverage.matchedZone.name,
+      }
+      : {
+        serviceZoneId: 'ZONE-PILOT-EXPANSION',
+        serviceZoneName: 'Flexible Pilot Expansion Zone',
+      }),
     paymentStatus: 'UNPAID',
     handoverOtp,
     department: params.selectedTests[0]?.department || 'Pathology',
@@ -2079,21 +2088,35 @@ export async function createLiveBooking(params: {
   const settlement: SettlementRecord = stripUndefinedFields<SettlementRecord>(rawSettlement);
   await setDoc(doc(db, 'settlements', settlement.id), settlement);
 
-  // Update patient visit counter if linked to saved patient record
-  if (params.patient.id.startsWith('PT-')) {
-    try {
-      const pSnap = await getDoc(doc(db, 'patients', params.patient.id));
-      if (pSnap.exists()) {
-        const currentTotal = (pSnap.data() as PatientRecord).totalOrders || 0;
-        await updateDoc(doc(db, 'patients', params.patient.id), {
-          totalOrders: currentTotal + 1,
-          lastVisitAt: now,
-          updatedAt: now,
-        });
-      }
-    } catch {
-      // Ad-hoc patient without directory record
+  // Update or save patient record strictly tied to this Small Lab
+  try {
+    const ptDocRef = doc(db, 'patients', params.patient.id);
+    const pSnap = await getDoc(ptDocRef);
+    if (pSnap.exists()) {
+      const currentTotal = (pSnap.data() as PatientRecord).totalOrders || 0;
+      await updateDoc(ptDocRef, {
+        totalOrders: currentTotal + 1,
+        lastVisitAt: now,
+        updatedAt: now,
+      });
+    } else {
+      await setDoc(ptDocRef, stripUndefinedFields({
+        id: params.patient.id,
+        name: params.patient.pseudonym,
+        age: params.patient.age,
+        gender: params.patient.gender,
+        phone: params.patient.phone || '',
+        alternatePhone: params.patient.alternatePhone || '',
+        clinicalNote: params.patient.clinicalNote || '',
+        smallLabId: params.smallLab.id,
+        totalOrders: 1,
+        lastVisitAt: now,
+        createdAt: now,
+        updatedAt: now,
+      }));
     }
+  } catch {
+    // Non-fatal patient record handling
   }
 
   await dispatchPlatformAlert({
@@ -2156,6 +2179,84 @@ export async function createLiveBooking(params: {
   }
 
   return newOrder;
+}
+
+export async function retryOrderBroadcast(
+  orderId: string,
+  hikeInr: number = 0
+): Promise<PickupOrder> {
+  const orderRef = doc(db, 'orders', orderId);
+  const snap = await getDoc(orderRef);
+  if (!snap.exists()) {
+    throw new Error('This booking was not found.');
+  }
+  const existing = snap.data() as PickupOrder;
+  const baseCourier = existing.baseCourierFeeInr || existing.courierFeeInr || 100;
+  const currentSurge = existing.surgeIncentiveInr || 0;
+  const newSurge = currentSurge + Math.max(0, hikeInr);
+  const newCourierFee = baseCourier + newSurge;
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 45000).toISOString();
+
+  const operatorUid = auth.currentUser?.uid || existing.smallLabId;
+  const retryEvent: CustodyEvent = {
+    id: `EVT-${Date.now()}`,
+    orderId: existing.id,
+    eventType: CustodyEventType.PACKED_BY_SMALL_LAB,
+    timestamp: now.toISOString(),
+    operatorId: operatorUid,
+    operatorName: existing.smallLabName,
+    operatorRole: UserRole.SMALL_LAB,
+    notes: hikeInr > 0
+      ? `Broadcast retried with +₹${hikeInr} price hike incentive (Total rider payout ₹${newCourierFee})`
+      : 'Broadcast retried searching for nearby phlebotomists (45s window)',
+  };
+
+  const updatedFields: Partial<PickupOrder> = {
+    baseCourierFeeInr: baseCourier,
+    surgeIncentiveInr: newSurge,
+    courierFeeInr: newCourierFee,
+    searchStatus: 'SEARCHING',
+    broadcastExpiresAt: expiresAt,
+    searchRetryCount: (existing.searchRetryCount || 0) + 1,
+    status: OrderStatus.READY_FOR_PICKUP,
+    phlebotomistId: '',
+    phlebotomistName: undefined,
+    updatedAt: now.toISOString(),
+    custodyHistory: [...(existing.custodyHistory || []), retryEvent],
+  };
+
+  await updateDoc(orderRef, stripUndefinedFields(updatedFields));
+
+  try {
+    await addDoc(collection(db, 'custody_events'), retryEvent);
+  } catch (err) {
+    console.warn('[retryOrderBroadcast] custody_events log caught:', err);
+  }
+
+  // If an order had an assigned phlebotomist, alert only that specific courier
+  if (existing.phlebotomistId) {
+    try {
+      await dispatchPlatformAlert({
+        title: hikeInr > 0
+          ? `⚡ SURGE +₹${hikeInr} ADD-ON: Pickup ${existing.orderNumber}`
+          : `🔄 RETRY BROADCAST: Pickup ${existing.orderNumber}`,
+        message: `${existing.smallLabName} pickup retried (${existing.distanceKm || 1} km route -> ${existing.targetLabName}). Payout boosted to ₹${newCourierFee}!`,
+        category: NotificationCategory.PICKUP_ASSIGNED,
+        priority: NotificationPriority.HIGH,
+        recipientRole: UserRole.PHLEBOTOMIST,
+        orderId: existing.id,
+        queueEmail: false,
+      });
+    } catch (err) {
+      console.warn('[retryOrderBroadcast] dispatchPlatformAlert caught:', err);
+    }
+  }
+
+  return {
+    ...existing,
+    ...updatedFields,
+  };
 }
 
 export async function assignPhlebotomistToOrder(params: {
@@ -2248,13 +2349,13 @@ export async function updateOrderCustodyTransition(params: {
     ...(params.nextStatus === OrderStatus.PICKED_UP ? { actualPickupAt: now } : {}),
     ...(isCompletedDrop
       ? {
-          actualDeliveredAt: now,
-          deliveredAt: now,
-          completedAt: params.order.completedAt || now,
-          payoutDueAt: params.order.payoutDueAt || payoutDueAtIso,
-          payoutWindowMinutes: 30,
-          instantPayoutEligible: true,
-        }
+        actualDeliveredAt: now,
+        deliveredAt: now,
+        completedAt: params.order.completedAt || now,
+        payoutDueAt: params.order.payoutDueAt || payoutDueAtIso,
+        payoutWindowMinutes: 30,
+        instantPayoutEligible: true,
+      }
       : {}),
     ...(typeof params.temperatureCelsius === 'number'
       ? { arrivalTemperatureCelsius: params.temperatureCelsius }
@@ -2528,6 +2629,123 @@ export async function saveSupportContacts(
   await setDoc(doc(db, 'settings', 'support'), deepCleanFirestorePayload(merged), { merge: true });
 }
 
+export async function fetchPlatformSops(): Promise<PlatformSopDocument[]> {
+  try {
+    const snap = await getDocs(collection(db, 'platform_sops'));
+    if (!snap.empty) {
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PlatformSopDocument));
+      return list.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+    }
+  } catch (err) {
+    console.warn('Failed to fetch platform SOPs from Firestore:', err);
+  }
+  return DEFAULT_PLATFORM_SOPS;
+}
+
+export function subscribePlatformSops(
+  onData: (sops: PlatformSopDocument[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  return onSnapshot(
+    collection(db, 'platform_sops'),
+    (snap) => {
+      if (!snap.empty) {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PlatformSopDocument));
+        list.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+        onData(list);
+      } else {
+        onData(DEFAULT_PLATFORM_SOPS);
+      }
+    },
+    (err) => onError?.(err)
+  );
+}
+
+export async function savePlatformSop(
+  sop: Partial<PlatformSopDocument> & { id?: string },
+  updatedBy?: string
+): Promise<string> {
+  const id = sop.id || `sop-${Date.now()}`;
+  const payload: PlatformSopDocument = {
+    id,
+    category: sop.category || 'general',
+    number: sop.number || 'SOP',
+    title: sop.title || 'Untitled SOP',
+    subtitle: sop.subtitle || '',
+    badge: sop.badge || 'STANDARD',
+    badgeColor: sop.badgeColor || '#0D9488',
+    icon: sop.icon || 'test-tube',
+    steps: sop.steps || [],
+    isActive: sop.isActive !== undefined ? sop.isActive : true,
+    orderIndex: sop.orderIndex || 99,
+    targetRoles: sop.targetRoles || ['ALL'],
+    updatedAt: new Date().toISOString(),
+    ...(updatedBy ? { updatedBy } : {}),
+  };
+  await setDoc(doc(db, 'platform_sops', id), deepCleanFirestorePayload(payload), { merge: true });
+  return id;
+}
+
+export async function deletePlatformSop(sopId: string): Promise<void> {
+  await deleteDoc(doc(db, 'platform_sops', sopId));
+}
+
+export async function fetchPlatformFaqs(): Promise<PlatformFaqDocument[]> {
+  try {
+    const snap = await getDocs(collection(db, 'platform_faqs'));
+    if (!snap.empty) {
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PlatformFaqDocument));
+      return list.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+    }
+  } catch (err) {
+    console.warn('Failed to fetch platform FAQs from Firestore:', err);
+  }
+  return DEFAULT_PLATFORM_FAQS;
+}
+
+export function subscribePlatformFaqs(
+  onData: (faqs: PlatformFaqDocument[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  return onSnapshot(
+    collection(db, 'platform_faqs'),
+    (snap) => {
+      if (!snap.empty) {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PlatformFaqDocument));
+        list.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+        onData(list);
+      } else {
+        onData(DEFAULT_PLATFORM_FAQS);
+      }
+    },
+    (err) => onError?.(err)
+  );
+}
+
+export async function savePlatformFaq(
+  faq: Partial<PlatformFaqDocument> & { id?: string },
+  updatedBy?: string
+): Promise<string> {
+  const id = faq.id || `faq-${Date.now()}`;
+  const payload: PlatformFaqDocument = {
+    id,
+    category: faq.category || 'General',
+    question: faq.question || 'FAQ Question',
+    answer: faq.answer || 'FAQ Answer',
+    orderIndex: faq.orderIndex || 99,
+    isActive: faq.isActive !== undefined ? faq.isActive : true,
+    targetRoles: faq.targetRoles || ['ALL'],
+    updatedAt: new Date().toISOString(),
+    ...(updatedBy ? { updatedBy } : {}),
+  };
+  await setDoc(doc(db, 'platform_faqs', id), deepCleanFirestorePayload(payload), { merge: true });
+  return id;
+}
+
+export async function deletePlatformFaq(faqId: string): Promise<void> {
+  await deleteDoc(doc(db, 'platform_faqs', faqId));
+}
+
 export async function dispatchPlatformAlert(opts: {
   title: string;
   message: string;
@@ -2550,11 +2768,11 @@ export async function dispatchPlatformAlert(opts: {
       ? 'PDF_REPORT'
       : opts.category === NotificationCategory.TEMPERATURE_ALERT ||
         opts.priority === NotificationPriority.CRITICAL
-      ? 'EMERGENCY_ALERT'
-      : opts.category === NotificationCategory.PAYMENT_RECEIVED ||
-        opts.category === NotificationCategory.PAYOUT_SETTLED
-      ? 'PAYMENT_RECEIPT'
-      : 'OPERATIONAL_NOTIFICATION');
+        ? 'EMERGENCY_ALERT'
+        : opts.category === NotificationCategory.PAYMENT_RECEIVED ||
+          opts.category === NotificationCategory.PAYOUT_SETTLED
+          ? 'PAYMENT_RECEIPT'
+          : 'OPERATIONAL_NOTIFICATION');
 
   const payload: Omit<PlatformNotification, 'id'> = {
     title: opts.title,
@@ -2595,8 +2813,8 @@ export async function dispatchPlatformAlert(opts: {
       resolvedTemplateType === 'EMERGENCY_ALERT'
         ? `[LabSetu ALERT] ${opts.title}`
         : resolvedTemplateType === 'PDF_REPORT'
-        ? `[LabSetu Report PDF] ${opts.title}`
-        : `[LabSetu] ${opts.title}`;
+          ? `[LabSetu Report PDF] ${opts.title}`
+          : `[LabSetu] ${opts.title}`;
 
     await addDoc(collection(db, 'mail'), {
       to: [opts.recipientEmail.toLowerCase()],
@@ -2698,9 +2916,8 @@ export async function assignPhlebotomistZone(params: {
     try {
       await dispatchPlatformAlert({
         title: `Operating Zone Updated: ${params.zone.zoneCode} (${params.zone.name})`,
-        message: `Admin (${params.actorEmail}) assigned ${
-          params.phleboName || params.phleboId
-        } to service zone ${params.zone.name} (${params.zone.city}, ${params.zone.radiusKm} km radius).`,
+        message: `Admin (${params.actorEmail}) assigned ${params.phleboName || params.phleboId
+          } to service zone ${params.zone.name} (${params.zone.city}, ${params.zone.radiusKm} km radius).`,
         category: NotificationCategory.SYSTEM_ALERT,
         priority: NotificationPriority.NORMAL,
         recipientEmail: normalizedEmail,
@@ -2709,6 +2926,133 @@ export async function assignPhlebotomistZone(params: {
     } catch {
       // Best-effort notification
     }
+  }
+}
+
+export async function markOrderPaidByLab(params: {
+  orderId: string;
+  actorEmail?: string;
+  actorName?: string;
+  paymentMethod?: 'DIRECT_LAB_SETTLEMENT' | 'CASH_AT_LAB' | 'UPI_AT_LAB';
+  notes?: string;
+}): Promise<void> {
+  const now = new Date().toISOString();
+  const orderRef = doc(db, 'orders', params.orderId);
+  const stlId = `STL-${params.orderId.replace(/^BK-/, '')}`;
+  const stlRef = doc(db, 'settlements', stlId);
+
+  const orderSnap = await getDoc(orderRef);
+  const existingOrder = orderSnap.exists() ? (orderSnap.data() as PickupOrder) : null;
+  const stlSnap = await getDoc(stlRef);
+  const existingStl = stlSnap.exists() ? (stlSnap.data() as SettlementRecord) : null;
+  const platformFee = existingStl?.platformFeeInr || 20;
+
+  await updateDoc(
+    orderRef,
+    deepCleanFirestorePayload({
+      paymentStatus: 'PAID',
+      paymentMethod: params.paymentMethod || 'DIRECT_LAB_SETTLEMENT',
+      collectedByRole: 'SMALL_LAB',
+      paidAt: now,
+      updatedAt: now,
+    })
+  );
+
+  try {
+    await updateDoc(
+      stlRef,
+      deepCleanFirestorePayload({
+        paymentStatus: 'PAID',
+        paymentMethod: params.paymentMethod || 'DIRECT_LAB_SETTLEMENT',
+        collectedByRole: 'SMALL_LAB',
+        cashSettledDirectly: true,
+        cashPlatformFeePendingInr: platformFee,
+        cashPlatformFeeStatus: 'DUE',
+        paidAt: now,
+        updatedAt: now,
+      })
+    );
+  } catch {
+    // Non-fatal if settlement is missing or handled separately
+  }
+
+  // Record pending platform fee on the Small Lab facility profile
+  if (existingOrder?.smallLabId) {
+    try {
+      const labRef = doc(db, 'labs', existingOrder.smallLabId);
+      const labSnap = await getDoc(labRef);
+      const labData = labSnap.exists() ? (labSnap.data() as Record<string, unknown>) : {};
+      const currentDue = Number(labData.pendingPlatformFeeDueInr) || 0;
+      await updateDoc(labRef, {
+        pendingPlatformFeeDueInr: currentDue + platformFee,
+        ...(!labData.unsettledCashSince ? { unsettledCashSince: now } : {}),
+        updatedAt: now,
+      });
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  if (existingOrder) {
+    try {
+      await dispatchPlatformAlert({
+        title: `Payment Settled by Lab: ${existingOrder.orderNumber}`,
+        message: `${existingOrder.smallLabName} marked booking ${existingOrder.orderNumber} as PAID directly. Phlebotomist will not collect payment from the patient.`,
+        category: NotificationCategory.PAYMENT_RECEIVED,
+        priority: NotificationPriority.NORMAL,
+        orderId: existingOrder.id,
+      });
+    } catch {
+      // Best-effort alert
+    }
+  }
+}
+
+export async function markOrderPaymentByPhlebo(params: {
+  orderId: string;
+  paymentMethod: 'DIRECT_TO_LAB' | 'CASH' | 'UPI_PHLEBO';
+  phleboId?: string;
+  phleboName?: string;
+  notes?: string;
+}): Promise<void> {
+  const now = new Date().toISOString();
+  const orderRef = doc(db, 'orders', params.orderId);
+  const stlId = `STL-${params.orderId.replace(/^BK-/, '')}`;
+  const stlRef = doc(db, 'settlements', stlId);
+
+  const isDirectToLab = params.paymentMethod === 'DIRECT_TO_LAB';
+  const paymentMethodLabel = isDirectToLab
+    ? 'DIRECT_TO_LAB'
+    : params.paymentMethod === 'CASH'
+      ? 'CASH_COLLECTED_BY_PHLEBO'
+      : 'UPI_COLLECTED_BY_PHLEBO';
+
+  const collectedByRole = isDirectToLab ? 'PATIENT_DIRECT_LAB' : 'PHLEBOTOMIST';
+
+  await updateDoc(
+    orderRef,
+    deepCleanFirestorePayload({
+      paymentStatus: 'PAID',
+      paymentMethod: paymentMethodLabel,
+      collectedByRole,
+      paidAt: now,
+      updatedAt: now,
+    })
+  );
+
+  try {
+    await updateDoc(
+      stlRef,
+      deepCleanFirestorePayload({
+        paymentStatus: 'PAID',
+        paymentMethod: paymentMethodLabel,
+        collectedByRole,
+        paidAt: now,
+        updatedAt: now,
+      })
+    );
+  } catch {
+    // Non-fatal
   }
 }
 
@@ -2722,7 +3066,6 @@ export function subscribeInventoryMaterials(
   const colRef = collection(db, 'inventory_materials');
   return onSnapshot(colRef, async (snap) => {
     if (snap.empty) {
-      // Seed default raw materials on first platform launch
       for (const item of DEFAULT_INVENTORY_MATERIALS) {
         try {
           await setDoc(doc(db, 'inventory_materials', item.id), deepCleanFirestorePayload(item));
@@ -2748,7 +3091,6 @@ export function subscribeInventoryKits(
   const colRef = collection(db, 'inventory_kits');
   return onSnapshot(colRef, async (snap) => {
     if (snap.empty) {
-      // Seed default diagnostic kits on first platform launch
       for (const kit of DEFAULT_INVENTORY_KITS) {
         try {
           await setDoc(doc(db, 'inventory_kits', kit.id), deepCleanFirestorePayload(kit));
@@ -2870,7 +3212,6 @@ export async function assembleInventoryKits(params: {
     materialsById.set(mat.id, mat);
   }
 
-  // 1. Validate sufficient stock for all BOM components
   for (const comp of kit.billOfMaterials) {
     const totalRequired = comp.quantity * quantityToAssemble;
     const material = materialsById.get(comp.materialId);
@@ -2886,7 +3227,6 @@ export async function assembleInventoryKits(params: {
 
   const now = new Date().toISOString();
 
-  // 2. Deduct components from raw material inventory
   for (const comp of kit.billOfMaterials) {
     const totalRequired = comp.quantity * quantityToAssemble;
     const material = materialsById.get(comp.materialId)!;
@@ -2901,7 +3241,6 @@ export async function assembleInventoryKits(params: {
     );
   }
 
-  // 3. Increment assembled kit inventory
   const nextKitStock = (kit.currentAssembledStock || 0) + quantityToAssemble;
   await setDoc(
     doc(db, 'inventory_kits', kit.id),
@@ -2912,7 +3251,6 @@ export async function assembleInventoryKits(params: {
     { merge: true }
   );
 
-  // 4. Record audit log
   await recordAuditLogAction({
     action: 'INVENTORY_KITS_ASSEMBLED',
     resourceType: 'INVENTORY_KIT',
@@ -2947,7 +3285,6 @@ export async function allocateKitsToPhlebotomist(params: {
   const now = new Date().toISOString();
   const allocationId = `ALLOC-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
-  // 1. Deduct from assembled kits stock
   const newStock = Math.max(0, (kit.currentAssembledStock || 0) - quantity);
   await setDoc(
     doc(db, 'inventory_kits', kit.id),
@@ -2958,7 +3295,6 @@ export async function allocateKitsToPhlebotomist(params: {
     { merge: true }
   );
 
-  // 2. Create kit allocation record
   const allocationRecord: KitAllocationRecord = {
     id: allocationId,
     phlebotomistId: phlebo.id,
@@ -2981,7 +3317,6 @@ export async function allocateKitsToPhlebotomist(params: {
     deepCleanFirestorePayload(allocationRecord)
   );
 
-  // 3. Notify Phlebotomist
   const normalizedPhleboEmail = phlebo.email?.trim().toLowerCase();
   if (normalizedPhleboEmail) {
     try {
@@ -2994,11 +3329,10 @@ export async function allocateKitsToPhlebotomist(params: {
         recipientRole: UserRole.PHLEBOTOMIST,
       });
     } catch {
-      // Non-fatal notification
+      // Non-fatal
     }
   }
 
-  // 4. Record audit log
   await recordAuditLogAction({
     action: 'INVENTORY_KITS_DISPATCHED',
     resourceType: 'KIT_ALLOCATION',
@@ -3129,7 +3463,6 @@ export async function recordVendorPurchaseOrder(params: {
 
   await setDoc(doc(db, 'vendor_purchases', id), deepCleanFirestorePayload(poRecord));
 
-  // If auto-receiving, increment raw material stock immediately
   if (autoReceiveStock && Array.isArray(purchase.items)) {
     for (const item of purchase.items) {
       if (!item.materialId || item.quantity <= 0) continue;
@@ -3149,7 +3482,7 @@ export async function recordVendorPurchaseOrder(params: {
           );
         }
       } catch {
-        // Non-fatal item stock update
+        // Non-fatal
       }
     }
   }
@@ -3168,4 +3501,5 @@ export async function recordVendorPurchaseOrder(params: {
     },
   });
 }
+
 

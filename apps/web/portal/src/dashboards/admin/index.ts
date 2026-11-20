@@ -20,6 +20,10 @@ export { AdminAnalyticsTab, type AdminAnalyticsTabProps } from './AdminAnalytics
 export { AdminZonesTab, type AdminZonesTabProps } from './AdminZonesTab';
 export { AdminMasterCatalogTab, type AdminMasterCatalogTabProps } from './AdminMasterCatalogTab';
 export { AdminSettingsTab, type AdminSettingsTabProps } from './AdminSettingsTab';
+export {
+  AdminSupportManagementTab,
+  type AdminSupportManagementTabProps,
+} from './AdminSupportManagementTab';
 export { AdminOnboardingModal, type AdminOnboardingModalProps } from './AdminOnboardingModal';
 export {
   AdminAssignCourierModal,

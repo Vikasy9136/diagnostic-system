@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Linking,
   ScrollView,
@@ -8,7 +8,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { DEFAULT_SUPPORT_CONTACTS, type SupportContactsConfig } from '@diagnostic/shared';
+import { DEFAULT_SUPPORT_CONTACTS, type PlatformFaqDocument, type SupportContactsConfig } from '@diagnostic/shared';
 import { BRAND_COLORS } from '../components/LabSetuBrand';
 import { COLORS, FONTS } from '../styles/phleboStyles';
 import { COMPACT_TEXT_SCALE, MAX_TEXT_SCALE, rf, rs } from '../utils/responsive';
@@ -20,6 +20,7 @@ export interface HelpSupportScreenProps {
   phleboEmail?: string;
   activeZoneName?: string;
   supportContacts?: SupportContactsConfig;
+  dynamicFaqs?: PlatformFaqDocument[];
   onBack: () => void;
   onOpenTrainingSops?: () => void;
 }
@@ -76,10 +77,22 @@ export function HelpSupportScreen({
   phleboEmail,
   activeZoneName,
   supportContacts,
+  dynamicFaqs,
   onBack,
   onOpenTrainingSops,
 }: HelpSupportScreenProps) {
   const [expandedFaqId, setExpandedFaqId] = useState<string | null>('faq-1');
+
+  const effectiveFaqs = useMemo(() => {
+    if (dynamicFaqs && dynamicFaqs.length > 0) {
+      return dynamicFaqs.filter(
+        (f) =>
+          f.isActive !== false &&
+          (!f.targetRoles || f.targetRoles.includes('ALL') || f.targetRoles.includes('PHLEBOTOMIST'))
+      );
+    }
+    return FAQ_LIST;
+  }, [dynamicFaqs]);
 
   const contacts = supportContacts || DEFAULT_SUPPORT_CONTACTS;
   const emergencyPhone = contacts.emergencyPhone || '+9118008897388';
@@ -254,7 +267,7 @@ export function HelpSupportScreen({
           <Text style={screenStyles.faqSectionSub}>Quick answers to standard field collection scenarios</Text>
 
           <View style={{ gap: rs(8), marginTop: rs(10) }}>
-            {FAQ_LIST.map((faq) => {
+            {effectiveFaqs.map((faq) => {
               const isExpanded = expandedFaqId === faq.id;
               return (
                 <View key={faq.id} style={screenStyles.faqCard}>

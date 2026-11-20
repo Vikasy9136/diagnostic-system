@@ -25,8 +25,12 @@ import {
   DEFAULT_COMMISSION_CONFIG as SHARED_DEFAULT_COMMISSION_CONFIG,
   DEFAULT_INVENTORY_KITS,
   DEFAULT_INVENTORY_MATERIALS,
+  DEFAULT_PLATFORM_FAQS,
+  DEFAULT_PLATFORM_SOPS,
   DEFAULT_STARTER_SERVICE_ZONES,
   DEFAULT_SUPPORT_CONTACTS,
+  type PlatformFaqDocument,
+  type PlatformSopDocument,
   type SupportContactsConfig,
   type DiagnosticReportRecord,
   type DiagnosticTestItem,
@@ -2623,6 +2627,123 @@ export async function saveSupportContacts(
     ...(updatedBy ? { updatedBy } : {}),
   };
   await setDoc(doc(db, 'settings', 'support'), deepCleanFirestorePayload(merged), { merge: true });
+}
+
+export async function fetchPlatformSops(): Promise<PlatformSopDocument[]> {
+  try {
+    const snap = await getDocs(collection(db, 'platform_sops'));
+    if (!snap.empty) {
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PlatformSopDocument));
+      return list.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+    }
+  } catch (err) {
+    console.warn('Failed to fetch platform SOPs from Firestore:', err);
+  }
+  return DEFAULT_PLATFORM_SOPS;
+}
+
+export function subscribePlatformSops(
+  onData: (sops: PlatformSopDocument[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  return onSnapshot(
+    collection(db, 'platform_sops'),
+    (snap) => {
+      if (!snap.empty) {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PlatformSopDocument));
+        list.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+        onData(list);
+      } else {
+        onData(DEFAULT_PLATFORM_SOPS);
+      }
+    },
+    (err) => onError?.(err)
+  );
+}
+
+export async function savePlatformSop(
+  sop: Partial<PlatformSopDocument> & { id?: string },
+  updatedBy?: string
+): Promise<string> {
+  const id = sop.id || `sop-${Date.now()}`;
+  const payload: PlatformSopDocument = {
+    id,
+    category: sop.category || 'general',
+    number: sop.number || 'SOP',
+    title: sop.title || 'Untitled SOP',
+    subtitle: sop.subtitle || '',
+    badge: sop.badge || 'STANDARD',
+    badgeColor: sop.badgeColor || '#0D9488',
+    icon: sop.icon || 'test-tube',
+    steps: sop.steps || [],
+    isActive: sop.isActive !== undefined ? sop.isActive : true,
+    orderIndex: sop.orderIndex || 99,
+    targetRoles: sop.targetRoles || ['ALL'],
+    updatedAt: new Date().toISOString(),
+    ...(updatedBy ? { updatedBy } : {}),
+  };
+  await setDoc(doc(db, 'platform_sops', id), deepCleanFirestorePayload(payload), { merge: true });
+  return id;
+}
+
+export async function deletePlatformSop(sopId: string): Promise<void> {
+  await deleteDoc(doc(db, 'platform_sops', sopId));
+}
+
+export async function fetchPlatformFaqs(): Promise<PlatformFaqDocument[]> {
+  try {
+    const snap = await getDocs(collection(db, 'platform_faqs'));
+    if (!snap.empty) {
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PlatformFaqDocument));
+      return list.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+    }
+  } catch (err) {
+    console.warn('Failed to fetch platform FAQs from Firestore:', err);
+  }
+  return DEFAULT_PLATFORM_FAQS;
+}
+
+export function subscribePlatformFaqs(
+  onData: (faqs: PlatformFaqDocument[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  return onSnapshot(
+    collection(db, 'platform_faqs'),
+    (snap) => {
+      if (!snap.empty) {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PlatformFaqDocument));
+        list.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+        onData(list);
+      } else {
+        onData(DEFAULT_PLATFORM_FAQS);
+      }
+    },
+    (err) => onError?.(err)
+  );
+}
+
+export async function savePlatformFaq(
+  faq: Partial<PlatformFaqDocument> & { id?: string },
+  updatedBy?: string
+): Promise<string> {
+  const id = faq.id || `faq-${Date.now()}`;
+  const payload: PlatformFaqDocument = {
+    id,
+    category: faq.category || 'General',
+    question: faq.question || 'FAQ Question',
+    answer: faq.answer || 'FAQ Answer',
+    orderIndex: faq.orderIndex || 99,
+    isActive: faq.isActive !== undefined ? faq.isActive : true,
+    targetRoles: faq.targetRoles || ['ALL'],
+    updatedAt: new Date().toISOString(),
+    ...(updatedBy ? { updatedBy } : {}),
+  };
+  await setDoc(doc(db, 'platform_faqs', id), deepCleanFirestorePayload(payload), { merge: true });
+  return id;
+}
+
+export async function deletePlatformFaq(faqId: string): Promise<void> {
+  await deleteDoc(doc(db, 'platform_faqs', faqId));
 }
 
 export async function dispatchPlatformAlert(opts: {

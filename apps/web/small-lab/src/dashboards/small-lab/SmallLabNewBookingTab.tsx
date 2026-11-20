@@ -95,6 +95,8 @@ export interface SmallLabNewBookingTabProps {
   onBroadcastRadiusKmChange: (km: number) => void;
   payImmediatelyOnBook: boolean;
   onPayImmediatelyOnBookChange: (val: boolean) => void;
+  bookingStep?: 1 | 2 | 3 | 4;
+  onBookingStepChange?: (step: 1 | 2 | 3 | 4) => void;
   submittingBooking: boolean;
   onSubmitBooking: (e: FormEvent) => Promise<void>;
   onShowAlert?: (params: {
@@ -170,12 +172,19 @@ export function SmallLabNewBookingTab({
   onBroadcastRadiusKmChange,
   payImmediatelyOnBook,
   onPayImmediatelyOnBookChange,
+  bookingStep,
+  onBookingStepChange,
   submittingBooking,
   onSubmitBooking,
   onShowAlert,
 }: SmallLabNewBookingTabProps) {
   // 4-Step Wizard State: 1 = Patient Details, 2 = Test Selection, 3 = Collection & Pickup, 4 = Review & Confirm
-  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1);
+  const [internalStep, setInternalStep] = useState<1 | 2 | 3 | 4>(1);
+  const currentStep = bookingStep ?? internalStep;
+  const setCurrentStep = (step: 1 | 2 | 3 | 4) => {
+    setInternalStep(step);
+    onBookingStepChange?.(step);
+  };
   const [patientMode, setPatientMode] = useState<'EXISTING' | 'NEW'>('EXISTING');
   const [showSupportModal, setShowSupportModal] = useState(false);
   const [testCategoryFilter, setTestCategoryFilter] = useState('ALL');
@@ -872,6 +881,9 @@ export function SmallLabNewBookingTab({
                       heightPx={240}
                       title="Pin Exact Sample Collection Point (Google Maps)"
                       subtitle="Drag pin, click map, or search Google Places to sync coordinates for rider navigation"
+                      radiusKm={broadcastRadiusKm}
+                      radiusColor="#0D9488"
+                      nearbyPhlebos={phlebotomists}
                       onChange={onPickupLocationChange}
                     />
                   </div>
@@ -919,14 +931,33 @@ export function SmallLabNewBookingTab({
                     </div>
                   </div>
 
-                  {/* Active Zone Coverage */}
+                  {/* Service Zone & Pincode Coverage Alert Module */}
                   <div
-                    className={`zone-coverage-pill ${pickupCoverage.covered ? 'covered' : 'uncovered'}`}
-                    style={{ margin: 0 }}
+                    style={{
+                      borderRadius: '10px',
+                      padding: '12px 16px',
+                      background: pickupCoverage.covered ? '#F0FDF4' : '#FFFBEB',
+                      border: `1.5px solid ${pickupCoverage.covered ? '#86EFAC' : '#FDE68A'}`,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px',
+                    }}
                   >
-                    {pickupCoverage.covered
-                      ? `✓ Inside Active Coverage: ${pickupCoverage.matchedZone?.name} (${pickupCoverage.matchedZone?.zoneCode}) — Instant Cold-Chain Pickup Ready`
-                      : `⚠️ ${pickupCoverage.message}`}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '1.1rem' }}>
+                        {pickupCoverage.covered ? '✅' : '📍'}
+                      </span>
+                      <strong style={{ fontSize: '0.86rem', color: pickupCoverage.covered ? '#166534' : '#92400E' }}>
+                        {pickupCoverage.covered
+                          ? `Inside Enrolled Service Zone: ${pickupCoverage.matchedZone?.name || 'Active Zone'}`
+                          : `Pilot Area Expansion: Pincode "${pickupPincode || 'Entered'}"`}
+                      </strong>
+                    </div>
+                    <div style={{ fontSize: '0.78rem', color: pickupCoverage.covered ? '#15803D' : '#78350F', lineHeight: 1.45 }}>
+                      {pickupCoverage.covered
+                        ? `This collection point is inside verified zone ${pickupCoverage.matchedZone?.zoneCode} (${pickupCoverage.matchedZone?.city}). Nearby online phlebotomists will receive priority cold-chain dispatch.`
+                        : `This address is outside standard pre-enrolled clusters, but Flexible Dispatch is active. All nearby active phlebotomists within ${broadcastRadiusKm || 5} km on the Fleet Radar will receive and can accept this pickup.`}
+                    </div>
                   </div>
 
                   {/* Step 1 Navigation Footer */}
@@ -1348,6 +1379,22 @@ export function SmallLabNewBookingTab({
                       onChange={(e) => onBroadcastRadiusKmChange(Number(e.target.value))}
                       style={{ width: '100%' }}
                     />
+
+                    {/* Rapido / Uber Style Live Phlebotomists Radar Map */}
+                    <div style={{ marginTop: '12px', borderRadius: '10px', overflow: 'hidden', border: '1px solid #CBD5E1' }}>
+                      <InteractiveMapPicker
+                        latitude={pickupLat}
+                        longitude={pickupLng}
+                        radiusKm={broadcastRadiusKm}
+                        radiusColor="#0D9488"
+                        heightPx={200}
+                        showPresets={false}
+                        nearbyPhlebos={phlebotomists}
+                        title="Live Fleet Radar Around Collection Point"
+                        subtitle="Rapido / Uber style real-time view of nearby phlebotomists"
+                        onChange={onPickupLocationChange}
+                      />
+                    </div>
                   </div>
                 )}
 

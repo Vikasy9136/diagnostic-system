@@ -10,6 +10,7 @@ import {
   setDoc,
   updateDoc,
   where,
+  writeBatch,
   type Unsubscribe,
 } from 'firebase/firestore';
 import {
@@ -22,7 +23,15 @@ import {
   CustodyEventType,
   deepCleanFirestorePayload,
   DEFAULT_COMMISSION_CONFIG as SHARED_DEFAULT_COMMISSION_CONFIG,
+  DEFAULT_INVENTORY_KITS,
+  DEFAULT_INVENTORY_MATERIALS,
+  DEFAULT_PLATFORM_FAQS,
+  DEFAULT_PLATFORM_SOPS,
   DEFAULT_STARTER_SERVICE_ZONES,
+  DEFAULT_SUPPORT_CONTACTS,
+  type PlatformFaqDocument,
+  type PlatformSopDocument,
+  type SupportContactsConfig,
   type DiagnosticReportRecord,
   type DiagnosticTestItem,
   type DropDestinationType,
@@ -31,7 +40,11 @@ import {
   type EmailTemplateType,
   evaluatePointServiceCoverage,
   generateRoleAssignedId,
+  type InventoryKitItem,
+  type InventoryMaterialItem,
+  type KitAllocationRecord,
   type LabCenterType,
+  type LabDocumentRecord,
   type LabFacility,
   type LabVerificationStatus,
   normalizeIdentifierCode,
@@ -55,6 +68,7 @@ import {
   SpecimenQualityStatus,
   type UserProfile,
   UserRole,
+  type VendorPurchaseRecord,
 } from '@diagnostic/shared';
 import {
   ADMIN_LOGIN_EMAIL,
@@ -406,7 +420,11 @@ export async function saveServiceZone(
     createdAt: zone.createdAt || now,
     updatedAt: now,
   });
-  await setDoc(doc(db, 'service_zones', id), full, { merge: true });
+  try {
+    await setDoc(doc(db, 'service_zones', id), full, { merge: true });
+  } catch (err) {
+    console.warn('[firestoreService] Direct Firestore saveServiceZone setDoc warning:', err);
+  }
   return full;
 }
 
@@ -416,24 +434,32 @@ export async function toggleServiceZoneActive(
   actorEmail?: string
 ): Promise<void> {
   const now = new Date().toISOString();
-  await setDoc(
-    doc(db, 'service_zones', zone.id),
-    {
-      isActive,
-      launchPhase: isActive
-        ? zone.launchPhase === 'PAUSED'
-          ? 'EXPANSION'
-          : zone.launchPhase
-        : 'PAUSED',
-      updatedBy: actorEmail || ADMIN_LOGIN_EMAIL,
-      updatedAt: now,
-    },
-    { merge: true }
-  );
+  try {
+    await setDoc(
+      doc(db, 'service_zones', zone.id),
+      {
+        isActive,
+        launchPhase: isActive
+          ? zone.launchPhase === 'PAUSED'
+            ? 'EXPANSION'
+            : zone.launchPhase
+          : 'PAUSED',
+        updatedBy: actorEmail || ADMIN_LOGIN_EMAIL,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    console.warn('[firestoreService] toggleServiceZoneActive warning:', err);
+  }
 }
 
 export async function deleteServiceZone(zoneId: string): Promise<void> {
-  await deleteDoc(doc(db, 'service_zones', zoneId));
+  try {
+    await deleteDoc(doc(db, 'service_zones', zoneId));
+  } catch (err) {
+    console.warn('[firestoreService] deleteServiceZone warning:', err);
+  }
 }
 
 export function computeNextAssignedIdForRole(params: {
@@ -1028,7 +1054,20 @@ export async function provisionRoleUser(
     parentLabName?: string;
     nablNumber?: string;
     vehicleInfo?: string;
+    assignedZoneId?: string;
+    assignedZoneCode?: string;
+    assignedZoneName?: string;
+    assignedCity?: string;
     existingCodes?: string[];
+    exteriorPhotoUrl?: string;
+    interiorPhotoUrl?: string;
+    livePhotoUrl?: string;
+    photos?: string[];
+    documents?: LabDocumentRecord[];
+    contactPersonName?: string;
+    operatingHours?: string;
+    verified?: boolean;
+    verificationStatus?: LabVerificationStatus;
   }
 ): Promise<{ profile: UserProfile; apiSynced: boolean }> {
   const normalized = payload.email.trim().toLowerCase();
@@ -1086,6 +1125,16 @@ export async function provisionRoleUser(
     ...(manualLabId ? { labId: manualLabId } : {}),
     ...(resolvedParentLabId ? { parentLabId: resolvedParentLabId } : {}),
     ...(manualPhleboId ? { phlebotomistId: manualPhleboId } : {}),
+    ...(extra?.assignedZoneName || extra?.assignedZoneCode
+      ? {
+        assignedZone: extra.assignedZoneCode
+          ? `${extra.assignedZoneCode} • ${extra.assignedZoneName || ''}`.trim()
+          : extra.assignedZoneName,
+      }
+      : {}),
+    ...(extra?.assignedCity || extra?.city
+      ? { assignedCity: (extra.assignedCity || extra.city || '').trim() }
+      : {}),
   };
 
   let createdProfile: UserProfile | null = null;
@@ -1219,6 +1268,8 @@ export async function provisionRoleUser(
     initialPasswordSet: false,
     isActive: true,
     createdByAdmin: true,
+    verified: extra?.verified !== undefined ? extra.verified : (apiPayload.role === UserRole.ADMIN),
+    verificationStatus: extra?.verificationStatus || (apiPayload.role === UserRole.ADMIN ? 'VERIFIED' : 'PENDING'),
     createdAt: now,
     updatedAt: now,
   };
@@ -1236,7 +1287,11 @@ export async function provisionRoleUser(
   const effectivePhleboId = profile.phlebotomistId || resolvedPhleboId;
 
   if (auth.currentUser) {
-    await setDoc(doc(db, 'user_directory', normalized), profile, { merge: true });
+    try {
+      await setDoc(doc(db, 'user_directory', normalized), profile, { merge: true });
+    } catch (err) {
+      console.warn('[provisionRoleUser] Direct write to user_directory caught:', err);
+    }
 
     if (extra?.createFacilityRecord !== false) {
       if (
@@ -1271,8 +1326,8 @@ export async function provisionRoleUser(
           nablNumber:
             extra?.nablNumber?.trim() ||
             (isLarge ? 'NABL ISO 15189' : 'Registered Center'),
-          verified: true,
-          verificationStatus: 'VERIFIED',
+          verified: extra?.verified !== undefined ? extra.verified : false,
+          verificationStatus: extra?.verificationStatus || 'PENDING',
           ...(isLarge ? { cutoffWindow: '08:30 PM Daily Cutoff', courierEtaMins: 20 } : {}),
           ...(profile.initialPasswordSet
             ? {
@@ -1281,12 +1336,28 @@ export async function provisionRoleUser(
             }
             : {}),
           rating: 5.0,
+          ...(extra?.exteriorPhotoUrl ? { exteriorPhotoUrl: extra.exteriorPhotoUrl } : {}),
+          ...(extra?.interiorPhotoUrl ? { interiorPhotoUrl: extra.interiorPhotoUrl } : {}),
+          ...(extra?.livePhotoUrl ? { livePhotoUrl: extra.livePhotoUrl } : {}),
+          ...(extra?.photos && extra.photos.length > 0 ? { photos: extra.photos } : {}),
+          ...(extra?.documents && extra.documents.length > 0 ? { documents: extra.documents } : {}),
+          ...(extra?.contactPersonName ? { contactPersonName: extra.contactPersonName } : {}),
+          ...(extra?.operatingHours ? { operatingHours: extra.operatingHours } : {}),
           createdAt: now,
           updatedAt: now,
         };
         const labPayload: LabFacility = stripUndefinedFields<LabFacility>(rawLabPayload);
-        await setDoc(doc(db, 'labs', effectiveLabId), labPayload, { merge: true });
+        try {
+          await setDoc(doc(db, 'labs', effectiveLabId), labPayload, { merge: true });
+        } catch (err) {
+          console.warn('[provisionRoleUser] Direct write to labs caught:', err);
+        }
       } else if (profile.role === UserRole.PHLEBOTOMIST && effectivePhleboId) {
+        const resolvedZoneDisplay = extra?.assignedZoneName?.trim()
+          ? extra.assignedZoneCode?.trim()
+            ? `${extra.assignedZoneName.trim()} (${extra.assignedZoneCode.trim()})`
+            : extra.assignedZoneName.trim()
+          : extra?.city?.trim() || 'Zone Pending (Admin)';
         const rawPhleboPayload: PhlebotomistProfile = {
           id: effectivePhleboId,
           userCode: profile.userCode || effectivePhleboId,
@@ -1295,7 +1366,13 @@ export async function provisionRoleUser(
           phone: profile.phoneNumber || '',
           email: normalized,
           status: 'ONLINE',
-          currentLocation: extra?.city?.trim() || 'Active Field Zone',
+          currentLocation: resolvedZoneDisplay,
+          ...(extra?.assignedZoneId ? { assignedZoneId: extra.assignedZoneId } : {}),
+          ...(extra?.assignedZoneCode ? { assignedZoneCode: extra.assignedZoneCode.trim().toUpperCase() } : {}),
+          ...(extra?.assignedZoneName ? { assignedZoneName: extra.assignedZoneName.trim() } : {}),
+          ...(extra?.assignedCity || extra?.city
+            ? { assignedCity: (extra.assignedCity || extra.city || '').trim() }
+            : {}),
           latitude: typeof extra?.latitude === 'number' ? extra.latitude : 19.124,
           longitude: typeof extra?.longitude === 'number' ? extra.longitude : 72.866,
           batteryPct: 100,
@@ -1304,15 +1381,24 @@ export async function provisionRoleUser(
           vehicleInfo: extra?.vehicleInfo?.trim() || 'Cold-Chain Two-Wheeler',
           rating: 5.0,
           totalPickups: 0,
-          verified: true,
+          verified: extra?.verified !== undefined ? extra.verified : false,
+          verificationStatus: extra?.verificationStatus || 'PENDING',
+          ...(extra?.livePhotoUrl ? { livePhotoUrl: extra.livePhotoUrl } : {}),
+          ...(extra?.exteriorPhotoUrl ? { exteriorPhotoUrl: extra.exteriorPhotoUrl } : {}),
+          ...(extra?.interiorPhotoUrl ? { interiorPhotoUrl: extra.interiorPhotoUrl } : {}),
+          ...(extra?.documents && extra.documents.length > 0 ? { documents: extra.documents } : {}),
           createdAt: now,
           updatedAt: now,
         };
         const phleboPayload: PhlebotomistProfile =
           stripUndefinedFields<PhlebotomistProfile>(rawPhleboPayload);
-        await setDoc(doc(db, 'phlebotomists', effectivePhleboId), phleboPayload, {
-          merge: true,
-        });
+        try {
+          await setDoc(doc(db, 'phlebotomists', effectivePhleboId), phleboPayload, {
+            merge: true,
+          });
+        } catch (err) {
+          console.warn('[provisionRoleUser] Direct write to phlebotomists caught:', err);
+        }
       }
     }
 
@@ -1455,11 +1541,197 @@ export async function updateLabVerification(
   labId: string,
   verificationStatus: LabVerificationStatus
 ): Promise<void> {
+  const snap = await getDoc(doc(db, 'labs', labId));
+  if (!snap.exists()) {
+    throw new Error(`Laboratory facility ${labId} was not found.`);
+  }
+  const data = snap.data();
+  const docs = (data.documents || []) as LabDocumentRecord[];
+  const extPhoto = data.exteriorPhotoUrl;
+  const intPhoto = data.interiorPhotoUrl;
+
+  if (verificationStatus === 'VERIFIED') {
+    if (docs.length === 0) {
+      throw new Error(
+        'Cannot verify laboratory: At least one required regulatory/trade document must be uploaded before approval.'
+      );
+    }
+    if (!extPhoto) {
+      throw new Error(
+        'Cannot verify laboratory: Live Front Exterior Signboard Photo is required.'
+      );
+    }
+    if (!intPhoto) {
+      throw new Error(
+        'Cannot verify laboratory: Live Facility Interior Photo is required.'
+      );
+    }
+  }
+
+  const now = new Date().toISOString();
   await updateDoc(doc(db, 'labs', labId), {
     verificationStatus,
     verified: verificationStatus === 'VERIFIED',
-    updatedAt: new Date().toISOString(),
+    updatedAt: now,
   });
+
+  // Sync verification status to user_directory & users
+  const targetEmail = data.email?.toLowerCase().trim();
+  if (targetEmail) {
+    try {
+      const userRef = doc(db, 'user_directory', targetEmail);
+      const userSnap = await getDoc(userRef);
+      if (userSnap.exists()) {
+        await updateDoc(userRef, {
+          verificationStatus,
+          verified: verificationStatus === 'VERIFIED',
+          updatedAt: now,
+        });
+      }
+    } catch {
+      // Non-fatal sync
+    }
+
+    // Automatically send onboarding credentials and login instructions email
+    if (verificationStatus === 'VERIFIED') {
+      try {
+        const role = data.type === 'LARGE_LAB' ? UserRole.LARGE_LAB : UserRole.SMALL_LAB;
+        const roleLabel = ROLE_LABELS[role];
+        const portalOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://labsetu.app';
+        const loginUrl = `${portalOrigin}/login?role=${encodeURIComponent(role)}`;
+        const resetUrl = `${portalOrigin}/forgot-password?email=${encodeURIComponent(targetEmail)}&role=${encodeURIComponent(role)}`;
+
+        await addDoc(collection(db, 'mail'), {
+          to: [targetEmail],
+          templateType: 'ACCOUNT_WELCOME' satisfies EmailTemplateType,
+          category: NotificationCategory.SYSTEM_ALERT,
+          priority: NotificationPriority.HIGH,
+          templateData: {
+            displayName: data.name,
+            email: targetEmail,
+            userCode: data.userCode || labId,
+            role,
+            labId,
+            hasPassword: Boolean(data.initialPasswordSet),
+            portalOrigin,
+          },
+          message: {
+            subject: `Welcome to LabSetu — ${roleLabel} Account Verified & Ready (${data.userCode || labId})`,
+            text: `Hello ${data.name},\n\nYour laboratory account on LabSetu (${data.userCode || labId}) has been successfully verified and approved by the LabSetu Platform Administrator.\n\nAccount Credentials & Login Steps:\n1. Open the portal at: ${loginUrl}\n2. Enter your registered email: ${targetEmail} (or Assigned ID: ${data.userCode || labId})\n3. Sign in using Email OTP, Google Sign-In, or set your password at: ${resetUrl}\n\nThank you for partnering with LabSetu!`,
+          },
+          createdAt: now,
+        });
+      } catch (mailErr) {
+        console.warn('[updateLabVerification] Could not queue welcome email:', mailErr);
+      }
+    }
+  }
+}
+
+export async function updatePhleboVerification(
+  phleboId: string,
+  verificationStatus: LabVerificationStatus
+): Promise<void> {
+  const snap = await getDoc(doc(db, 'phlebotomists', phleboId));
+  if (!snap.exists()) {
+    throw new Error(`Phlebotomist profile ${phleboId} was not found.`);
+  }
+  const data = snap.data();
+  const docs = (data.documents || []) as LabDocumentRecord[];
+  const livePhoto = data.livePhotoUrl;
+
+  if (verificationStatus === 'VERIFIED') {
+    if (docs.length === 0) {
+      throw new Error(
+        'Cannot verify phlebotomist: At least one required KYC document (Aadhaar, Driving License, DMLT, or PAN) must be uploaded before approval.'
+      );
+    }
+    if (!livePhoto) {
+      throw new Error(
+        'Cannot verify phlebotomist: Live Browser Camera Selfie / Portrait photo must be captured before approval.'
+      );
+    }
+  }
+
+  const now = new Date().toISOString();
+  await updateDoc(doc(db, 'phlebotomists', phleboId), {
+    verificationStatus,
+    verified: verificationStatus === 'VERIFIED',
+    updatedAt: now,
+  });
+
+  // Sync to user_directory / users
+  const targetEmail = data.email?.toLowerCase().trim();
+  if (targetEmail) {
+    try {
+      const userRef = doc(db, 'user_directory', targetEmail);
+      const userSnap = await getDoc(userRef);
+      if (userSnap.exists()) {
+        await updateDoc(userRef, {
+          verificationStatus,
+          verified: verificationStatus === 'VERIFIED',
+          updatedAt: now,
+        });
+      }
+    } catch {
+      // Non-fatal sync
+    }
+
+    // Automatically send mobile app credentials and login instructions email
+    if (verificationStatus === 'VERIFIED') {
+      try {
+        const portalOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://labsetu.app';
+        const resetUrl = `${portalOrigin}/forgot-password?email=${encodeURIComponent(targetEmail)}&role=${encodeURIComponent(UserRole.PHLEBOTOMIST)}`;
+
+        await addDoc(collection(db, 'mail'), {
+          to: [targetEmail],
+          templateType: 'ACCOUNT_WELCOME' satisfies EmailTemplateType,
+          category: NotificationCategory.SYSTEM_ALERT,
+          priority: NotificationPriority.HIGH,
+          templateData: {
+            displayName: data.name,
+            email: targetEmail,
+            userCode: data.userCode || phleboId,
+            role: UserRole.PHLEBOTOMIST,
+            phlebotomistId: phleboId,
+            hasPassword: false,
+            portalOrigin,
+          },
+          message: {
+            subject: `Welcome to LabSetu — Field Phlebotomist Account Verified & Ready (${data.userCode || phleboId})`,
+            text: `Hello ${data.name},\n\nCongratulations! Your Field Phlebotomist account on LabSetu (${data.userCode || phleboId}) has been verified and approved by the LabSetu Platform Administrator.\n\nMobile App Login Steps:\n1. Open the LabSetu Phlebotomist Mobile App on your device.\n2. Enter your registered email (${targetEmail}) or Courier ID (${data.userCode || phleboId}).\n3. Use Email OTP to sign in immediately, or set a secure password at: ${resetUrl}\n4. Enable your shift to start receiving assigned cold-chain sample pickup requests.\n\nWelcome to the LabSetu logistics network!`,
+          },
+          createdAt: now,
+        });
+      } catch (mailErr) {
+        console.warn('[updatePhleboVerification] Could not queue welcome email:', mailErr);
+      }
+    }
+  }
+}
+
+export async function updateLabMediaAndDocuments(
+  labId: string,
+  updates: {
+    exteriorPhotoUrl?: string;
+    interiorPhotoUrl?: string;
+    livePhotoUrl?: string;
+    photos?: string[];
+    documents?: LabDocumentRecord[];
+    contactPersonName?: string;
+    operatingHours?: string;
+    nablNumber?: string;
+    verificationStatus?: LabVerificationStatus;
+  }
+): Promise<void> {
+  const payload: Record<string, unknown> = {
+    ...updates,
+    updatedAt: new Date().toISOString(),
+  };
+  if (updates.verificationStatus) {
+    payload.verified = updates.verificationStatus === 'VERIFIED';
+  }
+  await updateDoc(doc(db, 'labs', labId), stripUndefinedFields(payload));
 }
 
 export async function savePhlebotomist(
@@ -1684,9 +1956,6 @@ export async function createLiveBooking(params: {
     resolvedPickup.longitude,
     resolvedPickup.pincode
   );
-  if (!coverage.covered) {
-    throw new Error(coverage.message);
-  }
 
   const resolvedDelivery = params.deliveryLocation || {
     address: params.targetLab.address,
@@ -1705,7 +1974,7 @@ export async function createLiveBooking(params: {
   const broadcastRadiusKm =
     params.broadcastRadiusKm ??
     params.commissionConfig.defaultBroadcastRadiusKm ??
-    5;
+    (coverage.covered ? 10 : 25);
 
   const custodyEvent: CustodyEvent = {
     id: `EVT-${Date.now()}`,
@@ -1775,7 +2044,10 @@ export async function createLiveBooking(params: {
         serviceZoneId: coverage.matchedZone.id,
         serviceZoneName: coverage.matchedZone.name,
       }
-      : {}),
+      : {
+        serviceZoneId: 'ZONE-PILOT-EXPANSION',
+        serviceZoneName: 'Flexible Pilot Expansion Zone',
+      }),
     paymentStatus: 'UNPAID',
     handoverOtp,
     department: params.selectedTests[0]?.department || 'Pathology',
@@ -1926,12 +2198,13 @@ export async function retryOrderBroadcast(
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 45000).toISOString();
 
+  const operatorUid = auth.currentUser?.uid || existing.smallLabId;
   const retryEvent: CustodyEvent = {
     id: `EVT-${Date.now()}`,
     orderId: existing.id,
     eventType: CustodyEventType.PACKED_BY_SMALL_LAB,
     timestamp: now.toISOString(),
-    operatorId: existing.smallLabId,
+    operatorId: operatorUid,
     operatorName: existing.smallLabName,
     operatorRole: UserRole.SMALL_LAB,
     notes: hikeInr > 0
@@ -1954,20 +2227,31 @@ export async function retryOrderBroadcast(
   };
 
   await updateDoc(orderRef, stripUndefinedFields(updatedFields));
-  await addDoc(collection(db, 'custody_events'), retryEvent);
 
-  // Broadcast high-priority alert to nearby phlebotomists
-  await dispatchPlatformAlert({
-    title: hikeInr > 0
-      ? `⚡ SURGE +₹${hikeInr} ADD-ON: Pickup ${existing.orderNumber}`
-      : `🔄 RETRY BROADCAST: Pickup ${existing.orderNumber}`,
-    message: `${existing.smallLabName} pickup retried (${existing.distanceKm || 1} km route -> ${existing.targetLabName}). Payout boosted to ₹${newCourierFee}!`,
-    category: NotificationCategory.PICKUP_ASSIGNED,
-    priority: NotificationPriority.HIGH,
-    recipientRole: UserRole.PHLEBOTOMIST,
-    orderId: existing.id,
-    queueEmail: false,
-  });
+  try {
+    await addDoc(collection(db, 'custody_events'), retryEvent);
+  } catch (err) {
+    console.warn('[retryOrderBroadcast] custody_events log caught:', err);
+  }
+
+  // If an order had an assigned phlebotomist, alert only that specific courier
+  if (existing.phlebotomistId) {
+    try {
+      await dispatchPlatformAlert({
+        title: hikeInr > 0
+          ? `⚡ SURGE +₹${hikeInr} ADD-ON: Pickup ${existing.orderNumber}`
+          : `🔄 RETRY BROADCAST: Pickup ${existing.orderNumber}`,
+        message: `${existing.smallLabName} pickup retried (${existing.distanceKm || 1} km route -> ${existing.targetLabName}). Payout boosted to ₹${newCourierFee}!`,
+        category: NotificationCategory.PICKUP_ASSIGNED,
+        priority: NotificationPriority.HIGH,
+        recipientRole: UserRole.PHLEBOTOMIST,
+        orderId: existing.id,
+        queueEmail: false,
+      });
+    } catch (err) {
+      console.warn('[retryOrderBroadcast] dispatchPlatformAlert caught:', err);
+    }
+  }
 
   return {
     ...existing,
@@ -2273,6 +2557,195 @@ export async function markNotificationRead(id: string): Promise<void> {
   await updateDoc(doc(db, 'notifications', id), { read: true });
 }
 
+export async function markAllNotificationsRead(ids: string[]): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += 400) {
+    chunks.push(ids.slice(i, i + 400));
+  }
+  for (const chunk of chunks) {
+    const batch = writeBatch(db);
+    chunk.forEach((id) => {
+      batch.update(doc(db, 'notifications', id), { read: true, readAt: new Date().toISOString() });
+    });
+    await batch.commit();
+  }
+}
+
+export async function clearAllNotifications(ids: string[]): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += 400) {
+    chunks.push(ids.slice(i, i + 400));
+  }
+  for (const chunk of chunks) {
+    const batch = writeBatch(db);
+    chunk.forEach((id) => {
+      batch.delete(doc(db, 'notifications', id));
+    });
+    await batch.commit();
+  }
+}
+
+export async function fetchSupportContacts(): Promise<SupportContactsConfig> {
+  try {
+    const snap = await getDoc(doc(db, 'settings', 'support'));
+    if (snap.exists()) {
+      return { ...DEFAULT_SUPPORT_CONTACTS, ...(snap.data() as Partial<SupportContactsConfig>) };
+    }
+  } catch (err) {
+    console.warn('Failed to fetch support contacts from Firestore:', err);
+  }
+  return { ...DEFAULT_SUPPORT_CONTACTS };
+}
+
+export function subscribeSupportContacts(
+  onData: (cfg: SupportContactsConfig) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  return onSnapshot(
+    doc(db, 'settings', 'support'),
+    (snap) => {
+      if (snap.exists()) {
+        onData({ ...DEFAULT_SUPPORT_CONTACTS, ...(snap.data() as Partial<SupportContactsConfig>) });
+      } else {
+        onData({ ...DEFAULT_SUPPORT_CONTACTS });
+      }
+    },
+    (err) => onError?.(err)
+  );
+}
+
+export async function saveSupportContacts(
+  cfg: Partial<SupportContactsConfig>,
+  updatedBy?: string
+): Promise<void> {
+  const merged: SupportContactsConfig = {
+    ...DEFAULT_SUPPORT_CONTACTS,
+    ...cfg,
+    updatedAt: new Date().toISOString(),
+    ...(updatedBy ? { updatedBy } : {}),
+  };
+  await setDoc(doc(db, 'settings', 'support'), deepCleanFirestorePayload(merged), { merge: true });
+}
+
+export async function fetchPlatformSops(): Promise<PlatformSopDocument[]> {
+  try {
+    const snap = await getDocs(collection(db, 'platform_sops'));
+    if (!snap.empty) {
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PlatformSopDocument));
+      return list.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+    }
+  } catch (err) {
+    console.warn('Failed to fetch platform SOPs from Firestore:', err);
+  }
+  return DEFAULT_PLATFORM_SOPS;
+}
+
+export function subscribePlatformSops(
+  onData: (sops: PlatformSopDocument[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  return onSnapshot(
+    collection(db, 'platform_sops'),
+    (snap) => {
+      if (!snap.empty) {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PlatformSopDocument));
+        list.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+        onData(list);
+      } else {
+        onData(DEFAULT_PLATFORM_SOPS);
+      }
+    },
+    (err) => onError?.(err)
+  );
+}
+
+export async function savePlatformSop(
+  sop: Partial<PlatformSopDocument> & { id?: string },
+  updatedBy?: string
+): Promise<string> {
+  const id = sop.id || `sop-${Date.now()}`;
+  const payload: PlatformSopDocument = {
+    id,
+    category: sop.category || 'general',
+    number: sop.number || 'SOP',
+    title: sop.title || 'Untitled SOP',
+    subtitle: sop.subtitle || '',
+    badge: sop.badge || 'STANDARD',
+    badgeColor: sop.badgeColor || '#0D9488',
+    icon: sop.icon || 'test-tube',
+    steps: sop.steps || [],
+    isActive: sop.isActive !== undefined ? sop.isActive : true,
+    orderIndex: sop.orderIndex || 99,
+    targetRoles: sop.targetRoles || ['ALL'],
+    updatedAt: new Date().toISOString(),
+    ...(updatedBy ? { updatedBy } : {}),
+  };
+  await setDoc(doc(db, 'platform_sops', id), deepCleanFirestorePayload(payload), { merge: true });
+  return id;
+}
+
+export async function deletePlatformSop(sopId: string): Promise<void> {
+  await deleteDoc(doc(db, 'platform_sops', sopId));
+}
+
+export async function fetchPlatformFaqs(): Promise<PlatformFaqDocument[]> {
+  try {
+    const snap = await getDocs(collection(db, 'platform_faqs'));
+    if (!snap.empty) {
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PlatformFaqDocument));
+      return list.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+    }
+  } catch (err) {
+    console.warn('Failed to fetch platform FAQs from Firestore:', err);
+  }
+  return DEFAULT_PLATFORM_FAQS;
+}
+
+export function subscribePlatformFaqs(
+  onData: (faqs: PlatformFaqDocument[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  return onSnapshot(
+    collection(db, 'platform_faqs'),
+    (snap) => {
+      if (!snap.empty) {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PlatformFaqDocument));
+        list.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+        onData(list);
+      } else {
+        onData(DEFAULT_PLATFORM_FAQS);
+      }
+    },
+    (err) => onError?.(err)
+  );
+}
+
+export async function savePlatformFaq(
+  faq: Partial<PlatformFaqDocument> & { id?: string },
+  updatedBy?: string
+): Promise<string> {
+  const id = faq.id || `faq-${Date.now()}`;
+  const payload: PlatformFaqDocument = {
+    id,
+    category: faq.category || 'General',
+    question: faq.question || 'FAQ Question',
+    answer: faq.answer || 'FAQ Answer',
+    orderIndex: faq.orderIndex || 99,
+    isActive: faq.isActive !== undefined ? faq.isActive : true,
+    targetRoles: faq.targetRoles || ['ALL'],
+    updatedAt: new Date().toISOString(),
+    ...(updatedBy ? { updatedBy } : {}),
+  };
+  await setDoc(doc(db, 'platform_faqs', id), deepCleanFirestorePayload(payload), { merge: true });
+  return id;
+}
+
+export async function deletePlatformFaq(faqId: string): Promise<void> {
+  await deleteDoc(doc(db, 'platform_faqs', faqId));
+}
+
 export async function dispatchPlatformAlert(opts: {
   title: string;
   message: string;
@@ -2387,6 +2860,73 @@ export async function saveCommissionSettings(
     stripUndefinedFields({ ...cfg, updatedBy: adminEmail, updatedAt: new Date().toISOString() }),
     { merge: true }
   );
+}
+
+export async function assignPhlebotomistZone(params: {
+  phleboId: string;
+  phleboEmail?: string;
+  phleboName?: string;
+  zone: ServiceZoneRecord;
+  latitude?: number;
+  longitude?: number;
+  actorEmail: string;
+}): Promise<void> {
+  const now = new Date().toISOString();
+  const cleanLat =
+    typeof params.latitude === 'number' && Number.isFinite(params.latitude)
+      ? Number(params.latitude.toFixed(5))
+      : params.zone.centerLatitude;
+  const cleanLng =
+    typeof params.longitude === 'number' && Number.isFinite(params.longitude)
+      ? Number(params.longitude.toFixed(5))
+      : params.zone.centerLongitude;
+  const zoneLabel = `${params.zone.name} (${params.zone.zoneCode})`;
+
+  await setDoc(
+    doc(db, 'phlebotomists', params.phleboId),
+    stripUndefinedFields({
+      assignedZoneId: params.zone.id,
+      assignedZoneCode: params.zone.zoneCode.trim().toUpperCase(),
+      assignedZoneName: params.zone.name.trim(),
+      assignedCity: params.zone.city.trim(),
+      currentLocation: zoneLabel,
+      latitude: cleanLat,
+      longitude: cleanLng,
+      updatedAt: now,
+    }),
+    { merge: true }
+  );
+
+  const normalizedEmail = params.phleboEmail?.trim().toLowerCase();
+  if (normalizedEmail) {
+    try {
+      await setDoc(
+        doc(db, 'user_directory', normalizedEmail),
+        {
+          assignedZone: `${params.zone.zoneCode} • ${params.zone.name}`,
+          assignedCity: params.zone.city,
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+    } catch {
+      // Non-super-admin Ops managers can update phlebotomists directly even if user_directory is restricted
+    }
+
+    try {
+      await dispatchPlatformAlert({
+        title: `Operating Zone Updated: ${params.zone.zoneCode} (${params.zone.name})`,
+        message: `Admin (${params.actorEmail}) assigned ${params.phleboName || params.phleboId
+          } to service zone ${params.zone.name} (${params.zone.city}, ${params.zone.radiusKm} km radius).`,
+        category: NotificationCategory.SYSTEM_ALERT,
+        priority: NotificationPriority.NORMAL,
+        recipientEmail: normalizedEmail,
+        recipientRole: UserRole.PHLEBOTOMIST,
+      });
+    } catch {
+      // Best-effort notification
+    }
+  }
 }
 
 export async function markOrderPaidByLab(params: {
@@ -2515,4 +3055,451 @@ export async function markOrderPaymentByPhlebo(params: {
     // Non-fatal
   }
 }
+
+// ---------------------------------------------------------------------------
+// Kit & Vacutainer Central Inventory Operations (Admin Central Supply Chain)
+// ---------------------------------------------------------------------------
+
+export function subscribeInventoryMaterials(
+  callback: (items: InventoryMaterialItem[]) => void
+): Unsubscribe {
+  const colRef = collection(db, 'inventory_materials');
+  return onSnapshot(colRef, async (snap) => {
+    if (snap.empty) {
+      for (const item of DEFAULT_INVENTORY_MATERIALS) {
+        try {
+          await setDoc(doc(db, 'inventory_materials', item.id), deepCleanFirestorePayload(item));
+        } catch {
+          // Non-fatal seed retry
+        }
+      }
+      callback(DEFAULT_INVENTORY_MATERIALS as InventoryMaterialItem[]);
+      return;
+    }
+    const list: InventoryMaterialItem[] = [];
+    snap.forEach((d) => {
+      list.push({ ...(d.data() as InventoryMaterialItem), id: d.id });
+    });
+    list.sort((a, b) => a.name.localeCompare(b.name));
+    callback(list);
+  });
+}
+
+export function subscribeInventoryKits(
+  callback: (kits: InventoryKitItem[]) => void
+): Unsubscribe {
+  const colRef = collection(db, 'inventory_kits');
+  return onSnapshot(colRef, async (snap) => {
+    if (snap.empty) {
+      for (const kit of DEFAULT_INVENTORY_KITS) {
+        try {
+          await setDoc(doc(db, 'inventory_kits', kit.id), deepCleanFirestorePayload(kit));
+        } catch {
+          // Non-fatal seed retry
+        }
+      }
+      callback(DEFAULT_INVENTORY_KITS as InventoryKitItem[]);
+      return;
+    }
+    const list: InventoryKitItem[] = [];
+    snap.forEach((d) => {
+      list.push({ ...(d.data() as InventoryKitItem), id: d.id });
+    });
+    list.sort((a, b) => a.kitName.localeCompare(b.kitName));
+    callback(list);
+  });
+}
+
+export function subscribeKitAllocations(
+  callback: (allocations: KitAllocationRecord[]) => void
+): Unsubscribe {
+  const colRef = collection(db, 'kit_allocations');
+  return onSnapshot(colRef, (snap) => {
+    const list: KitAllocationRecord[] = [];
+    snap.forEach((d) => {
+      list.push({ ...(d.data() as KitAllocationRecord), id: d.id });
+    });
+    list.sort((a, b) => new Date(b.allocatedAt).getTime() - new Date(a.allocatedAt).getTime());
+    callback(list);
+  });
+}
+
+export function subscribeVendorPurchases(
+  callback: (purchases: VendorPurchaseRecord[]) => void
+): Unsubscribe {
+  const colRef = collection(db, 'vendor_purchases');
+  return onSnapshot(colRef, (snap) => {
+    const list: VendorPurchaseRecord[] = [];
+    snap.forEach((d) => {
+      list.push({ ...(d.data() as VendorPurchaseRecord), id: d.id });
+    });
+    list.sort((a, b) => new Date(b.purchasedAt).getTime() - new Date(a.purchasedAt).getTime());
+    callback(list);
+  });
+}
+
+export async function saveInventoryMaterial(item: InventoryMaterialItem): Promise<void> {
+  const now = new Date().toISOString();
+  const id = item.id || `MAT-${Date.now()}`;
+  await setDoc(
+    doc(db, 'inventory_materials', id),
+    deepCleanFirestorePayload({
+      ...item,
+      id,
+      updatedAt: now,
+      createdAt: item.createdAt || now,
+    }),
+    { merge: true }
+  );
+}
+
+export async function saveInventoryKit(kit: InventoryKitItem): Promise<void> {
+  const now = new Date().toISOString();
+  const id = kit.id || `KIT-${Date.now()}`;
+  await setDoc(
+    doc(db, 'inventory_kits', id),
+    deepCleanFirestorePayload({
+      ...kit,
+      id,
+      updatedAt: now,
+      createdAt: kit.createdAt || now,
+    }),
+    { merge: true }
+  );
+}
+
+export async function recordAuditLogAction(entry: {
+  action: string;
+  resourceType: string;
+  resourceId?: string;
+  summary: string;
+  details?: Record<string, unknown>;
+  actorEmail?: string;
+}): Promise<void> {
+  try {
+    const logId = `AUDIT-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+    await setDoc(
+      doc(db, 'audit_logs', logId),
+      deepCleanFirestorePayload({
+        id: logId,
+        action: entry.action,
+        resourceType: entry.resourceType,
+        resourceId: entry.resourceId || null,
+        summary: entry.summary,
+        details: entry.details || {},
+        actorEmail: entry.actorEmail || 'admin@labsetu.com',
+        timestamp: new Date().toISOString(),
+      })
+    );
+  } catch (err) {
+    console.warn('[Admin] Failed to record audit log:', err);
+  }
+}
+
+export async function assembleInventoryKits(params: {
+  kit: InventoryKitItem;
+  quantityToAssemble: number;
+  availableMaterials: InventoryMaterialItem[];
+  actorEmail: string;
+}): Promise<void> {
+  const { kit, quantityToAssemble, availableMaterials, actorEmail } = params;
+  if (quantityToAssemble <= 0) {
+    throw new Error('Please enter a valid quantity of kits to assemble.');
+  }
+
+  const materialsById = new Map<string, InventoryMaterialItem>();
+  for (const mat of availableMaterials) {
+    materialsById.set(mat.id, mat);
+  }
+
+  for (const comp of kit.billOfMaterials) {
+    const totalRequired = comp.quantity * quantityToAssemble;
+    const material = materialsById.get(comp.materialId);
+    if (!material) {
+      throw new Error(`Raw material "${comp.materialName}" was not found in stock inventory.`);
+    }
+    if (material.currentStock < totalRequired) {
+      throw new Error(
+        `Insufficient stock for "${comp.materialName}". Required: ${totalRequired} ${comp.unit}s, Available: ${material.currentStock} ${comp.unit}s.`
+      );
+    }
+  }
+
+  const now = new Date().toISOString();
+
+  for (const comp of kit.billOfMaterials) {
+    const totalRequired = comp.quantity * quantityToAssemble;
+    const material = materialsById.get(comp.materialId)!;
+    const newStock = Math.max(0, material.currentStock - totalRequired);
+    await setDoc(
+      doc(db, 'inventory_materials', material.id),
+      deepCleanFirestorePayload({
+        currentStock: newStock,
+        updatedAt: now,
+      }),
+      { merge: true }
+    );
+  }
+
+  const nextKitStock = (kit.currentAssembledStock || 0) + quantityToAssemble;
+  await setDoc(
+    doc(db, 'inventory_kits', kit.id),
+    deepCleanFirestorePayload({
+      currentAssembledStock: nextKitStock,
+      updatedAt: now,
+    }),
+    { merge: true }
+  );
+
+  await recordAuditLogAction({
+    action: 'INVENTORY_KITS_ASSEMBLED',
+    resourceType: 'INVENTORY_KIT',
+    resourceId: kit.id,
+    summary: `Assembled ${quantityToAssemble}x "${kit.kitName}" kits from raw material inventory.`,
+    details: {
+      kitCode: kit.kitCode,
+      quantityAssembled: quantityToAssemble,
+      newAssembledStock: nextKitStock,
+      assembledBy: actorEmail,
+    },
+  });
+}
+
+export async function allocateKitsToPhlebotomist(params: {
+  phlebo: PhlebotomistProfile;
+  kit: InventoryKitItem;
+  quantity: number;
+  actorEmail: string;
+  notes?: string;
+}): Promise<void> {
+  const { phlebo, kit, quantity, actorEmail, notes } = params;
+  if (quantity <= 0) {
+    throw new Error('Please enter a valid quantity of kits to dispatch.');
+  }
+  if ((kit.currentAssembledStock || 0) < quantity) {
+    throw new Error(
+      `Cannot allocate ${quantity} kits. Only ${kit.currentAssembledStock || 0} assembled kits are in central stock.`
+    );
+  }
+
+  const now = new Date().toISOString();
+  const allocationId = `ALLOC-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+
+  const newStock = Math.max(0, (kit.currentAssembledStock || 0) - quantity);
+  await setDoc(
+    doc(db, 'inventory_kits', kit.id),
+    deepCleanFirestorePayload({
+      currentAssembledStock: newStock,
+      updatedAt: now,
+    }),
+    { merge: true }
+  );
+
+  const allocationRecord: KitAllocationRecord = {
+    id: allocationId,
+    phlebotomistId: phlebo.id,
+    phlebotomistName: phlebo.name,
+    phlebotomistPhone: phlebo.phone,
+    kitId: kit.id,
+    kitCode: kit.kitCode,
+    kitName: kit.kitName,
+    quantityAllocated: quantity,
+    quantityConsumed: 0,
+    quantityOnHand: quantity,
+    allocatedAt: now,
+    status: 'DISPATCHED',
+    dispatchedBy: actorEmail,
+    ...(notes ? { notes } : {}),
+  };
+
+  await setDoc(
+    doc(db, 'kit_allocations', allocationId),
+    deepCleanFirestorePayload(allocationRecord)
+  );
+
+  const normalizedPhleboEmail = phlebo.email?.trim().toLowerCase();
+  if (normalizedPhleboEmail) {
+    try {
+      await dispatchPlatformAlert({
+        title: `📦 ${quantity}x Collection Kits Dispatched: ${kit.kitName}`,
+        message: `Admin (${actorEmail}) has dispatched ${quantity}x ${kit.kitName} (${kit.kitCode}) to your field kit. Confirm receipt in your app.`,
+        category: NotificationCategory.SYSTEM_ALERT,
+        priority: NotificationPriority.NORMAL,
+        recipientEmail: normalizedPhleboEmail,
+        recipientRole: UserRole.PHLEBOTOMIST,
+      });
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  await recordAuditLogAction({
+    action: 'INVENTORY_KITS_DISPATCHED',
+    resourceType: 'KIT_ALLOCATION',
+    resourceId: allocationId,
+    summary: `Dispatched ${quantity}x "${kit.kitName}" kits to phlebotomist ${phlebo.name} (${phlebo.id}).`,
+    details: {
+      phlebotomistId: phlebo.id,
+      phlebotomistName: phlebo.name,
+      kitCode: kit.kitCode,
+      quantity,
+      dispatchedBy: actorEmail,
+    },
+  });
+}
+
+export async function allocateSuppliesPackToPhlebotomist(params: {
+  phlebo: PhlebotomistProfile;
+  packName: string;
+  packCode: string;
+  totalPacksCount: number;
+  itemsManifest: Array<{
+    materialId: string;
+    materialName: string;
+    category: any;
+    quantity: number;
+    unit: string;
+    iconEmoji?: string;
+    tubeType?: any;
+  }>;
+  actorEmail: string;
+  notes?: string;
+}): Promise<void> {
+  const { phlebo, packName, packCode, totalPacksCount, itemsManifest, actorEmail, notes } = params;
+
+  if (itemsManifest.length === 0) {
+    throw new Error('Please select at least one item to include in the dispatch pack.');
+  }
+
+  const now = new Date().toISOString();
+  const allocationId = `ALLOC-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+
+  // 1. Deduct all items from inventory_materials
+  for (const item of itemsManifest) {
+    try {
+      const matRef = doc(db, 'inventory_materials', item.materialId);
+      const snap = await getDoc(matRef);
+      if (snap.exists()) {
+        const curStock = (snap.data().currentStock as number) || 0;
+        const nextStock = Math.max(0, curStock - item.quantity);
+        await setDoc(matRef, deepCleanFirestorePayload({ currentStock: nextStock, updatedAt: now }), { merge: true });
+      }
+    } catch (err) {
+      console.warn(`[Inventory] Could not deduct stock for ${item.materialName}:`, err);
+    }
+  }
+
+  // 2. Create kit allocation record with full manifest
+  const allocationRecord: KitAllocationRecord = {
+    id: allocationId,
+    phlebotomistId: phlebo.id,
+    phlebotomistName: phlebo.name,
+    phlebotomistPhone: phlebo.phone,
+    kitId: packCode,
+    kitCode: packCode,
+    kitName: packName,
+    quantityAllocated: totalPacksCount,
+    quantityConsumed: 0,
+    quantityOnHand: totalPacksCount,
+    allocatedAt: now,
+    status: 'DISPATCHED',
+    dispatchedBy: actorEmail,
+    itemsManifest,
+    ...(notes ? { notes } : {}),
+  };
+
+  await setDoc(doc(db, 'kit_allocations', allocationId), deepCleanFirestorePayload(allocationRecord));
+
+  // 3. Notify Phlebotomist
+  const normalizedPhleboEmail = phlebo.email?.trim().toLowerCase();
+  if (normalizedPhleboEmail) {
+    try {
+      const summaryItems = itemsManifest.map(i => `${i.quantity}x ${i.materialName}`).slice(0, 4).join(', ');
+      await dispatchPlatformAlert({
+        title: `📦 Supply Kit Handover Dispatched: ${packName}`,
+        message: `Admin (${actorEmail}) has dispatched field supplies: ${summaryItems}... Check "My Collection Kits" in app.`,
+        recipientEmail: normalizedPhleboEmail,
+        recipientRole: UserRole.PHLEBOTOMIST,
+        category: NotificationCategory.SYSTEM_ALERT,
+        priority: NotificationPriority.HIGH,
+      });
+    } catch {
+      // non-fatal
+    }
+  }
+
+  // 4. Record audit log
+  await recordAuditLogAction({
+    action: 'SUPPLY_PACK_DISPATCHED',
+    resourceType: 'KIT_ALLOCATION',
+    resourceId: allocationId,
+    summary: `Dispatched supply pack "${packName}" (${totalPacksCount} packs) with ${itemsManifest.length} item types to ${phlebo.name}.`,
+    details: {
+      allocationId,
+      phlebotomistId: phlebo.id,
+      phlebotomistName: phlebo.name,
+      items: itemsManifest,
+      dispatchedBy: actorEmail,
+    },
+  });
+}
+
+export async function recordVendorPurchaseOrder(params: {
+  purchase: Omit<VendorPurchaseRecord, 'id' | 'purchasedAt'>;
+  autoReceiveStock: boolean;
+  actorEmail: string;
+}): Promise<void> {
+  const { purchase, autoReceiveStock, actorEmail } = params;
+  const now = new Date().toISOString();
+  const id = `PO-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+
+  const poRecord: VendorPurchaseRecord = {
+    ...purchase,
+    id,
+    purchasedAt: now,
+    status: autoReceiveStock ? 'RECEIVED' : 'ORDERED',
+    ...(autoReceiveStock ? { receivedAt: now } : {}),
+  };
+
+  await setDoc(doc(db, 'vendor_purchases', id), deepCleanFirestorePayload(poRecord));
+
+  if (autoReceiveStock && Array.isArray(purchase.items)) {
+    for (const item of purchase.items) {
+      if (!item.materialId || item.quantity <= 0) continue;
+      try {
+        const matSnap = await getDoc(doc(db, 'inventory_materials', item.materialId));
+        if (matSnap.exists()) {
+          const current = (matSnap.data() as InventoryMaterialItem).currentStock || 0;
+          await setDoc(
+            doc(db, 'inventory_materials', item.materialId),
+            deepCleanFirestorePayload({
+              currentStock: current + item.quantity,
+              batchNumber: item.batchNumber || (matSnap.data() as InventoryMaterialItem).batchNumber,
+              expiryDate: item.expiryDate || (matSnap.data() as InventoryMaterialItem).expiryDate,
+              updatedAt: now,
+            }),
+            { merge: true }
+          );
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+  }
+
+  await recordAuditLogAction({
+    action: 'VENDOR_PURCHASE_RECORDED',
+    resourceType: 'VENDOR_PURCHASE',
+    resourceId: id,
+    summary: `Recorded Inward Purchase Order ${poRecord.poNumber} from "${poRecord.vendorName}" (₹${poRecord.totalAmountInr.toLocaleString('en-IN')}).`,
+    details: {
+      poNumber: poRecord.poNumber,
+      vendorName: poRecord.vendorName,
+      totalAmountInr: poRecord.totalAmountInr,
+      autoReceived: autoReceiveStock,
+      recordedBy: actorEmail,
+    },
+  });
+}
+
 

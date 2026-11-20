@@ -33,6 +33,7 @@ export type AdminTab =
   | 'analytics'
   | 'zones'
   | 'master-data'
+  | 'support-sop-faq'
   | 'settings';
 
 export type LargeLabTab =

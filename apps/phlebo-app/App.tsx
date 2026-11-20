@@ -60,6 +60,8 @@ import {
   type PhlebotomistShiftStatus,
   type PickupOrder,
   type PlatformNotification,
+  type PlatformSopDocument,
+  type PlatformFaqDocument,
   type ServiceZoneRecord,
   type SettlementRecord,
   type SpecimenItem,
@@ -388,6 +390,8 @@ function PhleboAppContent() {
   const [notifications, setNotifications] = useState<PlatformNotification[]>([]);
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
   const [supportContacts, setSupportContacts] = useState<SupportContactsConfig>(DEFAULT_SUPPORT_CONTACTS);
+  const [platformSops, setPlatformSops] = useState<PlatformSopDocument[]>([]);
+  const [platformFaqs, setPlatformFaqs] = useState<PlatformFaqDocument[]>([]);
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
 
   // Payment collection & partner payout profile states
@@ -779,6 +783,36 @@ function PhleboAppContent() {
         () => {
           setSupportContacts(DEFAULT_SUPPORT_CONTACTS);
         }
+      )
+    );
+
+    // Live Dynamic Standard Operating Procedures (SOPs)
+    unsubs.push(
+      onSnapshot(
+        collection(db, 'platform_sops'),
+        (snap) => {
+          if (!snap.empty) {
+            const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PlatformSopDocument));
+            list.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+            setPlatformSops(list);
+          }
+        },
+        () => {}
+      )
+    );
+
+    // Live Dynamic FAQs
+    unsubs.push(
+      onSnapshot(
+        collection(db, 'platform_faqs'),
+        (snap) => {
+          if (!snap.empty) {
+            const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PlatformFaqDocument));
+            list.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+            setPlatformFaqs(list);
+          }
+        },
+        () => {}
       )
     );
 
@@ -4039,12 +4073,14 @@ function PhleboAppContent() {
                     : undefined)
                 }
                 supportContacts={supportContacts}
+                dynamicFaqs={platformFaqs}
                 onBack={handleNavigateBackHome}
                 onOpenTrainingSops={handleOpenTrainingSops}
               />
             ) : currentScreen === 'TRAINING_SOPS' ? (
               <TrainingSopScreen
                 onBack={handleNavigateBackHome}
+                dynamicSops={platformSops}
                 onOpenSupplies={handleOpenMySupplies}
                 onOpenHelpSupport={handleOpenHelpSupport}
               />

@@ -16,6 +16,7 @@ export {
   PasswordInputWithGenerator,
   type PasswordInputWithGeneratorProps,
 } from './PasswordInputWithGenerator';
+export { PaymentSlipModal, type PaymentSlipModalProps } from './PaymentSlipModal';
 export { SlaCountdownBadge, type SlaCountdownBadgeProps } from './SlaCountdownBadge';
 export { StatusDonutCard, type StatusDonutCardProps } from './StatusDonutCard';
 export { WeeklyVolumeBarCard, type WeeklyVolumeBarCardProps } from './WeeklyVolumeBarCard';

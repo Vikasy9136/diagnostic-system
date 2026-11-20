@@ -44,6 +44,8 @@ import {
   type VendorPurchaseRecord,
   DEFAULT_SUPPORT_CONTACTS,
   type SupportContactsConfig,
+  type PlatformSopDocument,
+  type PlatformFaqDocument,
 } from '@diagnostic/shared';
 import {
   EmailAuthProvider,
@@ -89,6 +91,8 @@ import {
   subscribeOrders,
   subscribePayouts,
   subscribePhlebotomists,
+  subscribePlatformFaqs,
+  subscribePlatformSops,
   subscribeReports,
   subscribeServiceZones,
   subscribeSettings,
@@ -128,6 +132,7 @@ import {
   AdminSamplesTab,
   AdminSetPasswordModal,
   AdminSettingsTab,
+  AdminSupportManagementTab,
   AdminUsersTab,
   AdminZonesTab,
   AuditLogsPanel,
@@ -315,6 +320,8 @@ export function AdminDashboard({
             );
           case 'master-data':
             return hasAnyPerm('MANAGE_TEST_CATALOG', 'VIEW_OPERATIONS_DASHBOARD');
+          case 'support-sop-faq':
+            return true;
           case 'settings':
             return true;
           default:
@@ -365,6 +372,8 @@ export function AdminDashboard({
   const [commConfig, setCommConfig] = useState<CommissionConfig>(DEFAULT_COMMISSION_CONFIG);
   const [emailSettings, setEmailSettings] = useState<EmailDeliverySettings>(DEFAULT_EMAIL_SETTINGS);
   const [supportContacts, setSupportContacts] = useState<SupportContactsConfig>(DEFAULT_SUPPORT_CONTACTS);
+  const [platformSops, setPlatformSops] = useState<PlatformSopDocument[]>([]);
+  const [platformFaqs, setPlatformFaqs] = useState<PlatformFaqDocument[]>([]);
 
   // Commission Simulator & Agreements State
   const [simLabOrgId, setSimLabOrgId] = useState<string>('');
@@ -444,6 +453,8 @@ export function AdminDashboard({
       subscribeNotifications(session.profile, setNotifications, noop),
       subscribeSettings(setSlaConfig, setCommConfig, setEmailSettings),
       subscribeSupportContacts(setSupportContacts, noop),
+      subscribePlatformSops(setPlatformSops, noop),
+      subscribePlatformFaqs(setPlatformFaqs, noop),
       subscribeServiceZones(setServiceZones, noop),
       subscribeInventoryMaterials(setMaterials),
       subscribeInventoryKits(setKits),
@@ -1045,6 +1056,12 @@ export function AdminDashboard({
           path: getPathForTab('zones'),
         },
         canViewTab('master-data') && { id: 'master-data', icon: '📁', label: 'Master Test Data', path: getPathForTab('master-data') },
+        canViewTab('support-sop-faq') && {
+          id: 'support-sop-faq',
+          icon: '🎧',
+          label: 'Support, SOP & FAQ',
+          path: getPathForTab('support-sop-faq'),
+        },
         canViewTab('settings') && { id: 'settings', icon: '⚙️', label: 'Settings', path: getPathForTab('settings') },
       ].filter(Boolean) as SidebarNavItem<AdminTab>[]
     );
@@ -1643,6 +1660,16 @@ export function AdminDashboard({
             onDeleteTest={(id) => {
               void deleteDiagnosticTest(id);
             }}
+            onShowAlert={onShowAlert}
+          />
+        )}
+
+        {activeTab === 'support-sop-faq' && (
+          <AdminSupportManagementTab
+            adminEmail={session.profile.email}
+            supportContacts={supportContacts}
+            platformSops={platformSops}
+            platformFaqs={platformFaqs}
             onShowAlert={onShowAlert}
           />
         )}

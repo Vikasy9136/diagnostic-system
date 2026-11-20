@@ -25,6 +25,7 @@ export interface SmallLabBookingsTabProps {
   onCancelOrder: (order: PickupOrder) => void;
   onRetryBroadcast?: (orderId: string, hikeInr: number) => Promise<void>;
   onPrintBarcodes?: (order: PickupOrder) => void;
+  onViewPaymentSlip?: (order: PickupOrder) => void;
 }
 
 export function SmallLabBookingsTab({
@@ -44,6 +45,7 @@ export function SmallLabBookingsTab({
   onCancelOrder,
   onRetryBroadcast,
   onPrintBarcodes,
+  onViewPaymentSlip,
 }: SmallLabBookingsTabProps) {
   const [nowTick, setNowTick] = useState(Date.now());
   const [previewPhotoOrder, setPreviewPhotoOrder] = useState<PickupOrder | null>(null);
@@ -320,6 +322,23 @@ export function SmallLabBookingsTab({
                               title="Print tube barcode stickers for vacutainers"
                             >
                               🏷️ Print Stickers
+                            </button>
+                          )}
+                          {onViewPaymentSlip && (
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              style={{
+                                fontSize: '0.74rem',
+                                color: '#0D9488',
+                                borderColor: '#99F6E4',
+                                background: '#F0FDFA',
+                                fontWeight: 700,
+                              }}
+                              onClick={() => onViewPaymentSlip(o)}
+                              title="View & Print Official PDF Payment Receipt"
+                            >
+                              🧾 Receipt Slip
                             </button>
                           )}
                           {needsOnlinePay && stl && (

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   ScrollView,
   StyleSheet,
@@ -7,12 +7,14 @@ import {
   View,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { type PlatformSopDocument } from '@diagnostic/shared';
 import { BRAND_COLORS } from '../components/LabSetuBrand';
 import { COLORS, FONTS } from '../styles/phleboStyles';
 import { COMPACT_TEXT_SCALE, MAX_TEXT_SCALE, rf, rs } from '../utils/responsive';
 
 export interface TrainingSopScreenProps {
   onBack: () => void;
+  dynamicSops?: PlatformSopDocument[];
   onOpenSupplies?: () => void;
   onOpenHelpSupport?: () => void;
 }
@@ -173,13 +175,38 @@ const SOP_MODULES: SopModule[] = [
 
 export function TrainingSopScreen({
   onBack,
+  dynamicSops,
   onOpenSupplies,
   onOpenHelpSupport,
 }: TrainingSopScreenProps) {
   const [activeTab, setActiveTab] = useState<SopCategory>('all');
   const [expandedSopId, setExpandedSopId] = useState<string | null>('sop-draw');
 
-  const filteredModules = SOP_MODULES.filter((m) => {
+  const effectiveModules = useMemo(() => {
+    if (dynamicSops && dynamicSops.length > 0) {
+      const activeForPhlebo = dynamicSops.filter(
+        (s) =>
+          s.isActive !== false &&
+          (!s.targetRoles || s.targetRoles.includes('ALL') || s.targetRoles.includes('PHLEBOTOMIST'))
+      );
+      if (activeForPhlebo.length > 0) {
+        return activeForPhlebo.map((s) => ({
+          id: s.id,
+          category: (s.category as SopCategory) || 'general',
+          number: s.number,
+          title: s.title,
+          subtitle: s.subtitle,
+          badge: s.badge || 'SOP',
+          badgeColor: s.badgeColor || '#0D9488',
+          icon: s.icon || 'test-tube',
+          steps: s.steps || [],
+        }));
+      }
+    }
+    return SOP_MODULES;
+  }, [dynamicSops]);
+
+  const filteredModules = effectiveModules.filter((m) => {
     if (activeTab === 'all') return true;
     return m.category === activeTab;
   });

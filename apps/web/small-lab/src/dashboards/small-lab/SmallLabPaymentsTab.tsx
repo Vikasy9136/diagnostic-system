@@ -13,6 +13,7 @@ export interface SmallLabPaymentsTabProps {
   payingSettlementId: string | null;
   onPaySettlement: (settlement: SettlementRecord) => Promise<void>;
   onMarkSettlementPaidByLab?: (settlement: SettlementRecord) => Promise<void>;
+  onViewPaymentSlip?: (settlement: SettlementRecord) => void;
 }
 
 export function SmallLabPaymentsTab({
@@ -22,6 +23,7 @@ export function SmallLabPaymentsTab({
   payingSettlementId,
   onPaySettlement,
   onMarkSettlementPaidByLab,
+  onViewPaymentSlip,
 }: SmallLabPaymentsTabProps) {
   return (
     <div className="chart-card-modern">
@@ -128,9 +130,29 @@ export function SmallLabPaymentsTab({
                     </td>
                     <td>
                       {isPaid ? (
-                        <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#059669' }}>
-                          ✓ Paid{s.paymentMethod ? ` (${s.paymentMethod})` : ''}
-                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#059669' }}>
+                            ✓ Paid{s.paymentMethod ? ` (${s.paymentMethod})` : ''}
+                          </span>
+                          {onViewPaymentSlip && (
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              style={{
+                                fontSize: '0.72rem',
+                                color: '#0D9488',
+                                borderColor: '#99F6E4',
+                                background: '#F0FDFA',
+                                padding: '3px 8px',
+                                fontWeight: 700,
+                              }}
+                              onClick={() => onViewPaymentSlip(s)}
+                              title="Print / Download Payment Slip"
+                            >
+                              🧾 Slip
+                            </button>
+                          )}
+                        </div>
                       ) : (
                         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                           <button
@@ -163,3 +185,4 @@ export function SmallLabPaymentsTab({
     </div>
   );
 }
+

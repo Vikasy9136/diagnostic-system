@@ -25,6 +25,7 @@ export interface SmallLabBookingsTabProps {
   onCancelOrder: (order: PickupOrder) => void;
   onRetryBroadcast?: (orderId: string, hikeInr: number) => Promise<void>;
   onPrintBarcodes?: (order: PickupOrder) => void;
+  onViewPaymentSlip?: (order: PickupOrder) => void;
 }
 
 export function SmallLabBookingsTab({
@@ -44,6 +45,7 @@ export function SmallLabBookingsTab({
   onCancelOrder,
   onRetryBroadcast,
   onPrintBarcodes,
+  onViewPaymentSlip,
 }: SmallLabBookingsTabProps) {
   const [nowTick, setNowTick] = useState(Date.now());
   const [previewPhotoOrder, setPreviewPhotoOrder] = useState<PickupOrder | null>(null);
@@ -218,97 +220,173 @@ export function SmallLabBookingsTab({
                       )}
                     </td>
                     <td>
-                      <div>
-                        <code>{o.handoverOtp || '—'}</code>
-                      </div>
-                      <div style={{ marginTop: '4px' }}>
+                      {o.status === OrderStatus.CANCELLED ? (
+                        <div>
+                          <span style={{ color: '#94A3B8', fontSize: '0.78rem', textDecoration: 'line-through' }}>
+                            {o.handoverOtp || '—'}
+                          </span>
+                          <div style={{ marginTop: '4px' }}>
+                            <span
+                              style={{
+                                background: '#F1F5F9',
+                                color: '#64748B',
+                                border: '1px solid #E2E8F0',
+                                borderRadius: '999px',
+                                padding: '2px 8px',
+                                fontSize: '0.72rem',
+                                fontWeight: 600,
+                              }}
+                            >
+                              Order Void
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div>
+                            <code>{o.handoverOtp || '—'}</code>
+                          </div>
+                          <div style={{ marginTop: '4px' }}>
+                            <span
+                              className={
+                                o.paymentStatus === 'PAID' || stl?.paymentStatus === 'PAID'
+                                  ? 'status-pill-green'
+                                  : 'status-pill-amber'
+                              }
+                            >
+                              {o.paymentStatus === 'PAID' || stl?.paymentStatus === 'PAID'
+                                ? `Paid ${formatInr(stl?.grossAmountInr || o.totalAmountInr || 0)}`
+                                : `Due ${formatInr(stl?.grossAmountInr || o.totalAmountInr || 0)}`}
+                            </span>
+                          </div>
+                        </>
+                      )}
+                    </td>
+                    <td>
+                      {o.status === OrderStatus.CANCELLED ? (
                         <span
-                          className={
-                            o.paymentStatus === 'PAID' || stl?.paymentStatus === 'PAID'
-                              ? 'status-pill-green'
-                              : 'status-pill-amber'
-                          }
+                          style={{
+                            background: '#FEE2E2',
+                            color: '#DC2626',
+                            border: '1px solid #FECACA',
+                            borderRadius: '999px',
+                            padding: '3px 10px',
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                          }}
                         >
-                          {o.paymentStatus === 'PAID' || stl?.paymentStatus === 'PAID'
-                            ? `Paid ${formatInr(stl?.grossAmountInr || o.totalAmountInr || 0)}`
-                            : `Due ${formatInr(stl?.grossAmountInr || o.totalAmountInr || 0)}`}
+                          ✕ Cancelled
                         </span>
-                      </div>
+                      ) : (
+                        <span className="status-pill-blue">{formatOrderStatus(o.status)}</span>
+                      )}
                     </td>
                     <td>
-                      <span className="status-pill-blue">{formatOrderStatus(o.status)}</span>
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                        {isSearchingPhlebo && (
-                          <button
-                            type="button"
-                            className="btn-primary"
-                            style={{ fontSize: '0.74rem', background: '#0D9488', borderColor: '#0D9488' }}
-                            onClick={() => onTrackCustody(o)}
-                          >
-                            📡 Radar / Hike
-                          </button>
-                        )}
-                        <button type="button" className="btn-secondary" onClick={() => onTrackCustody(o)}>
-                          {o.phleboLiveLocation ? '📍 Live / Custody' : 'Track Custody'}
-                        </button>
-                        {o.specimens && o.specimens.length > 0 && (
-                          <button
-                            type="button"
-                            className="btn-secondary"
-                            style={{ fontSize: '0.74rem', color: '#0F172A', borderColor: '#CBD5E1' }}
-                            onClick={() => onPrintBarcodes?.(o)}
-                            title="Print tube barcode stickers for vacutainers"
-                          >
-                            🏷️ Print Stickers
-                          </button>
-                        )}
-                        {needsOnlinePay && stl && (
-                          <button
-                            type="button"
-                            className="btn-primary"
-                            disabled={payingSettlementId === stl.id}
-                            onClick={() => void onPaySettlement(stl)}
-                          >
-                            {payingSettlementId === stl.id ? 'Opening...' : 'Pay Now'}
-                          </button>
-                        )}
-                        {o.paymentStatus !== 'PAID' && (
-                          <button
-                            type="button"
-                            className="btn-secondary"
+                      {o.status === OrderStatus.CANCELLED ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span
                             style={{
-                              fontSize: '0.74rem',
-                              color: '#0D9488',
-                              borderColor: '#0D9488',
+                              color: '#94A3B8',
+                              fontSize: '0.78rem',
+                              fontStyle: 'italic',
                               fontWeight: 600,
                             }}
-                            onClick={() => void onMarkPaidByLab?.(o)}
-                            title="Mark as settled directly with the lab so the phlebotomist will not collect payment from the patient."
                           >
-                            ✓ Mark Paid by Lab
-                          </button>
-                        )}
-                        {(o.status === OrderStatus.REPORT_UPLOADED || o.status === OrderStatus.COMPLETED) && (
-                          <span
-                            className="status-pill-green"
-                            style={{ fontSize: '0.74rem', fontWeight: 700 }}
-                          >
-                            ✓ Report Ready
+                            ✕ Cancelled (All Actions Disabled)
                           </span>
-                        )}
-                        {cancellable && (
-                          <button
-                            type="button"
-                            className="btn-secondary"
-                            style={{ color: '#DC2626', borderColor: '#FECACA' }}
-                            onClick={() => onCancelOrder(o)}
-                          >
-                            Cancel
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          {isSearchingPhlebo && (
+                            <button
+                              type="button"
+                              className="btn-primary"
+                              style={{ fontSize: '0.74rem', background: '#0D9488', borderColor: '#0D9488' }}
+                              onClick={() => onTrackCustody(o)}
+                            >
+                              📡 Radar / Hike
+                            </button>
+                          )}
+                          <button type="button" className="btn-secondary" onClick={() => onTrackCustody(o)}>
+                            {o.phleboLiveLocation ? '📍 Live / Custody' : 'Track Custody'}
                           </button>
-                        )}
-                      </div>
+                          {o.specimens && o.specimens.length > 0 && (
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              style={{ fontSize: '0.74rem', color: '#0F172A', borderColor: '#CBD5E1' }}
+                              onClick={() => onPrintBarcodes?.(o)}
+                              title="Print tube barcode stickers for vacutainers"
+                            >
+                              🏷️ Print Stickers
+                            </button>
+                          )}
+                          {onViewPaymentSlip && (
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              style={{
+                                fontSize: '0.74rem',
+                                color: '#0D9488',
+                                borderColor: '#99F6E4',
+                                background: '#F0FDFA',
+                                fontWeight: 700,
+                              }}
+                              onClick={() => onViewPaymentSlip(o)}
+                              title="View & Print Official PDF Payment Receipt"
+                            >
+                              🧾 Receipt Slip
+                            </button>
+                          )}
+                          {needsOnlinePay && stl && (
+                            <button
+                              type="button"
+                              className="btn-primary"
+                              disabled={payingSettlementId === stl.id}
+                              onClick={() => void onPaySettlement(stl)}
+                            >
+                              {payingSettlementId === stl.id ? 'Opening...' : 'Pay Now'}
+                            </button>
+                          )}
+                          {o.paymentStatus !== 'PAID' && (
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              style={{
+                                fontSize: '0.74rem',
+                                color: '#0D9488',
+                                borderColor: '#0D9488',
+                                fontWeight: 600,
+                              }}
+                              onClick={() => void onMarkPaidByLab?.(o)}
+                              title="Mark as settled directly with the lab so the phlebotomist will not collect payment from the patient."
+                            >
+                              ✓ Mark Paid by Lab
+                            </button>
+                          )}
+                          {(o.status === OrderStatus.REPORT_UPLOADED || o.status === OrderStatus.COMPLETED) && (
+                            <span
+                              className="status-pill-green"
+                              style={{ fontSize: '0.74rem', fontWeight: 700 }}
+                            >
+                              ✓ Report Ready
+                            </span>
+                          )}
+                          {cancellable && (
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              style={{ color: '#DC2626', borderColor: '#FECACA' }}
+                              onClick={() => onCancelOrder(o)}
+                            >
+                              Cancel
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 );

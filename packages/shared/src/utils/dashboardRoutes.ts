@@ -256,6 +256,13 @@ export const ADMIN_ROUTES: Record<AdminTab, DashboardRouteMeta<AdminTab>> = {
     title: 'LabSetu | Platform Business Analytics',
     navLabel: 'Analytics',
   },
+  'support-sop-faq': {
+    tab: 'support-sop-faq',
+    path: '/dashboard/support-sop-faq',
+    aliases: ['/support-sop-faq', '/dashboard/support', '/dashboard/sops', '/dashboard/faqs'],
+    title: 'LabSetu | Support Contacts, SOPs & FAQ Management',
+    navLabel: 'Support, SOP & FAQ',
+  },
   settings: {
     tab: 'settings',
     path: '/dashboard/settings',
