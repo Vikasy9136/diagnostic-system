@@ -13,6 +13,7 @@ import {
   Text,
   TouchableOpacity,
   useWindowDimensions,
+  Vibration,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -56,6 +57,14 @@ export function FloatingDispatchOverlay({
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const [menuOpen, setMenuOpen] = useState(false);
   const [measuredMenuHeight, setMeasuredMenuHeight] = useState(280);
+  const [isDismissed, setIsDismissed] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isOverDismissZone, setIsOverDismissZone] = useState(false);
+  const isOverDismissZoneRef = useRef(false);
+
+  useEffect(() => {
+    setIsDismissed(false);
+  }, [resetNonce, visible]);
 
   const bubbleSize =
     settings.size === 'SM' ? 56 : settings.size === 'LG' ? 80 : 68;
@@ -179,12 +188,48 @@ export function FloatingDispatchOverlay({
           y: currentPosRef.current.y,
         });
         pan.setValue({ x: 0, y: 0 });
+        isOverDismissZoneRef.current = false;
+        setIsOverDismissZone(false);
       },
-      onPanResponderMove: Animated.event([null, { dx: pan.x, dy: pan.y }], {
-        useNativeDriver: false,
-      }),
+      onPanResponderMove: (_evt, gesture) => {
+        pan.setValue({ x: gesture.dx, y: gesture.dy });
+        const b = boundsRef.current;
+        const foot = propsRef.current.orbFootprint;
+        const moved = Math.hypot(gesture.dx, gesture.dy);
+        if (moved > 10) {
+          setIsDragging(true);
+        }
+        const currentX = currentPosRef.current.x + gesture.dx;
+        const currentY = currentPosRef.current.y + gesture.dy;
+        const targetCenterX = b.safeW / 2;
+        const targetCenterY = b.safeH - insets.bottom - 45;
+        const dist = Math.hypot(currentX + foot / 2 - targetCenterX, currentY + foot / 2 - targetCenterY);
+        const isOver = dist < 70 || (currentY + foot > b.safeH - insets.bottom - 40 && Math.abs(currentX + foot / 2 - targetCenterX) < 65);
+        if (isOver !== isOverDismissZoneRef.current) {
+          isOverDismissZoneRef.current = isOver;
+          setIsOverDismissZone(isOver);
+          if (isOver) {
+            try {
+              Vibration.vibrate(35);
+            } catch {}
+          }
+        }
+      },
       onPanResponderRelease: (_evt, gesture) => {
         pan.flattenOffset();
+        setIsDragging(false);
+        const wasOver = isOverDismissZoneRef.current;
+        setIsOverDismissZone(false);
+        isOverDismissZoneRef.current = false;
+
+        if (wasOver) {
+          try {
+            Vibration.vibrate(50);
+          } catch {}
+          setIsDismissed(true);
+          return;
+        }
+
         const b = boundsRef.current;
         const foot = propsRef.current.orbFootprint;
         const movedDistance = Math.hypot(gesture.dx, gesture.dy);
@@ -221,7 +266,7 @@ export function FloatingDispatchOverlay({
     })
   ).current;
 
-  if (!visible) return null;
+  if (!visible || isDismissed) return null;
 
   const hasRequests = nearbyOpenCount > 0;
 
@@ -231,7 +276,7 @@ export function FloatingDispatchOverlay({
   const safeTopEdge = insets.top + 14;
   const safeBottomEdge = insets.bottom + 14;
   const availWidth = Math.max(220, bounds.safeW - safeLeftEdge - safeRightEdge);
-  const cardWidth = Math.min(296, availWidth);
+  const cardWidth = Math.min(320, availWidth);
   const availHeight = Math.max(220, bounds.safeH - safeTopEdge - safeBottomEdge);
 
   const isBubbleOnRightHalf = anchorPos.x + orbFootprint / 2 >= bounds.safeW / 2;
@@ -292,156 +337,248 @@ export function FloatingDispatchOverlay({
             ]}
           >
             <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
-              <View style={styles.quickMenuTop}>
+              {/* Executive Dark Navy Header */}
+              <View style={styles.menuHeaderCard}>
+                <View style={styles.menuAppLogoPill}>
+                  <LabSetuLogoMark size={24} />
+                </View>
+
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.quickMenuTitle}>
-                    LabSetu Quick Radar
+                  <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.menuHeaderTitle}>
+                    LabSetu Partner Radar
                   </Text>
-                  <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.quickMenuSub}>
-                    {gpsLabel}
+                  <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.menuHeaderSub}>
+                    {isOnline ? '● On Duty • Live Pickups Active' : '⚪ Off Duty • Standby Mode'}
                   </Text>
                 </View>
 
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                  <View
-                    style={[
-                      styles.quickStatusPill,
-                      { backgroundColor: isOnline ? BRAND_COLORS.emeraldSoft : '#F1F5F9' },
-                    ]}
-                  >
-                    <Text
-                      maxFontSizeMultiplier={COMPACT_TEXT_SCALE}
-                      style={[
-                        styles.quickStatusText,
-                        { color: isOnline ? BRAND_COLORS.emerald : BRAND_COLORS.muted },
-                      ]}
-                    >
-                      {isOnline ? '● Online' : 'Offline'}
-                    </Text>
-                  </View>
-
-                  <TouchableOpacity
-                    onPress={() => setMenuOpen(false)}
-                    style={styles.quickCloseBtn}
-                    hitSlop={8}
-                    accessibilityLabel="Close quick radar"
-                  >
-                    <Ionicons name="close" size={16} color={BRAND_COLORS.navyPrimary} />
-                  </TouchableOpacity>
-                </View>
+                <TouchableOpacity
+                  onPress={() => setMenuOpen(false)}
+                  style={styles.menuHeaderCloseBtn}
+                  hitSlop={8}
+                  accessibilityLabel="Close quick radar"
+                >
+                  <Ionicons name="close" size={16} color="#FFFFFF" />
+                </TouchableOpacity>
               </View>
 
-              <TouchableOpacity
-                style={styles.quickMenuItem}
-                onPress={() => {
-                  setMenuOpen(false);
-                  onOpenNearbyPool();
-                }}
-              >
-                <Ionicons name="flash-outline" size={16} color={BRAND_COLORS.tealPrimary} />
-                <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.quickMenuItemText}>
-                  Open 1–5 km Pickup Pool
-                </Text>
-                <Ionicons name="chevron-forward" size={15} color={BRAND_COLORS.muted} />
-              </TouchableOpacity>
+              {/* 3-Mode Duty Switcher */}
+              <View style={styles.menuDutyRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.menuDutyBtn,
+                    {
+                      backgroundColor: isOnline ? BRAND_COLORS.emeraldSoft : '#F8FAFC',
+                      borderColor: isOnline ? BRAND_COLORS.emerald : '#E2E8F0',
+                      borderWidth: isOnline ? 2 : 1,
+                    },
+                  ]}
+                  onPress={() => {
+                    setMenuOpen(false);
+                    onChangeDuty('ONLINE');
+                  }}
+                >
+                  <Text
+                    maxFontSizeMultiplier={COMPACT_TEXT_SCALE}
+                    style={[
+                      styles.menuDutyBtnText,
+                      { color: isOnline ? BRAND_COLORS.emerald : BRAND_COLORS.muted },
+                    ]}
+                  >
+                    🟢 Online
+                  </Text>
+                </TouchableOpacity>
 
+                <TouchableOpacity
+                  style={[
+                    styles.menuDutyBtn,
+                    {
+                      backgroundColor: '#F8FAFC',
+                      borderColor: '#E2E8F0',
+                      borderWidth: 1,
+                    },
+                  ]}
+                  onPress={() => {
+                    setMenuOpen(false);
+                    onChangeDuty('BREAK');
+                  }}
+                >
+                  <Text
+                    maxFontSizeMultiplier={COMPACT_TEXT_SCALE}
+                    style={[styles.menuDutyBtnText, { color: BRAND_COLORS.muted }]}
+                  >
+                    ☕ Break
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.menuDutyBtn,
+                    {
+                      backgroundColor: !isOnline ? BRAND_COLORS.crimsonSoft : '#F8FAFC',
+                      borderColor: !isOnline ? BRAND_COLORS.crimson : '#E2E8F0',
+                      borderWidth: !isOnline ? 2 : 1,
+                    },
+                  ]}
+                  onPress={() => {
+                    setMenuOpen(false);
+                    onChangeDuty('OFFLINE');
+                  }}
+                >
+                  <Text
+                    maxFontSizeMultiplier={COMPACT_TEXT_SCALE}
+                    style={[
+                      styles.menuDutyBtnText,
+                      { color: !isOnline ? BRAND_COLORS.crimson : BRAND_COLORS.muted },
+                    ]}
+                  >
+                    🔴 Offline
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Action Tile 1: Today's Collections */}
               {onOpenTodayCollections ? (
                 <TouchableOpacity
-                  style={styles.quickMenuItem}
+                  style={styles.menuActionTile}
                   onPress={() => {
                     setMenuOpen(false);
                     onOpenTodayCollections();
                   }}
                 >
-                  <Ionicons name="calendar-outline" size={16} color={BRAND_COLORS.navyPrimary} />
-                  <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.quickMenuItemText}>
-                    Today&apos;s Collections
-                  </Text>
-                  <Ionicons name="chevron-forward" size={15} color={BRAND_COLORS.muted} />
+                  <View style={[styles.menuTileIconBox, { backgroundColor: '#CCFBF1' }]}>
+                    <Ionicons name="cube-outline" size={18} color="#0D9488" />
+                  </View>
+                  <View style={styles.menuTileCol}>
+                    <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.menuTileTitle}>
+                      Today&apos;s Collections
+                    </Text>
+                    <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.menuTileSub}>
+                      View sample pickups, test tubes &amp; status
+                    </Text>
+                  </View>
+                  <View style={styles.menuTileBadgePill}>
+                    <Text style={styles.menuTileBadgeText}>Open ➔</Text>
+                  </View>
                 </TouchableOpacity>
               ) : null}
 
+              {/* Action Tile 2: 1-5 km Pickup Pool */}
               <TouchableOpacity
-                style={styles.quickMenuItem}
+                style={[styles.menuActionTile, { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' }]}
+                onPress={() => {
+                  setMenuOpen(false);
+                  onOpenNearbyPool();
+                }}
+              >
+                <View style={[styles.menuTileIconBox, { backgroundColor: '#FEF3C7' }]}>
+                  <Ionicons name="flash-outline" size={18} color="#D97706" />
+                </View>
+                <View style={styles.menuTileCol}>
+                  <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={[styles.menuTileTitle, { color: '#B45309' }]}>
+                    1–5 km Pickup Pool
+                  </Text>
+                  <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.menuTileSub}>
+                    {hasRequests ? `${nearbyOpenCount} urgent orders waiting` : 'Scan active sample requests nearby'}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.menuTileBadgePill,
+                    hasRequests ? { backgroundColor: '#EF4444' } : { backgroundColor: '#FEF3C7' },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.menuTileBadgeText,
+                      hasRequests ? { color: '#FFFFFF' } : { color: '#D97706' },
+                    ]}
+                  >
+                    {hasRequests ? `${nearbyOpenCount} Urgent` : 'Radar ➔'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Action Tile 3: Admin Zone & Live GPS */}
+              <TouchableOpacity
+                style={styles.menuActionTile}
                 onPress={() => {
                   setMenuOpen(false);
                   onOpenLocationPicker();
                 }}
               >
-                <Ionicons name="location-outline" size={16} color={BRAND_COLORS.navyPrimary} />
-                <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.quickMenuItemText}>
-                  Admin Zone &amp; Live GPS
-                </Text>
+                <View style={[styles.menuTileIconBox, { backgroundColor: '#E2E8F0' }]}>
+                  <Ionicons name="location-outline" size={18} color={BRAND_COLORS.navyPrimary} />
+                </View>
+                <View style={styles.menuTileCol}>
+                  <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.menuTileTitle}>
+                    Admin Zone &amp; Live GPS
+                  </Text>
+                  <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.menuTileSub}>
+                    {gpsLabel}
+                  </Text>
+                </View>
                 <Ionicons name="chevron-forward" size={15} color={BRAND_COLORS.muted} />
               </TouchableOpacity>
 
+              {/* Action Tile 4: Floating Icon Settings */}
               <TouchableOpacity
-                style={styles.quickMenuItem}
+                style={styles.menuActionTile}
                 onPress={() => {
                   setMenuOpen(false);
                   onOpenFloatingSettings();
                 }}
               >
-                <Ionicons name="options-outline" size={16} color={BRAND_COLORS.navyPrimary} />
-                <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.quickMenuItemText}>
-                  Floating Icon Settings
-                </Text>
+                <View style={[styles.menuTileIconBox, { backgroundColor: '#E2E8F0' }]}>
+                  <Ionicons name="options-outline" size={18} color={BRAND_COLORS.navyPrimary} />
+                </View>
+                <View style={styles.menuTileCol}>
+                  <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.menuTileTitle}>
+                    Floating Icon Settings
+                  </Text>
+                  <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.menuTileSub}>
+                    Customize size, snap &amp; opacity
+                  </Text>
+                </View>
                 <Ionicons name="chevron-forward" size={15} color={BRAND_COLORS.muted} />
               </TouchableOpacity>
 
-              <View style={styles.quickMenuDutyRow}>
-                {isOnline ? (
-                  <>
-                    <TouchableOpacity
-                      style={[styles.quickDutyBtn, { backgroundColor: '#FEF3C7' }]}
-                      onPress={() => {
-                        setMenuOpen(false);
-                        onChangeDuty('BREAK');
-                      }}
-                    >
-                      <Text
-                        maxFontSizeMultiplier={COMPACT_TEXT_SCALE}
-                        style={[styles.quickDutyText, { color: '#B45309' }]}
-                      >
-                        Break
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.quickDutyBtn, { backgroundColor: '#FEE2E2' }]}
-                      onPress={() => {
-                        setMenuOpen(false);
-                        onChangeDuty('OFFLINE');
-                      }}
-                    >
-                      <Text
-                        maxFontSizeMultiplier={COMPACT_TEXT_SCALE}
-                        style={[styles.quickDutyText, { color: '#B91C1C' }]}
-                      >
-                        Go Offline
-                      </Text>
-                    </TouchableOpacity>
-                  </>
-                ) : (
-                  <TouchableOpacity
-                    style={[styles.quickDutyBtn, { backgroundColor: BRAND_COLORS.emeraldSoft }]}
-                    onPress={() => {
-                      setMenuOpen(false);
-                      onChangeDuty('ONLINE');
-                    }}
-                  >
-                    <Text
-                      maxFontSizeMultiplier={COMPACT_TEXT_SCALE}
-                      style={[styles.quickDutyText, { color: BRAND_COLORS.emerald }]}
-                    >
-                      ● Go Online Now
-                    </Text>
-                  </TouchableOpacity>
-                )}
-              </View>
+              <Text style={styles.menuFooterText}>
+                📍 GPS Active • Serviceable Area Ready
+              </Text>
             </ScrollView>
           </View>
         </View>
       </Modal>
+
+      {/* Drag-to-Dismiss Bottom Cross Target ('✕') */}
+      {isDragging ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.dismissTargetContainer,
+            {
+              bottom: insets.bottom + 24,
+              left: (bounds.safeW - 120) / 2,
+            },
+          ]}
+        >
+          <View
+            style={[
+              styles.dismissTargetCircle,
+              {
+                backgroundColor: isOverDismissZone ? '#991B1B' : '#E11D48',
+                transform: [{ scale: isOverDismissZone ? 1.25 : 1 }],
+              },
+            ]}
+          >
+            <Text style={styles.dismissTargetCross}>✕</Text>
+          </View>
+          <Text style={styles.dismissTargetLabel}>
+            {isOverDismissZone ? 'Drop to Close' : 'Drag here to close'}
+          </Text>
+        </View>
+      ) : null}
 
       <Animated.View
         pointerEvents="box-none"
@@ -577,98 +714,174 @@ const styles = StyleSheet.create({
   },
   quickMenuCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#DCE5F2',
-    padding: 13,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#0D9488',
+    padding: 14,
     shadowColor: '#0A2A5E',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.24,
-    shadowRadius: 20,
-    elevation: 18,
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.28,
+    shadowRadius: 22,
+    elevation: 22,
   },
-  quickMenuTop: {
+  menuHeaderCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
+    backgroundColor: '#0A2A5E',
+    borderRadius: 14,
+    padding: 10,
+    gap: 10,
     marginBottom: 10,
   },
-  quickMenuTitle: {
+  menuAppLogoPill: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  menuHeaderTitle: {
     fontSize: rf(13.5),
     lineHeight: lh(rf(13.5)),
     fontFamily: BRAND_FONTS.bold,
-    color: BRAND_COLORS.navyPrimary,
+    color: '#FFFFFF',
     includeFontPadding: true,
   },
-  quickMenuSub: {
-    fontSize: rf(11),
-    lineHeight: lh(rf(11)),
-    fontFamily: BRAND_FONTS.medium,
-    color: BRAND_COLORS.muted,
+  menuHeaderSub: {
+    fontSize: rf(10.5),
+    lineHeight: lh(rf(10.5)),
+    fontFamily: BRAND_FONTS.semiBold,
+    color: '#34D399',
     marginTop: 1,
     includeFontPadding: true,
   },
-  quickStatusPill: {
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    flexShrink: 0,
-  },
-  quickStatusText: {
-    fontSize: rf(10.5),
-    lineHeight: lh(rf(10.5)),
-    fontFamily: BRAND_FONTS.bold,
-    includeFontPadding: true,
-  },
-  quickCloseBtn: {
+  menuHeaderCloseBtn: {
     width: 26,
     height: 26,
     borderRadius: 13,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#1E3A8A',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  quickMenuItem: {
+  menuDutyRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#F4F8FC',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 11,
-    paddingHorizontal: 10,
-    paddingVertical: 9.5,
-    marginBottom: 7,
+    gap: 6,
+    marginBottom: 10,
   },
-  quickMenuItemText: {
-    flex: 1,
-    color: BRAND_COLORS.navyPrimary,
-    fontSize: rf(12),
-    lineHeight: lh(rf(12)),
-    fontFamily: BRAND_FONTS.semiBold,
-    flexShrink: 1,
-    includeFontPadding: true,
-  },
-  quickMenuDutyRow: {
-    flexDirection: 'row',
-    gap: 7,
-    marginTop: 3,
-  },
-  quickDutyBtn: {
+  menuDutyBtn: {
     flex: 1,
     borderRadius: 10,
-    paddingVertical: 9,
-    paddingHorizontal: 8,
+    paddingVertical: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  quickDutyText: {
+  menuDutyBtnText: {
     fontSize: rf(11.5),
     lineHeight: lh(rf(11.5)),
     fontFamily: BRAND_FONTS.bold,
     textAlign: 'center',
     includeFontPadding: true,
+  },
+  menuActionTile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#F0FDFA',
+    borderWidth: 1.5,
+    borderColor: '#99F6E4',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    marginBottom: 8,
+  },
+  menuTileIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  menuTileCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  menuTileTitle: {
+    color: '#0F766E',
+    fontSize: rf(12.5),
+    lineHeight: lh(rf(12.5)),
+    fontFamily: BRAND_FONTS.bold,
+    includeFontPadding: true,
+  },
+  menuTileSub: {
+    color: '#475569',
+    fontSize: rf(10),
+    lineHeight: lh(rf(10)),
+    fontFamily: BRAND_FONTS.medium,
+    marginTop: 1,
+    includeFontPadding: true,
+  },
+  menuTileBadgePill: {
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: '#E6F7F5',
+  },
+  menuTileBadgeText: {
+    fontSize: rf(10.5),
+    lineHeight: lh(rf(10.5)),
+    fontFamily: BRAND_FONTS.bold,
+    color: '#0D9488',
+    includeFontPadding: true,
+  },
+  menuFooterText: {
+    fontSize: rf(10.5),
+    lineHeight: lh(rf(10.5)),
+    fontFamily: BRAND_FONTS.semiBold,
+    color: '#94A3B8',
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 2,
+    includeFontPadding: true,
+  },
+  dismissTargetContainer: {
+    position: 'absolute',
+    width: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 9999,
+    elevation: 30,
+  },
+  dismissTargetCircle: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: '#E11D48',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#E11D48',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.45,
+    shadowRadius: 10,
+    elevation: 16,
+  },
+  dismissTargetCross: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  dismissTargetLabel: {
+    color: '#FFFFFF',
+    fontSize: 10.5,
+    fontFamily: BRAND_FONTS.bold,
+    textAlign: 'center',
+    marginTop: 6,
+    textShadowColor: 'rgba(0,0,0,0.7)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
 });
 

@@ -1902,13 +1902,18 @@ function PhleboAppContent() {
 
     const sub = DeviceEventEmitter.addListener(
       'onOverlayDutyChange',
-      (event: { dutyStatus?: 'ONLINE' | 'OFFLINE' }) => {
+      (event: { dutyStatus?: 'ONLINE' | 'OFFLINE' | 'BREAK' }) => {
         const next = event?.dutyStatus;
-        if (next === 'ONLINE' || next === 'OFFLINE') {
+        if (next === 'ONLINE' || next === 'OFFLINE' || next === 'BREAK') {
           void handleShiftUpdate(next);
           showToast({
-            variant: next === 'ONLINE' ? 'SUCCESS' : 'INFO',
-            title: next === 'ONLINE' ? '🟢 Shift Set to Online' : '⚪ Shift Set to Offline',
+            variant: next === 'ONLINE' ? 'SUCCESS' : next === 'BREAK' ? 'WARNING' : 'INFO',
+            title:
+              next === 'ONLINE'
+                ? '🟢 Shift Set to Online'
+                : next === 'BREAK'
+                  ? '☕ Shift Set to Break'
+                  : '⚪ Shift Set to Offline',
             subtitle: 'Duty status updated from outside-app floating quick menu.',
           });
         }
