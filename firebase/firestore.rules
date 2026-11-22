@@ -322,6 +322,23 @@ service cloud.firestore {
       allow update: if isAuthenticated() && isAccountActive()
         && (
           isAdmin()
+          // Field Phlebotomists / Couriers: claim from pool, start trip, collect sample, deliver to lab
+          || (
+            (
+              isPhlebotomist()
+              || (
+                resource.data.status == 'READY_FOR_PICKUP'
+                && request.resource.data.status in ['ASSIGNED_TO_PHLEBO', 'READY_FOR_PICKUP']
+              )
+              || resource.data.get('phlebotomistId', '') == request.auth.uid
+              || (getPhlebotomistId() != null && resource.data.get('phlebotomistId', '') == getPhlebotomistId())
+              || (normalizedEmail() != '' && (
+                resource.data.get('phlebotomistEmail', '') == normalizedEmail()
+                || resource.data.get('phleboEmail', '') == normalizedEmail()
+              ))
+            )
+            && request.resource.data.status in ['READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED_TO_LAB']
+          )
           // Small Labs: retry search broadcast, apply surge hike, cancel before pickup
           || (
             (
@@ -339,26 +356,9 @@ service cloud.firestore {
             (
               isLargeLab()
               || resource.data.targetLabId == request.auth.uid
-              || (getLabId() != null && (resource.data.targetLabId == getLabId() || resource.data.get('targetParentLabId', null) == getLabId()))
+              || (getLabId() != null && (resource.data.targetLabId == getLabId() || resource.data.get('targetParentLabId', '') == getLabId()))
             )
             && request.resource.data.status in ['DELIVERED_TO_LAB', 'UNDER_ANALYSIS', 'REPORT_UPLOADED', 'COMPLETED', 'REJECTED']
-          )
-          // Field Phlebotomists / Couriers: claim from pool, start trip, collect sample, deliver to lab
-          || (
-            (
-              isPhlebotomist()
-              || (
-                resource.data.status == 'READY_FOR_PICKUP'
-                && request.resource.data.status in ['ASSIGNED_TO_PHLEBO', 'READY_FOR_PICKUP']
-              )
-              || resource.data.get('phlebotomistId', '') == request.auth.uid
-              || (getPhlebotomistId() != null && resource.data.get('phlebotomistId', '') == getPhlebotomistId())
-              || (normalizedEmail() != '' && (
-                resource.data.get('phlebotomistEmail', '') == normalizedEmail()
-                || resource.data.get('phleboEmail', '') == normalizedEmail()
-              ))
-            )
-            && request.resource.data.status in ['READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED_TO_LAB']
           )
         );
     }

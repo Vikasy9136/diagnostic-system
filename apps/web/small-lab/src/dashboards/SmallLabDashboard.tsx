@@ -1010,6 +1010,14 @@ export function SmallLabDashboard({
   }
 
   function handleViewOrderPaymentSlip(order: PickupOrder) {
+    if (order.paymentStatus !== 'PAID') {
+      onShowAlert({
+        variant: 'info',
+        title: 'Payment Pending',
+        message: 'Official digital payment receipt can only be generated after payment has been completed and verified.',
+      });
+      return;
+    }
     const grossInr = order.totalAmountInr || 0;
     const phleboFeeInr = order.courierFeeInr || 0;
     const slipData: PaymentSlipData = {
@@ -1158,7 +1166,7 @@ export function SmallLabDashboard({
           <SmallLabNewBookingTab
             myLabFacility={myLabFacility}
             patients={myLabPatients}
-            phlebotomists={phlebotomists}
+            phlebotomists={onlinePhlebos}
             commConfig={commConfig}
             selectableCatalogEntries={selectableCatalogEntries}
             expandedRequestedCodes={expandedRequestedCodes}
@@ -1382,7 +1390,7 @@ export function SmallLabDashboard({
         order={liveCustodyOrder}
         onClose={() => setCustodyModalOrder(null)}
         titlePrefix="Live Tracking & Custody"
-        nearbyPhlebos={phlebotomists}
+        nearbyPhlebos={onlinePhlebos}
         fallbackDropLat={pickupLat}
         fallbackDropLng={pickupLng}
         custodyTimeline={liveCustodyOrder ? liveCustodyOrder.custodyHistory || [] : undefined}

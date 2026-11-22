@@ -245,8 +245,9 @@ export function LiveTrackingMap({
           </div>`
         );
     } else if (nearbyPhlebos && nearbyPhlebos.length > 0) {
-      // 2B. If broadcasting / looking for rider, render ALL nearby phlebotomists on map (Uber / Rapido Style)
+      // 2B. If broadcasting / looking for rider, render ONLY live online phlebotomists on map
       nearbyPhlebos.forEach((p) => {
+        if (p.status !== 'ONLINE') return;
         const rLat = Number(p.latitude);
         const rLng = Number(p.longitude);
         if (!Number.isFinite(rLat) || !Number.isFinite(rLng) || Math.abs(rLat) < 0.001) return;

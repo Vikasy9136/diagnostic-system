@@ -1823,13 +1823,18 @@ export function PhleboQuickActionsModal({
 
           {/* Sheet Header */}
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' }}>
-            <View>
-              <Text style={{ fontSize: 16.5, fontWeight: '800', color: BRAND_COLORS.navyPrimary }}>
-                ⚡ Quick Field Command
-              </Text>
-              <Text style={{ fontSize: 11.5, color: '#64748B', marginTop: 2 }}>
-                Instant shortcuts for collections, barcode scans &amp; duty status
-              </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+              <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#F0FDFA', borderWidth: 1.5, borderColor: '#99F6E4', alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="flash" size={20} color={BRAND_COLORS.tealPrimary} />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={{ fontSize: rf(16), fontFamily: BRAND_FONTS.bold, color: BRAND_COLORS.navyPrimary, includeFontPadding: true }}>
+                  Quick Field Command
+                </Text>
+                <Text style={{ fontSize: rf(11.5), fontFamily: BRAND_FONTS.medium, color: '#64748B', marginTop: 1, includeFontPadding: true }}>
+                  Instant shortcuts for pickups, scans &amp; shift status
+                </Text>
+              </View>
             </View>
             <TouchableOpacity onPress={onClose} hitSlop={10} style={{ padding: 4 }}>
               <Ionicons name="close-circle" size={24} color="#94A3B8" />
@@ -1839,15 +1844,15 @@ export function PhleboQuickActionsModal({
           {/* 1. Fast Duty Status Switcher */}
           {onShiftUpdate && (
             <View style={{ marginBottom: 14 }}>
-              <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', marginBottom: 6, letterSpacing: 0.5 }}>
+              <Text style={{ fontSize: rf(11), fontFamily: BRAND_FONTS.bold, color: '#64748B', textTransform: 'uppercase', marginBottom: 6, letterSpacing: 0.5, includeFontPadding: true }}>
                 Shift Duty Status
               </Text>
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 <TouchableOpacity
                   style={{
                     flex: 1,
-                    paddingVertical: 9,
-                    borderRadius: 10,
+                    paddingVertical: 10,
+                    borderRadius: 12,
                     alignItems: 'center',
                     justifyContent: 'center',
                     backgroundColor: dutyStatus === 'ONLINE' ? '#DCFCE7' : '#F8FAFC',
@@ -1856,7 +1861,7 @@ export function PhleboQuickActionsModal({
                   }}
                   onPress={() => onShiftUpdate('ONLINE')}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: dutyStatus === 'ONLINE' ? '#16A34A' : '#64748B' }}>
+                  <Text style={{ fontSize: rf(12), fontFamily: BRAND_FONTS.bold, color: dutyStatus === 'ONLINE' ? '#16A34A' : '#64748B', includeFontPadding: true }}>
                     🟢 On Duty
                   </Text>
                 </TouchableOpacity>
@@ -1864,8 +1869,8 @@ export function PhleboQuickActionsModal({
                 <TouchableOpacity
                   style={{
                     flex: 1,
-                    paddingVertical: 9,
-                    borderRadius: 10,
+                    paddingVertical: 10,
+                    borderRadius: 12,
                     alignItems: 'center',
                     justifyContent: 'center',
                     backgroundColor: dutyStatus === 'BREAK' ? '#FEF3C7' : '#F8FAFC',
@@ -1874,7 +1879,7 @@ export function PhleboQuickActionsModal({
                   }}
                   onPress={() => onShiftUpdate('BREAK')}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: dutyStatus === 'BREAK' ? '#D97706' : '#64748B' }}>
+                  <Text style={{ fontSize: rf(12), fontFamily: BRAND_FONTS.bold, color: dutyStatus === 'BREAK' ? '#D97706' : '#64748B', includeFontPadding: true }}>
                     ☕ Break
                   </Text>
                 </TouchableOpacity>
@@ -1882,8 +1887,8 @@ export function PhleboQuickActionsModal({
                 <TouchableOpacity
                   style={{
                     flex: 1,
-                    paddingVertical: 9,
-                    borderRadius: 10,
+                    paddingVertical: 10,
+                    borderRadius: 12,
                     alignItems: 'center',
                     justifyContent: 'center',
                     backgroundColor: dutyStatus === 'OFFLINE' ? '#FEE2E2' : '#F8FAFC',
@@ -1892,7 +1897,7 @@ export function PhleboQuickActionsModal({
                   }}
                   onPress={() => onShiftUpdate('OFFLINE')}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: dutyStatus === 'OFFLINE' ? '#DC2626' : '#64748B' }}>
+                  <Text style={{ fontSize: rf(12), fontFamily: BRAND_FONTS.bold, color: dutyStatus === 'OFFLINE' ? '#DC2626' : '#64748B', includeFontPadding: true }}>
                     🔴 Off Duty
                   </Text>
                 </TouchableOpacity>
@@ -1904,18 +1909,20 @@ export function PhleboQuickActionsModal({
           {onOpenScanner && (
             <TouchableOpacity
               style={{
-                backgroundColor: '#061D42',
-                borderRadius: 14,
+                backgroundColor: BRAND_COLORS.navyDeep,
+                borderRadius: 16,
                 padding: 14,
                 flexDirection: 'row',
                 alignItems: 'center',
                 gap: 12,
                 marginBottom: 14,
-                shadowColor: '#061D42',
+                borderWidth: 1.5,
+                borderColor: BRAND_COLORS.tealPrimary,
+                shadowColor: BRAND_COLORS.navyDeep,
                 shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: 0.2,
-                shadowRadius: 8,
-                elevation: 4,
+                shadowOpacity: 0.22,
+                shadowRadius: 10,
+                elevation: 5,
               }}
               activeOpacity={0.85}
               onPress={() => handleAction(onOpenScanner)}
@@ -1925,7 +1932,7 @@ export function PhleboQuickActionsModal({
                   width: 44,
                   height: 44,
                   borderRadius: 12,
-                  backgroundColor: '#0D9488',
+                  backgroundColor: BRAND_COLORS.tealPrimary,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
@@ -1933,10 +1940,10 @@ export function PhleboQuickActionsModal({
                 <Ionicons name="barcode-outline" size={24} color="#FFFFFF" />
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={{ fontSize: 14.5, fontWeight: '800', color: '#FFFFFF' }}>
+                <Text style={{ fontSize: rf(14.5), fontFamily: BRAND_FONTS.bold, color: '#FFFFFF', includeFontPadding: true }}>
                   Scan Specimen Barcode
                 </Text>
-                <Text style={{ fontSize: 11.5, color: '#94A3B8', marginTop: 2 }}>
+                <Text style={{ fontSize: rf(11.5), fontFamily: BRAND_FONTS.medium, color: '#94A3B8', marginTop: 2, includeFontPadding: true }}>
                   Instant camera inspection for tubes, patient vials &amp; cooler bags
                 </Text>
               </View>
@@ -1952,20 +1959,24 @@ export function PhleboQuickActionsModal({
                 flexDirection: 'row',
                 alignItems: 'center',
                 gap: 12,
-                padding: 11,
-                borderRadius: 12,
+                padding: 12,
+                borderRadius: 14,
                 backgroundColor: '#F8FAFC',
-                borderWidth: 1,
+                borderWidth: 1.5,
                 borderColor: '#E2E8F0',
               }}
               onPress={() => handleAction(onOpenTodayCollections)}
             >
-              <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' }}>
-                <Ionicons name="calendar-outline" size={19} color="#2563EB" />
+              <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="calendar-outline" size={20} color="#2563EB" />
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>Today&apos;s Assigned Tasks</Text>
-                <Text style={{ fontSize: 11, color: '#64748B', marginTop: 1 }}>Check upcoming pickups and sample drops</Text>
+                <Text style={{ fontSize: rf(13.5), fontFamily: BRAND_FONTS.bold, color: BRAND_COLORS.navyPrimary, includeFontPadding: true }}>
+                  Today&apos;s Assigned Tasks
+                </Text>
+                <Text style={{ fontSize: rf(11), fontFamily: BRAND_FONTS.medium, color: '#64748B', marginTop: 1, includeFontPadding: true }}>
+                  Check upcoming pickups, test tubes &amp; sample drops
+                </Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
             </TouchableOpacity>
@@ -1977,20 +1988,24 @@ export function PhleboQuickActionsModal({
                   flexDirection: 'row',
                   alignItems: 'center',
                   gap: 12,
-                  padding: 11,
-                  borderRadius: 12,
+                  padding: 12,
+                  borderRadius: 14,
                   backgroundColor: '#F8FAFC',
-                  borderWidth: 1,
+                  borderWidth: 1.5,
                   borderColor: '#E2E8F0',
                 }}
                 onPress={() => handleAction(onOpenEarnings)}
               >
-                <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: '#F0FDFA', alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="wallet-outline" size={19} color="#0D9488" />
+                <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#F0FDFA', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="wallet-outline" size={20} color="#0D9488" />
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>Daily Earnings &amp; Trips</Text>
-                  <Text style={{ fontSize: 11, color: '#64748B', marginTop: 1 }}>Completed trip payouts &amp; earnings history</Text>
+                  <Text style={{ fontSize: rf(13.5), fontFamily: BRAND_FONTS.bold, color: BRAND_COLORS.navyPrimary, includeFontPadding: true }}>
+                    Daily Earnings &amp; Trips
+                  </Text>
+                  <Text style={{ fontSize: rf(11), fontFamily: BRAND_FONTS.medium, color: '#64748B', marginTop: 1, includeFontPadding: true }}>
+                    Completed trip payouts, commission &amp; earnings history
+                  </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
               </TouchableOpacity>
@@ -2003,20 +2018,24 @@ export function PhleboQuickActionsModal({
                   flexDirection: 'row',
                   alignItems: 'center',
                   gap: 12,
-                  padding: 11,
-                  borderRadius: 12,
+                  padding: 12,
+                  borderRadius: 14,
                   backgroundColor: '#F8FAFC',
-                  borderWidth: 1,
+                  borderWidth: 1.5,
                   borderColor: '#E2E8F0',
                 }}
                 onPress={() => handleAction(onOpenKitsAndSupplies)}
               >
-                <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: '#FAF5FF', alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="briefcase-outline" size={19} color="#9333EA" />
+                <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#FAF5FF', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="briefcase-outline" size={20} color="#9333EA" />
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>My Collection Kits &amp; Stock</Text>
-                  <Text style={{ fontSize: 11, color: '#64748B', marginTop: 1 }}>Assigned test kits &amp; restock request</Text>
+                  <Text style={{ fontSize: rf(13.5), fontFamily: BRAND_FONTS.bold, color: BRAND_COLORS.navyPrimary, includeFontPadding: true }}>
+                    My Collection Kits &amp; Stock
+                  </Text>
+                  <Text style={{ fontSize: rf(11), fontFamily: BRAND_FONTS.medium, color: '#64748B', marginTop: 1, includeFontPadding: true }}>
+                    Assigned vacutainer tubes, vials &amp; restock request
+                  </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
               </TouchableOpacity>
@@ -2028,20 +2047,24 @@ export function PhleboQuickActionsModal({
                 flexDirection: 'row',
                 alignItems: 'center',
                 gap: 12,
-                padding: 11,
-                borderRadius: 12,
+                padding: 12,
+                borderRadius: 14,
                 backgroundColor: '#FEF2F2',
-                borderWidth: 1,
+                borderWidth: 1.5,
                 borderColor: '#FECACA',
               }}
               onPress={() => handleAction(onOpenHelpSupport)}
             >
-              <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: '#DC2626', alignItems: 'center', justifyContent: 'center' }}>
-                <Ionicons name="headset" size={19} color="#FFFFFF" />
+              <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#DC2626', alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="headset" size={20} color="#FFFFFF" />
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: '#991B1B' }}>Help &amp; Emergency Hotline</Text>
-                <Text style={{ fontSize: 11, color: '#B91C1C', marginTop: 1 }}>Direct call to LabSetu Central Operations Desk</Text>
+                <Text style={{ fontSize: rf(13.5), fontFamily: BRAND_FONTS.bold, color: '#991B1B', includeFontPadding: true }}>
+                  Help &amp; Emergency Hotline
+                </Text>
+                <Text style={{ fontSize: rf(11), fontFamily: BRAND_FONTS.medium, color: '#B91C1C', marginTop: 1, includeFontPadding: true }}>
+                  Direct contact to LabSetu Central Operations Desk
+                </Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color="#DC2626" />
             </TouchableOpacity>

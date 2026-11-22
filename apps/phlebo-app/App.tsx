@@ -353,6 +353,14 @@ function PhleboAppContent() {
     };
   }, []);
 
+  // Pre-register Android notification channels and request notification permissions on startup
+  useEffect(() => {
+    if (Platform.OS !== 'web') {
+      void ensureDutyNotificationChannel();
+      void Notifications.requestPermissionsAsync().catch(() => {});
+    }
+  }, []);
+
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState) => {
       setAppState(nextState);
@@ -1875,7 +1883,7 @@ function PhleboAppContent() {
         setBottomTab('home');
         setSelectedOrderId(null);
         setCurrentScreen('BOOKING_REQUESTS');
-        setRequestTab('active');
+        setRequestTab('new');
       },
     });
 
@@ -1942,9 +1950,13 @@ function PhleboAppContent() {
         data: { orderId: lead.order.id, action: 'ACCEPT_ORDER' },
         sound: 'default',
         priority: Notifications.AndroidNotificationPriority.MAX,
+        vibrate: [0, 800, 300, 800, 300, 800],
+        color: '#0D9488',
       },
       trigger: Platform.OS === 'android' ? { channelId: URGENT_DISPATCH_CHANNEL_ID } : null,
-    }).catch(() => { });
+    }).catch((err) => {
+      console.warn('Urgent pickup notification schedule failed:', err);
+    });
   }, [session, isOnline, effectivePhleboId, openPoolWithDistance, declinedOrderIds, showToast]);
 
   // Sync outside-app floating overlay service / sticky duty notification when minimized or closed
@@ -1986,7 +1998,7 @@ function PhleboAppContent() {
         setBottomTab('home');
         setSelectedOrderId(null);
         setCurrentScreen('BOOKING_REQUESTS');
-        setRequestTab('active');
+        setRequestTab('new');
       } else if (data?.action === 'OPEN_RADAR') {
         setBottomTab('home');
         setSelectedOrderId(null);
@@ -4706,7 +4718,7 @@ function PhleboAppContent() {
             setBottomTab('home');
             setSelectedOrderId(null);
             setCurrentScreen('BOOKING_REQUESTS');
-            setRequestTab('active');
+            setRequestTab('new');
             const firstNearby = openPoolWithDistance.find((x) => x.inBroadcastRadius);
             if (firstNearby) {
               setDismissedBroadcastIds((prev) =>

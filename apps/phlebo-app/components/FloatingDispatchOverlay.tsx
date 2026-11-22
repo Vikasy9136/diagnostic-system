@@ -19,7 +19,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { type FloatingIconSettings, DEFAULT_FLOATING_ICON_SETTINGS } from '../types/phleboTypes';
-import { BRAND_COLORS, BRAND_FONTS, LabSetuLogoMark } from './LabSetuBrand';
+import { BRAND_COLORS, BRAND_FONTS, LabSetuLogoMark, PhleboCourierBikeMark } from './LabSetuBrand';
 import { COMPACT_TEXT_SCALE, lh, MAX_TEXT_SCALE, rf } from '../utils/responsive';
 
 export interface FloatingDispatchOverlayProps {
@@ -211,7 +211,7 @@ export function FloatingDispatchOverlay({
           if (isOver) {
             try {
               Vibration.vibrate(35);
-            } catch {}
+            } catch { }
           }
         }
       },
@@ -225,7 +225,7 @@ export function FloatingDispatchOverlay({
         if (wasOver) {
           try {
             Vibration.vibrate(50);
-          } catch {}
+          } catch { }
           setIsDismissed(true);
           return;
         }
@@ -340,7 +340,7 @@ export function FloatingDispatchOverlay({
               {/* Executive Dark Navy Header */}
               <View style={styles.menuHeaderCard}>
                 <View style={styles.menuAppLogoPill}>
-                  <LabSetuLogoMark size={24} />
+                  <PhleboCourierBikeMark size={24} />
                 </View>
 
                 <View style={{ flex: 1, minWidth: 0 }}>
@@ -624,7 +624,7 @@ export function FloatingDispatchOverlay({
               },
             ]}
           >
-            <LabSetuLogoMark size={Math.round(bubbleSize * 0.66)} />
+            <PhleboCourierBikeMark size={Math.round(bubbleSize * 0.72)} />
 
             <View
               style={[

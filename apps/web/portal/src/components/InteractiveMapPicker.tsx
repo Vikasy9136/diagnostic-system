@@ -712,6 +712,8 @@ export function InteractiveMapPicker({
     if (!nearbyPhlebos || nearbyPhlebos.length === 0) return;
 
     nearbyPhlebos.forEach((p) => {
+      // ONLY show active online phlebotomists on the map
+      if (p.status !== 'ONLINE') return;
       const pLat = Number(p.latitude);
       const pLng = Number(p.longitude);
       if (!Number.isFinite(pLat) || !Number.isFinite(pLng) || Math.abs(pLat) < 0.001) return;

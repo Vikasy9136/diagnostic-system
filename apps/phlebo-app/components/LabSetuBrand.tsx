@@ -93,6 +93,30 @@ export function LabSetuLogoMark({ size = 56 }: { size?: number }) {
   );
 }
 
+/**
+ * Exact Phlebotomist Courier Rider on Bike / Scooter Icon from the Live Map
+ */
+export function PhleboCourierBikeMark({ size = 44 }: { size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 64 64" fill="none">
+      <Circle cx="16" cy="44" r="9" fill="#1E293B" stroke="#94A3B8" strokeWidth="2.5" />
+      <Circle cx="16" cy="44" r="4" fill="#F8FAFC" stroke="#64748B" strokeWidth="1.5" />
+      <Circle cx="48" cy="44" r="9" fill="#1E293B" stroke="#94A3B8" strokeWidth="2.5" />
+      <Circle cx="48" cy="44" r="4" fill="#F8FAFC" stroke="#64748B" strokeWidth="1.5" />
+      <Path d="M16 44 L28 40 L44 32 L48 44" stroke="#0A2A5E" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M28 40 L34 46 L40 46" stroke="#0D9488" strokeWidth="3" strokeLinecap="round" />
+      <Path d="M42 32 L51 34 L49 39" stroke="#0D9488" strokeWidth="3.5" strokeLinecap="round" />
+      <Circle cx="52" cy="34" r="2.2" fill="#FACC15" />
+      <Path d="M42 27 L44 32 L40 31" stroke="#334155" strokeWidth="2.2" strokeLinecap="round" />
+      <Path d="M28 35 L33 41 L35 44" stroke="#0A2A5E" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M26 31 L37 28 L42 29" stroke="#0A2A5E" strokeWidth="5" strokeLinecap="round" />
+      <Circle cx="36" cy="20" r="6.2" fill="#0D9488" stroke="#0A2A5E" strokeWidth="1.6" />
+      <Rect x="17" y="18" width="16" height="18" rx="3.5" fill="#FFFFFF" stroke="#0A2A5E" strokeWidth="1.8" />
+      <Path d="M19 20 H31 L32 23.5 C32 25, 30 25.5, 29 24.5 C28 25.5, 26 25.5, 25.5 24.5 C25 25.5, 23 25.5, 22 24.5 C21 25.5, 19.5 25, 19 23.5 Z" fill="#0D9488" />
+    </Svg>
+  );
+}
+
 export function LabSetuWordmark({
   darkBg = false,
   fontSize = 24,

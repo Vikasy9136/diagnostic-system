@@ -324,7 +324,7 @@ export function SmallLabBookingsTab({
                               🏷️ Print Stickers
                             </button>
                           )}
-                          {onViewPaymentSlip && (
+                          {onViewPaymentSlip && o.paymentStatus === 'PAID' && (
                             <button
                               type="button"
                               className="btn-secondary"

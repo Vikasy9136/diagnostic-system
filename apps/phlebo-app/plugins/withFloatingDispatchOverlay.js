@@ -170,21 +170,19 @@ class FloatingDispatchOverlayService : Service() {
         currentIncomingOrderId = orderId
         currentIncomingOrderNumber = orderNum
 
-        if (canDrawOverlaysCompat(this)) {
-          showIncomingOrderModal(
-            orderId = orderId,
-            orderNum = orderNum,
-            pickupLab = pickupLab,
-            pickupAddr = pickupAddr,
-            targetLab = targetLab,
-            targetAddr = targetAddr,
-            distance = distance,
-            payout = payout,
-            specimens = specimens,
-            timeoutSec = timeoutSec,
-            surgeIncentive = surgeIncentive
-          )
-        }
+        showIncomingOrderModal(
+          orderId = orderId,
+          orderNum = orderNum,
+          pickupLab = pickupLab,
+          pickupAddr = pickupAddr,
+          targetLab = targetLab,
+          targetAddr = targetAddr,
+          distance = distance,
+          payout = payout,
+          specimens = specimens,
+          timeoutSec = timeoutSec,
+          surgeIncentive = surgeIncentive
+        )
         return START_STICKY
       }
     }
@@ -273,6 +271,53 @@ class FloatingDispatchOverlayService : Service() {
     detachIncomingModal()
     acquireScreenWakeLock()
     startAlertSound()
+
+    // Real Android High-Priority Heads-Up Drawer Notification with Full-Screen Alert Intent
+    try {
+      val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+      val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        putExtra("orderId", orderId)
+        putExtra("action", "ACCEPT_ORDER")
+      } ?: Intent()
+      val launchPendingIntent = PendingIntent.getActivity(
+        this,
+        9901,
+        launchIntent,
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+          PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        } else {
+          PendingIntent.FLAG_UPDATE_CURRENT
+        }
+      )
+
+      val urgentBuilder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        Notification.Builder(this, URGENT_CHANNEL_ID)
+      } else {
+        @Suppress("DEPRECATION")
+        Notification.Builder(this)
+      }
+      val notifIcon = applicationInfo.icon.takeIf { it != 0 } ?: android.R.drawable.ic_dialog_info
+      val urgentNotif = urgentBuilder
+        .setContentTitle("⚡ NEW SAMPLE PICKUP: " + (if (orderNum.isNotEmpty()) orderNum else orderId))
+        .setContentText(pickupLab + " • " + payout + " (" + distance + ")")
+        .setSmallIcon(notifIcon)
+        .setContentIntent(launchPendingIntent)
+        .setFullScreenIntent(launchPendingIntent, true)
+        .setAutoCancel(true)
+        .setOngoing(false)
+        .apply {
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            setCategory(Notification.CATEGORY_CALL)
+            setPriority(Notification.PRIORITY_MAX)
+            setVisibility(Notification.VISIBILITY_PUBLIC)
+          }
+        }
+        .build()
+      nm?.notify(URGENT_NOTIF_ID, urgentNotif)
+    } catch (_: Exception) {}
+
+    if (!canDrawOverlaysCompat(this)) return
 
     val wm = windowManager ?: return
 
@@ -677,11 +722,17 @@ class FloatingDispatchOverlayService : Service() {
   }
 
   private fun detachIncomingModal() {
-    val modal = incomingModalView ?: return
+    val modal = incomingModalView
+    if (modal != null) {
+      try {
+        windowManager?.removeView(modal)
+      } catch (_: Exception) {}
+      incomingModalView = null
+    }
     try {
-      windowManager?.removeView(modal)
+      val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+      nm?.cancel(URGENT_NOTIF_ID)
     } catch (_: Exception) {}
-    incomingModalView = null
   }
 
   private fun acquireScreenWakeLock() {
@@ -777,6 +828,11 @@ class FloatingDispatchOverlayService : Service() {
         wakeLock?.release()
       }
       wakeLock = null
+    } catch (_: Exception) {}
+
+    try {
+      val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+      nm?.cancel(URGENT_NOTIF_ID)
     } catch (_: Exception) {}
   }
 
@@ -978,19 +1034,24 @@ class FloatingDispatchOverlayService : Service() {
       scaleType = ImageView.ScaleType.FIT_CENTER
       val pad = dp(6)
       setPadding(pad, pad, pad, pad)
-      val resId = resources.getIdentifier("phlebo_bubble_logo", "drawable", packageName)
-      if (resId != 0) {
-        setImageResource(resId)
+      val bikeResId = resources.getIdentifier("phlebo_courier_bike", "drawable", packageName)
+      if (bikeResId != 0) {
+        setImageResource(bikeResId)
       } else {
-        val vectorResId = resources.getIdentifier("ic_labsetu_logo", "drawable", packageName)
-        if (vectorResId != 0) {
-          setImageResource(vectorResId)
+        val resId = resources.getIdentifier("phlebo_bubble_logo", "drawable", packageName)
+        if (resId != 0) {
+          setImageResource(resId)
         } else {
-          try {
-            val appIconDrawable = packageManager.getApplicationIcon(packageName)
-            setImageDrawable(appIconDrawable)
-          } catch (_: Exception) {
-            setImageResource(android.R.drawable.sym_def_app_icon)
+          val vectorResId = resources.getIdentifier("ic_labsetu_logo", "drawable", packageName)
+          if (vectorResId != 0) {
+            setImageResource(vectorResId)
+          } else {
+            try {
+              val appIconDrawable = packageManager.getApplicationIcon(packageName)
+              setImageDrawable(appIconDrawable)
+            } catch (_: Exception) {
+              setImageResource(android.R.drawable.sym_def_app_icon)
+            }
           }
         }
       }
@@ -1306,17 +1367,22 @@ class FloatingDispatchOverlayService : Service() {
       scaleType = ImageView.ScaleType.FIT_CENTER
       val p = dp(3)
       setPadding(p, p, p, p)
-      val resId = resources.getIdentifier("phlebo_bubble_logo", "drawable", packageName)
-      if (resId != 0) {
-        setImageResource(resId)
+      val bikeResId = resources.getIdentifier("phlebo_courier_bike", "drawable", packageName)
+      if (bikeResId != 0) {
+        setImageResource(bikeResId)
       } else {
-        val vectorResId = resources.getIdentifier("ic_labsetu_logo", "drawable", packageName)
-        if (vectorResId != 0) {
-          setImageResource(vectorResId)
+        val resId = resources.getIdentifier("phlebo_bubble_logo", "drawable", packageName)
+        if (resId != 0) {
+          setImageResource(resId)
         } else {
-          try {
-            setImageDrawable(packageManager.getApplicationIcon(packageName))
-          } catch (_: Exception) {}
+          val vectorResId = resources.getIdentifier("ic_labsetu_logo", "drawable", packageName)
+          if (vectorResId != 0) {
+            setImageResource(vectorResId)
+          } else {
+            try {
+              setImageDrawable(packageManager.getApplicationIcon(packageName))
+            } catch (_: Exception) {}
+          }
         }
       }
     }
@@ -1958,7 +2024,9 @@ class FloatingDispatchOverlayService : Service() {
 
   private fun createNotificationChannel() {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      val channel = NotificationChannel(
+      val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+      val dutyChannel = NotificationChannel(
         CHANNEL_ID,
         "LabSetu Dispatch Overlay",
         NotificationManager.IMPORTANCE_LOW
@@ -1968,8 +2036,22 @@ class FloatingDispatchOverlayService : Service() {
         enableVibration(false)
         setSound(null, null)
       }
-      val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-      nm.createNotificationChannel(channel)
+      nm.createNotificationChannel(dutyChannel)
+
+      val urgentChannel = NotificationChannel(
+        URGENT_CHANNEL_ID,
+        "LabSetu Urgent Sample Pickup Broadcasts",
+        NotificationManager.IMPORTANCE_HIGH
+      ).apply {
+        description = "Heads-up alert notifications for incoming sample pickup broadcasts."
+        setShowBadge(true)
+        enableVibration(true)
+        vibrationPattern = longArrayOf(0, 800, 300, 800, 300, 800)
+        lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        enableLights(true)
+        lightColor = Color.parseColor("#10B981")
+      }
+      nm.createNotificationChannel(urgentChannel)
     }
   }
 
@@ -2016,8 +2098,14 @@ class FloatingDispatchOverlayService : Service() {
   }
 
   companion object {
+    const val PREFS_NAME = "labsetu_floating_dispatch_prefs"
+    const val KEY_BUBBLE_X = "bubble_x"
+    const val KEY_BUBBLE_Y = "bubble_y"
+
     const val CHANNEL_ID = "labsetu_dispatch_overlay_channel"
+    const val URGENT_CHANNEL_ID = "labsetu-urgent-pickups"
     const val NOTIF_ID = 918237
+    const val URGENT_NOTIF_ID = 918238
 
     const val ACTION_START = "ACTION_START_OVERLAY"
     const val ACTION_STOP = "ACTION_STOP_OVERLAY"
@@ -2493,6 +2581,10 @@ module.exports = function withFloatingDispatchOverlay(config) {
       const vectorLogoSrc = path.join(__dirname, '..', 'assets', 'ic_labsetu_logo.xml');
       if (fs.existsSync(vectorLogoSrc)) {
         fs.copyFileSync(vectorLogoSrc, path.join(drawableResPath, 'ic_labsetu_logo.xml'));
+      }
+      const phleboBikeSrc = path.join(__dirname, '..', 'assets', 'phlebo_courier_bike.xml');
+      if (fs.existsSync(phleboBikeSrc)) {
+        fs.copyFileSync(phleboBikeSrc, path.join(drawableResPath, 'phlebo_courier_bike.xml'));
       }
 
       return mod;

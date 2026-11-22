@@ -63,8 +63,8 @@ function parseBrowserRoute(): {
   const resolvedRole: UserRole = isValidWebRole(queryRole)
     ? queryRole
     : isValidWebRole(storedRole)
-    ? storedRole
-    : UserRole.SMALL_LAB;
+      ? storedRole
+      : UserRole.SMALL_LAB;
 
   if (path.startsWith('/mobile-google-auth')) {
     return {
@@ -295,7 +295,7 @@ export function App() {
   const handleAuthenticated = useCallback(
     (verifiedSession: VerifiedPortalSession) => {
       if (verifiedSession.profile.role === UserRole.PHLEBOTOMIST) {
-        void signOut(auth).catch(() => {});
+        void signOut(auth).catch(() => { });
         showAlert({
           variant: 'error',
           title: 'Mobile App Only',
