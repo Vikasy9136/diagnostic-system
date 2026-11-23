@@ -1,6 +1,6 @@
 import * as ImagePicker from 'expo-image-picker';
 import { Alert, Platform } from 'react-native';
-import { uploadPhleboSampleBase64, uploadPhleboSampleFile } from '../firebase';
+import { uploadPhleboSampleBase64, uploadPhleboSampleFile, uploadPhleboSampleUri } from '../firebase';
 
 export interface CameraCaptureResult {
   success: boolean;
@@ -114,7 +114,6 @@ export async function captureSampleProofPhoto(
       cameraType: mode === 'user' ? ImagePicker.CameraType.front : ImagePicker.CameraType.back,
       allowsEditing: false,
       quality: 0.82,
-      base64: true,
     });
 
     if (pickerResult.canceled || !pickerResult.assets?.[0]?.uri) {
@@ -130,19 +129,7 @@ export async function captureSampleProofPhoto(
     const filename = `${prefix}-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}.jpg`;
     const storagePath = `samples/${orderId}/${filename}`;
 
-    let downloadUrl: string;
-    if (asset.base64) {
-      downloadUrl = await uploadPhleboSampleBase64(storagePath, asset.base64);
-    } else {
-      let fileOrBlob: Blob | File;
-      if (Platform.OS === 'web' && asset.file) {
-        fileOrBlob = asset.file;
-      } else {
-        const resp = await fetch(uri);
-        fileOrBlob = await resp.blob();
-      }
-      downloadUrl = await uploadPhleboSampleFile(storagePath, fileOrBlob);
-    }
+    const downloadUrl = await uploadPhleboSampleUri(storagePath, uri);
 
     return {
       success: true,
@@ -214,7 +201,6 @@ export async function pickSampleProofFromLibrary(
       mediaTypes: ['images'],
       allowsEditing: false,
       quality: 0.85,
-      base64: true,
     });
 
     if (pickerResult.canceled || !pickerResult.assets?.[0]?.uri) {
@@ -230,19 +216,7 @@ export async function pickSampleProofFromLibrary(
     const filename = `upload-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}.jpg`;
     const storagePath = `samples/${orderId}/${filename}`;
 
-    let downloadUrl: string;
-    if (asset.base64) {
-      downloadUrl = await uploadPhleboSampleBase64(storagePath, asset.base64);
-    } else {
-      let fileOrBlob: Blob | File;
-      if (Platform.OS === 'web' && asset.file) {
-        fileOrBlob = asset.file;
-      } else {
-        const resp = await fetch(uri);
-        fileOrBlob = await resp.blob();
-      }
-      downloadUrl = await uploadPhleboSampleFile(storagePath, fileOrBlob);
-    }
+    const downloadUrl = await uploadPhleboSampleUri(storagePath, uri);
 
     return {
       success: true,

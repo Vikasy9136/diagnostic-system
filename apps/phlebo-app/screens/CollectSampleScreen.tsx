@@ -36,6 +36,7 @@ export interface CollectSampleScreenProps {
   onConfirmCollection: (order: PickupOrder) => void;
   onMarkDirectPayment?: (order: PickupOrder, method: 'DIRECT_TO_LAB' | 'CASH' | 'UPI_PHLEBO') => void;
   onCollectBookingPayment?: (order: PickupOrder) => void;
+  enableBarcodeScanner?: boolean;
 }
 
 export function CollectSampleScreen({
@@ -58,6 +59,7 @@ export function CollectSampleScreen({
   onConfirmCollection,
   onMarkDirectPayment,
   onCollectBookingPayment,
+  enableBarcodeScanner = false,
 }: CollectSampleScreenProps) {
   const specimens = order.specimens || [];
   const [vialCount, setVialCount] = useState<number>(Math.max(1, specimens.length));
@@ -85,7 +87,9 @@ export function CollectSampleScreen({
     }).valid;
   }).length;
 
-  const allTubesVerified = specimens.length > 0 && verifiedCount === specimens.length;
+  const allTubesVerified = enableBarcodeScanner
+    ? (specimens.length > 0 && verifiedCount === specimens.length)
+    : true;
   const infoStepDone = allTubesVerified && Boolean(samplePhotoUrl) && Boolean(selfiePhotoUrl);
 
   const formattedNow = new Date().toLocaleString('en-IN', {
@@ -127,7 +131,7 @@ export function CollectSampleScreen({
           </Text>
 
           {/* 1-Tap Direct Call Buttons */}
-          <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
             {(order.patient?.phone || (order as any).patientPhone) ? (
               <TouchableOpacity
                 style={{
@@ -135,21 +139,27 @@ export function CollectSampleScreen({
                   flexDirection: 'row',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: 6,
-                  backgroundColor: '#DCFCE7',
-                  borderWidth: 1,
-                  borderColor: '#86EFAC',
-                  borderRadius: 8,
-                  paddingVertical: 7,
-                  paddingHorizontal: 8,
+                  gap: 8,
+                  backgroundColor: '#F0FDF4',
+                  borderWidth: 1.6,
+                  borderColor: '#22C55E',
+                  borderRadius: 12,
+                  paddingVertical: 10,
+                  paddingHorizontal: 10,
+                  minHeight: 46,
+                  elevation: 1,
+                  shadowColor: '#16A34A',
+                  shadowOffset: { width: 0, height: 1 },
+                  shadowOpacity: 0.1,
+                  shadowRadius: 2,
                 }}
                 onPress={() => {
                   const phone = order.patient?.phone || (order as any).patientPhone;
                   Linking.openURL(`tel:${phone}`).catch(() => {});
                 }}
               >
-                <Ionicons name="call" size={14} color="#15803D" />
-                <Text style={{ fontSize: 11, fontWeight: '700', color: '#15803D' }}>
+                <Ionicons name="call" size={16} color="#15803D" />
+                <Text style={{ fontSize: 13, fontWeight: '800', color: '#15803D' }} numberOfLines={1}>
                   Call Patient ({order.patient.pseudonym})
                 </Text>
               </TouchableOpacity>
@@ -162,20 +172,26 @@ export function CollectSampleScreen({
                   flexDirection: 'row',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: 6,
+                  gap: 8,
                   backgroundColor: '#EFF6FF',
-                  borderWidth: 1,
-                  borderColor: '#93C5FD',
-                  borderRadius: 8,
-                  paddingVertical: 7,
-                  paddingHorizontal: 8,
+                  borderWidth: 1.6,
+                  borderColor: '#3B82F6',
+                  borderRadius: 12,
+                  paddingVertical: 10,
+                  paddingHorizontal: 10,
+                  minHeight: 46,
+                  elevation: 1,
+                  shadowColor: '#2563EB',
+                  shadowOffset: { width: 0, height: 1 },
+                  shadowOpacity: 0.1,
+                  shadowRadius: 2,
                 }}
                 onPress={() => {
                   Linking.openURL(`tel:${order.pickupLocation.contactPhone}`).catch(() => {});
                 }}
               >
-                <Ionicons name="business" size={14} color="#1D4ED8" />
-                <Text style={{ fontSize: 11, fontWeight: '700', color: '#1D4ED8' }}>
+                <Ionicons name="business" size={16} color="#1D4ED8" />
+                <Text style={{ fontSize: 13, fontWeight: '800', color: '#1D4ED8' }} numberOfLines={1}>
                   Call Lab Desk
                 </Text>
               </TouchableOpacity>
@@ -187,31 +203,41 @@ export function CollectSampleScreen({
           <View
             style={{
               backgroundColor: '#DCFCE7',
-              borderColor: '#86EFAC',
-              borderWidth: 1,
-              borderRadius: 10,
-              paddingHorizontal: 12,
-              paddingVertical: 9,
-              marginBottom: 12,
+              borderColor: '#22C55E',
+              borderWidth: 1.8,
+              borderRadius: 14,
+              paddingHorizontal: 14,
+              paddingVertical: 12,
+              marginBottom: 14,
               flexDirection: 'row',
               alignItems: 'center',
-              gap: 8,
+              gap: 10,
+              elevation: 2,
+              shadowColor: '#16A34A',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.12,
+              shadowRadius: 4,
             }}
           >
-            <Ionicons name="checkmark-circle" size={18} color="#15803D" />
-            <Text style={{ fontSize: 13, color: '#15803D', fontWeight: '700', flex: 1 }}>
+            <Ionicons name="checkmark-circle" size={22} color="#15803D" />
+            <Text style={{ fontSize: 13.5, color: '#15803D', fontWeight: '800', flex: 1 }}>
               ✓ Payment Completed ({order.paymentMethod || 'Settled directly with lab'})
             </Text>
           </View>
         ) : (
           <View
             style={{
-              backgroundColor: '#FEF3C7',
-              borderColor: '#FDE68A',
-              borderWidth: 1,
-              borderRadius: 10,
-              padding: 12,
-              marginBottom: 12,
+              backgroundColor: '#FFFBEB',
+              borderColor: '#F59E0B',
+              borderWidth: 1.8,
+              borderRadius: 14,
+              padding: 14,
+              marginBottom: 14,
+              elevation: 2,
+              shadowColor: '#B45309',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.1,
+              shadowRadius: 4,
             }}
           >
             <View
@@ -219,53 +245,71 @@ export function CollectSampleScreen({
                 flexDirection: 'row',
                 justifyContent: 'space-between',
                 alignItems: 'center',
-                marginBottom: 8,
+                marginBottom: 10,
               }}
             >
-              <Text style={{ fontSize: 13, fontWeight: '700', color: '#92400E' }}>
+              <Text style={{ fontSize: 14, fontWeight: '800', color: '#92400E' }}>
                 ⚠️ Payment Due: ₹{order.totalAmountInr || order.courierFeeInr || 0}
               </Text>
-              <Text style={{ fontSize: 11, fontWeight: '600', color: '#B45309' }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#B45309' }}>
                 Direct or Cash Collection
               </Text>
             </View>
-            <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
               <TouchableOpacity
                 style={{
                   backgroundColor: '#059669',
-                  paddingHorizontal: 10,
-                  paddingVertical: 7,
-                  borderRadius: 6,
+                  borderWidth: 1.5,
+                  borderColor: '#047857',
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  borderRadius: 10,
+                  minHeight: 44,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  elevation: 2,
                 }}
                 onPress={() => onMarkDirectPayment?.(order, 'DIRECT_TO_LAB')}
               >
-                <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '700' }}>
+                <Text style={{ color: '#FFFFFF', fontSize: 12.5, fontWeight: '800' }}>
                   ✓ Paid to Lab Directly
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={{
                   backgroundColor: '#0284C7',
-                  paddingHorizontal: 10,
-                  paddingVertical: 7,
-                  borderRadius: 6,
+                  borderWidth: 1.5,
+                  borderColor: '#0369A1',
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  borderRadius: 10,
+                  minHeight: 44,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  elevation: 2,
                 }}
                 onPress={() => onMarkDirectPayment?.(order, 'CASH')}
               >
-                <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '700' }}>
+                <Text style={{ color: '#FFFFFF', fontSize: 12.5, fontWeight: '800' }}>
                   💵 Collect Cash
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={{
-                  backgroundColor: '#6366F1',
-                  paddingHorizontal: 10,
-                  paddingVertical: 7,
-                  borderRadius: 6,
+                  backgroundColor: '#4F46E5',
+                  borderWidth: 1.5,
+                  borderColor: '#4338CA',
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  borderRadius: 10,
+                  minHeight: 44,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  elevation: 2,
                 }}
                 onPress={() => onCollectBookingPayment?.(order)}
               >
-                <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '700' }}>
+                <Text style={{ color: '#FFFFFF', fontSize: 12.5, fontWeight: '800' }}>
                   💳 Online / UPI
                 </Text>
               </TouchableOpacity>
@@ -355,15 +399,17 @@ export function CollectSampleScreen({
           <SampleVialHeroIllustration size={108} />
         </View>
 
-        <View style={styles.verifyHintCard}>
-          <Text style={styles.verifyHintTitle}>
-            Per-Tube Barcode &amp; Vacutainer Validation
-          </Text>
-          <Text style={styles.verifyHintText}>
-            Scan each specimen tube barcode and confirm the physical tube cap color used. Any
-            wrong tube or duplicate barcode conflict is flagged immediately.
-          </Text>
-        </View>
+        {enableBarcodeScanner ? (
+          <>
+            <View style={styles.verifyHintCard}>
+              <Text style={styles.verifyHintTitle}>
+                Per-Tube Barcode &amp; Vacutainer Validation
+              </Text>
+              <Text style={styles.verifyHintText}>
+                Scan each specimen tube barcode and confirm the physical tube cap color used. Any
+                wrong tube or duplicate barcode conflict is flagged immediately.
+              </Text>
+            </View>
 
         {specimens.map((spec, idx) => {
           const draft = specimenDrafts[spec.id] || {
@@ -540,6 +586,68 @@ export function CollectSampleScreen({
             </View>
           );
         })}
+          </>
+        ) : (
+          <View style={[styles.verifyHintCard, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0', marginBottom: 14 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <Ionicons name="flask-outline" size={22} color={BRAND_COLORS.tealPrimary} />
+              <Text style={[styles.verifyHintTitle, { color: '#166534', fontSize: 15 }]}>
+                Specimens to Collect ({specimens.length} Total)
+              </Text>
+            </View>
+            <Text style={[styles.verifyHintText, { color: '#14532D', marginBottom: 12 }]}>
+              Verify patient identity, collect diagnostic samples into required vacutainer tubes, and store safely in the chilled carrier box.
+            </Text>
+            {specimens.map((spec, idx) => {
+              const meta = TUBE_METADATA[spec.tubeType || TubeType.SERUM_RED_GOLD] || TUBE_METADATA[TubeType.SERUM_RED_GOLD];
+              return (
+                <View
+                  key={spec.id}
+                  style={{
+                    backgroundColor: '#FFFFFF',
+                    borderRadius: 12,
+                    borderWidth: 1.5,
+                    borderColor: '#DCFCE7',
+                    padding: 12,
+                    marginBottom: 8,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    elevation: 1,
+                  }}
+                >
+                  <View style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
+                    <Text style={{ fontSize: 13.5, fontWeight: '800', color: BRAND_COLORS.navyPrimary }}>
+                      #{idx + 1} {spec.testCode} — {spec.testName}
+                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: meta.colorHex }} />
+                      <Text style={{ fontSize: 12, color: '#475569', fontWeight: '700' }}>
+                        {meta.label} ({meta.capColorName})
+                      </Text>
+                    </View>
+                  </View>
+                  <View
+                    style={{
+                      backgroundColor: '#DCFCE7',
+                      paddingHorizontal: 10,
+                      paddingVertical: 5,
+                      borderRadius: 8,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 5,
+                    }}
+                  >
+                    <Ionicons name="checkmark-circle" size={16} color="#15803D" />
+                    <Text style={{ fontSize: 12, fontWeight: '800', color: '#15803D' }}>
+                      Verified
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
 
         {/* Add Sample Info Card matching SS1 & SS2 */}
         <View style={styles.photoProofCard}>

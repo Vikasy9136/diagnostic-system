@@ -44,6 +44,8 @@ import {
   type VendorPurchaseRecord,
   DEFAULT_SUPPORT_CONTACTS,
   type SupportContactsConfig,
+  DEFAULT_PLATFORM_FEATURES,
+  type PlatformFeaturesConfig,
   type PlatformSopDocument,
   type PlatformFaqDocument,
 } from '@diagnostic/shared';
@@ -81,6 +83,7 @@ import {
   saveAdminSettings,
   saveCommissionSettings,
   saveDiagnosticTest,
+  savePlatformFeatures,
   saveSupportContacts,
   subscribeCustodyEvents,
   subscribeInventoryKits,
@@ -92,6 +95,7 @@ import {
   subscribePayouts,
   subscribePhlebotomists,
   subscribePlatformFaqs,
+  subscribePlatformFeatures,
   subscribePlatformSops,
   subscribeReports,
   subscribeServiceZones,
@@ -372,6 +376,7 @@ export function AdminDashboard({
   const [commConfig, setCommConfig] = useState<CommissionConfig>(DEFAULT_COMMISSION_CONFIG);
   const [emailSettings, setEmailSettings] = useState<EmailDeliverySettings>(DEFAULT_EMAIL_SETTINGS);
   const [supportContacts, setSupportContacts] = useState<SupportContactsConfig>(DEFAULT_SUPPORT_CONTACTS);
+  const [featuresConfig, setFeaturesConfig] = useState<PlatformFeaturesConfig>(DEFAULT_PLATFORM_FEATURES);
   const [platformSops, setPlatformSops] = useState<PlatformSopDocument[]>([]);
   const [platformFaqs, setPlatformFaqs] = useState<PlatformFaqDocument[]>([]);
 
@@ -453,6 +458,7 @@ export function AdminDashboard({
       subscribeNotifications(session.profile, setNotifications, noop),
       subscribeSettings(setSlaConfig, setCommConfig, setEmailSettings),
       subscribeSupportContacts(setSupportContacts, noop),
+      subscribePlatformFeatures(setFeaturesConfig, noop),
       subscribePlatformSops(setPlatformSops, noop),
       subscribePlatformFaqs(setPlatformFaqs, noop),
       subscribeServiceZones(setServiceZones, noop),
@@ -1683,6 +1689,8 @@ export function AdminDashboard({
             onEmailSettingsChange={setEmailSettings}
             supportContacts={supportContacts}
             onSupportContactsChange={setSupportContacts}
+            featuresConfig={featuresConfig}
+            onFeaturesConfigChange={setFeaturesConfig}
             onSaveSettings={async () => {
               await saveAdminSettings({
                 sla: slaConfig,
@@ -1690,10 +1698,11 @@ export function AdminDashboard({
                 adminEmail: session.profile.email,
               });
               await saveSupportContacts(supportContacts, session.profile.email);
+              await savePlatformFeatures(featuresConfig, session.profile.email);
               onShowAlert({
                 variant: 'success',
                 title: 'Settings Saved',
-                message: 'Pickup targets, alert preferences, and live Support Desk contacts saved successfully.',
+                message: 'Pickup targets, alert preferences, feature controls, and live Support Desk contacts saved successfully.',
               });
             }}
             newAccountPassword={newAccountPassword}

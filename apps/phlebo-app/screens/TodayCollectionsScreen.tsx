@@ -127,7 +127,11 @@ export function TodayCollectionsScreen({
     : 'Active Service Area');
 
   return (
-    <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={styles.scrollArea}
+      contentContainerStyle={{ paddingBottom: rs(120) }}
+      showsVerticalScrollIndicator={false}
+    >
       <View style={styles.navBarHeader}>
         <TouchableOpacity onPress={onBack} hitSlop={8} accessibilityLabel="Back to Home">
           <Ionicons name="arrow-back" size={23} color="#FFFFFF" />
@@ -435,7 +439,7 @@ export function TodayCollectionsScreen({
 
                 {/* 1-Tap Direct Call Patient & Call Lab */}
                 {(Boolean(patientPhone) || Boolean(labPhone)) && (
-                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 4, marginBottom: 8 }}>
+                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 6, marginBottom: 10 }}>
                     {Boolean(patientPhone) && (
                       <TouchableOpacity
                         style={{
@@ -443,21 +447,27 @@ export function TodayCollectionsScreen({
                           flexDirection: 'row',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          gap: 6,
+                          gap: 8,
                           backgroundColor: '#F0FDF4',
-                          borderWidth: 1,
-                          borderColor: '#86EFAC',
-                          borderRadius: 8,
-                          paddingVertical: 7,
-                          paddingHorizontal: 8,
+                          borderWidth: 1.6,
+                          borderColor: '#22C55E',
+                          borderRadius: 12,
+                          paddingVertical: 10,
+                          paddingHorizontal: 10,
+                          minHeight: 44,
+                          elevation: 1,
+                          shadowColor: '#16A34A',
+                          shadowOffset: { width: 0, height: 1 },
+                          shadowOpacity: 0.1,
+                          shadowRadius: 2,
                         }}
                         onPress={(e) => {
                           e.stopPropagation();
                           Linking.openURL(`tel:${patientPhone}`).catch(() => {});
                         }}
                       >
-                        <Ionicons name="call" size={14} color="#15803D" />
-                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#15803D' }} numberOfLines={1}>
+                        <Ionicons name="call" size={16} color="#15803D" />
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#15803D' }} numberOfLines={1}>
                           Call Patient
                         </Text>
                       </TouchableOpacity>
@@ -470,21 +480,27 @@ export function TodayCollectionsScreen({
                           flexDirection: 'row',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          gap: 6,
+                          gap: 8,
                           backgroundColor: '#EFF6FF',
-                          borderWidth: 1,
-                          borderColor: '#93C5FD',
-                          borderRadius: 8,
-                          paddingVertical: 7,
-                          paddingHorizontal: 8,
+                          borderWidth: 1.6,
+                          borderColor: '#3B82F6',
+                          borderRadius: 12,
+                          paddingVertical: 10,
+                          paddingHorizontal: 10,
+                          minHeight: 44,
+                          elevation: 1,
+                          shadowColor: '#2563EB',
+                          shadowOffset: { width: 0, height: 1 },
+                          shadowOpacity: 0.1,
+                          shadowRadius: 2,
                         }}
                         onPress={(e) => {
                           e.stopPropagation();
                           Linking.openURL(`tel:${labPhone}`).catch(() => {});
                         }}
                       >
-                        <Ionicons name="business" size={14} color="#1D4ED8" />
-                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#1D4ED8' }} numberOfLines={1}>
+                        <Ionicons name="business" size={16} color="#1D4ED8" />
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#1D4ED8' }} numberOfLines={1}>
                           Call Lab Desk
                         </Text>
                       </TouchableOpacity>
@@ -493,36 +509,75 @@ export function TodayCollectionsScreen({
                 )}
 
                 {!isDone ? (
-                  <View style={styles.actionsRow}>
-                    <TouchableOpacity
-                      style={styles.btnSecondary}
-                      onPress={() => onViewOrderDetails(order)}
-                    >
-                      <Text style={styles.btnSecondaryText}>Details</Text>
-                    </TouchableOpacity>
-
-                    {!isPaidOrder && collectableInr >= 1 ? (
+                  <View style={{ marginTop: rs(10), gap: rs(8) }}>
+                    {/* Top utility row: Details & Collect */}
+                    <View style={{ flexDirection: 'row', gap: rs(8) }}>
                       <TouchableOpacity
                         style={[
                           styles.btnSecondary,
-                          { backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE' },
-                          collectingOrderId === order.id && { opacity: 0.65 },
+                          {
+                            flex: 1,
+                            minHeight: 40,
+                            backgroundColor: '#F8FAFC',
+                            borderWidth: 1,
+                            borderColor: '#CBD5E1',
+                            borderRadius: 10,
+                            paddingVertical: rs(9),
+                          },
                         ]}
-                        disabled={collectingOrderId === order.id}
-                        onPress={() => onCollectBookingPayment(order)}
+                        onPress={() => onViewOrderDetails(order)}
                       >
-                        <Text style={[styles.btnSecondaryText, { color: '#1D4ED8' }]}>
-                          {collectingOrderId === order.id ? 'Opening...' : 'Collect'}
-                        </Text>
+                        <Text style={[styles.btnSecondaryText, { color: '#64748B' }]}>📄 Details</Text>
                       </TouchableOpacity>
-                    ) : null}
 
+                      {!isPaidOrder && collectableInr >= 1 ? (
+                        <TouchableOpacity
+                          style={[
+                            styles.btnSecondary,
+                            {
+                              flex: 1,
+                              minHeight: 40,
+                              backgroundColor: '#EFF6FF',
+                              borderWidth: 1,
+                              borderColor: '#BFDBFE',
+                              borderRadius: 10,
+                              paddingVertical: rs(9),
+                              opacity: collectingOrderId === order.id ? 0.65 : 1,
+                            },
+                          ]}
+                          disabled={collectingOrderId === order.id}
+                          onPress={() => onCollectBookingPayment(order)}
+                        >
+                          <Text style={[styles.btnSecondaryText, { color: '#1D4ED8' }]}>
+                            {collectingOrderId === order.id ? 'Opening...' : `💳 Collect ₹${collectableInr}`}
+                          </Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+
+                    {/* Prominent full-width Primary CTA */}
                     <TouchableOpacity
-                      style={styles.btnPrimary}
+                      style={[
+                        styles.btnPrimary,
+                        {
+                          width: '100%',
+                          minHeight: 48,
+                          borderRadius: 12,
+                          backgroundColor: COLORS.primaryNavy,
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                          paddingVertical: rs(12),
+                          shadowColor: COLORS.primaryNavy,
+                          shadowOffset: { width: 0, height: 4 },
+                          shadowOpacity: 0.22,
+                          shadowRadius: 6,
+                          elevation: 4,
+                        },
+                      ]}
                       onPress={() => onOpenOrderWorkflow(order)}
                     >
-                      <Text style={styles.btnPrimaryText}>
-                        {isInTransit ? 'Handover OTP →' : 'Start Collection →'}
+                      <Text style={[styles.btnPrimaryText, { fontSize: rf(14), fontWeight: '700' }]}>
+                        {isInTransit ? '📦 Handover OTP →' : '🚀 Start Collection →'}
                       </Text>
                     </TouchableOpacity>
                   </View>

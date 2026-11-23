@@ -158,7 +158,7 @@ export interface BroadcastDispatchModalProps {
   activeBroadcastMatch: OpenPoolEntry | null;
   riderLocation: LiveGeoCoordinate;
   submittingAction: boolean;
-  onDismissBroadcast: (orderId: string) => void;
+  onDismissBroadcast: (orderId: string, isExplicitDecline?: boolean) => void;
   onAcceptPoolOrder: (order: PickupOrder) => void;
   onOpenDirectionsMap: (lat?: number, lng?: number, fallbackAddr?: string) => void;
 }
@@ -176,21 +176,34 @@ export function BroadcastDispatchModal({
 
   useEffect(() => {
     if (!activeBroadcastMatch) return;
-    const updateCountdown = () => {
-      const expiresMs = activeBroadcastMatch.order.broadcastExpiresAt
-        ? new Date(activeBroadcastMatch.order.broadcastExpiresAt).getTime()
-        : new Date(activeBroadcastMatch.order.createdAt).getTime() + 45000;
-      const diffMs = expiresMs - Date.now();
-      const sec = Math.max(0, Math.ceil(diffMs / 1000));
-      setRemSeconds(sec);
-      if (sec <= 0) {
-        onDismissBroadcast(activeBroadcastMatch.order.id);
+    let sec = 45;
+    if (activeBroadcastMatch.order.broadcastExpiresAt) {
+      const diff = Math.ceil(
+        (new Date(activeBroadcastMatch.order.broadcastExpiresAt).getTime() - Date.now()) / 1000
+      );
+      if (diff > 5) {
+        sec = Math.min(60, diff);
       }
-    };
-    updateCountdown();
-    const timer = setInterval(updateCountdown, 1000);
+    }
+    setRemSeconds(sec);
+
+    const timer = setInterval(() => {
+      setRemSeconds((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          onDismissBroadcast(activeBroadcastMatch.order.id, false);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
     return () => clearInterval(timer);
-  }, [activeBroadcastMatch, onDismissBroadcast]);
+  }, [
+    activeBroadcastMatch?.order.id,
+    activeBroadcastMatch?.order.searchRetryCount,
+    activeBroadcastMatch?.order.surgeIncentiveInr,
+    onDismissBroadcast,
+  ]);
 
   return (
     <Modal
@@ -200,7 +213,7 @@ export function BroadcastDispatchModal({
       statusBarTranslucent
       onRequestClose={() => {
         if (activeBroadcastMatch) {
-          onDismissBroadcast(activeBroadcastMatch.order.id);
+          onDismissBroadcast(activeBroadcastMatch.order.id, false);
         }
       }}
     >
@@ -209,7 +222,7 @@ export function BroadcastDispatchModal({
           style={[
             styles.modalBackdrop,
             {
-              backgroundColor: 'rgba(9, 13, 22, 0.82)',
+              backgroundColor: 'rgba(15, 23, 42, 0.65)',
               justifyContent: 'center',
               paddingTop: Math.max(insets.top + 12, 16),
               paddingBottom: Math.max(insets.bottom + 12, 16),
@@ -220,24 +233,24 @@ export function BroadcastDispatchModal({
         >
           <View
             style={{
-              backgroundColor: '#090D16',
+              backgroundColor: '#FFFFFF',
               borderRadius: 24,
               borderWidth: 2,
-              borderColor: '#10B981',
+              borderColor: '#0D9488',
               padding: 16,
               maxHeight: '92%',
               width: '100%',
               maxWidth: 480,
               alignSelf: 'center',
-              shadowColor: '#10B981',
+              shadowColor: '#0D9488',
               shadowOffset: { width: 0, height: 8 },
-              shadowOpacity: 0.35,
+              shadowOpacity: 0.25,
               shadowRadius: 20,
               elevation: 28,
             }}
           >
             <ScrollView showsVerticalScrollIndicator={false}>
-              {/* 1. Header Bar: Rapido Captain Status + Timer */}
+              {/* 1. Header Bar: Status + Timer */}
               <View
                 style={{
                   flexDirection: 'row',
@@ -247,7 +260,9 @@ export function BroadcastDispatchModal({
               >
                 <View
                   style={{
-                    backgroundColor: '#064E3B',
+                    backgroundColor: '#F0FDF4',
+                    borderColor: '#BBF7D0',
+                    borderWidth: 1,
                     paddingHorizontal: 10,
                     paddingVertical: 5,
                     borderRadius: 8,
@@ -261,14 +276,14 @@ export function BroadcastDispatchModal({
                       width: 7,
                       height: 7,
                       borderRadius: 3.5,
-                      backgroundColor: '#10B981',
+                      backgroundColor: '#059669',
                     }}
                   />
                   <Text
                     style={{
                       fontSize: 11.5,
                       fontFamily: BRAND_FONTS.bold,
-                      color: '#10B981',
+                      color: '#047857',
                       letterSpacing: 0.5,
                     }}
                   >
@@ -278,7 +293,9 @@ export function BroadcastDispatchModal({
 
                 <View
                   style={{
-                    backgroundColor: '#451A03',
+                    backgroundColor: '#FEF3C7',
+                    borderColor: '#FDE68A',
+                    borderWidth: 1,
                     paddingHorizontal: 10,
                     paddingVertical: 5,
                     borderRadius: 8,
@@ -288,7 +305,7 @@ export function BroadcastDispatchModal({
                     style={{
                       fontSize: 13,
                       fontFamily: BRAND_FONTS.bold,
-                      color: '#F59E0B',
+                      color: '#B45309',
                     }}
                   >
                     ⏱ {remSeconds}s
@@ -303,7 +320,7 @@ export function BroadcastDispatchModal({
               ) && (
                 <View
                   style={{
-                    backgroundColor: '#451A03',
+                    backgroundColor: '#FFFBEB',
                     borderColor: '#F59E0B',
                     borderWidth: 1,
                     borderRadius: 8,
@@ -319,7 +336,7 @@ export function BroadcastDispatchModal({
                     style={{
                       fontSize: 12,
                       fontFamily: BRAND_FONTS.bold,
-                      color: '#FBBF24',
+                      color: '#B45309',
                     }}
                   >
                     ⚡ +₹{activeBroadcastMatch.order.surgeIncentiveInr} SURGE HIKE INCLUDED
@@ -327,12 +344,12 @@ export function BroadcastDispatchModal({
                 </View>
               )}
 
-              {/* 2. Hero Payout Box (Rapido Big Earnings Banner) */}
+              {/* 2. Hero Payout Box */}
               <View
                 style={{
-                  backgroundColor: '#062A24',
-                  borderColor: '#0D9488',
-                  borderWidth: 1,
+                  backgroundColor: '#F0FDF4',
+                  borderColor: '#99F6E4',
+                  borderWidth: 1.5,
                   borderRadius: 14,
                   paddingHorizontal: 14,
                   paddingVertical: 10,
@@ -350,7 +367,7 @@ export function BroadcastDispatchModal({
                     style={{
                       fontSize: 22,
                       fontFamily: BRAND_FONTS.extraBold,
-                      color: '#10B981',
+                      color: '#047857',
                     }}
                   >
                     Earn {formatInr(activeBroadcastMatch.order.courierFeeInr || 100)}
@@ -359,7 +376,7 @@ export function BroadcastDispatchModal({
                     style={{
                       fontSize: 12,
                       fontFamily: BRAND_FONTS.bold,
-                      color: '#94A3B8',
+                      color: '#64748B',
                     }}
                   >
                     {activeBroadcastMatch.order.orderNumber}
@@ -369,7 +386,7 @@ export function BroadcastDispatchModal({
                   style={{
                     fontSize: 11,
                     fontFamily: BRAND_FONTS.medium,
-                    color: '#5EEAD4',
+                    color: '#0D9488',
                     marginTop: 2,
                   }}
                 >
@@ -380,8 +397,8 @@ export function BroadcastDispatchModal({
               {/* 3. Route Details Container (Pickup -> Drop) */}
               <View
                 style={{
-                  backgroundColor: '#131D33',
-                  borderColor: '#1E293B',
+                  backgroundColor: '#F8FAFC',
+                  borderColor: '#E2E8F0',
                   borderWidth: 1,
                   borderRadius: 16,
                   padding: 12,
@@ -395,7 +412,7 @@ export function BroadcastDispatchModal({
                       width: 12,
                       height: 12,
                       borderRadius: 6,
-                      backgroundColor: '#10B981',
+                      backgroundColor: '#0D9488',
                       marginTop: 4,
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -415,7 +432,7 @@ export function BroadcastDispatchModal({
                       style={{
                         fontSize: 14,
                         fontFamily: BRAND_FONTS.bold,
-                        color: '#FFFFFF',
+                        color: '#0F172A',
                       }}
                     >
                       {activeBroadcastMatch.order.smallLabName}
@@ -424,7 +441,7 @@ export function BroadcastDispatchModal({
                       style={{
                         fontSize: 12,
                         fontFamily: BRAND_FONTS.regular,
-                        color: '#94A3B8',
+                        color: '#475569',
                         marginTop: 1,
                       }}
                     >
@@ -432,7 +449,7 @@ export function BroadcastDispatchModal({
                     </Text>
                     <View
                       style={{
-                        backgroundColor: '#0C4A6E',
+                        backgroundColor: '#E0F2FE',
                         paddingHorizontal: 8,
                         paddingVertical: 3,
                         borderRadius: 6,
@@ -444,7 +461,7 @@ export function BroadcastDispatchModal({
                         style={{
                           fontSize: 11,
                           fontFamily: BRAND_FONTS.bold,
-                          color: '#38BDF8',
+                          color: '#0369A1',
                         }}
                       >
                         📍 {activeBroadcastMatch.distFromRiderKm} km away from you
@@ -458,7 +475,7 @@ export function BroadcastDispatchModal({
                   style={{
                     width: 2,
                     height: 14,
-                    backgroundColor: '#334155',
+                    backgroundColor: '#CBD5E1',
                     marginLeft: 5,
                     marginVertical: 4,
                   }}
@@ -491,7 +508,7 @@ export function BroadcastDispatchModal({
                       style={{
                         fontSize: 14,
                         fontFamily: BRAND_FONTS.bold,
-                        color: '#FFFFFF',
+                        color: '#0F172A',
                       }}
                     >
                       Drop: {activeBroadcastMatch.order.targetLabName}
@@ -501,7 +518,7 @@ export function BroadcastDispatchModal({
                         style={{
                           fontSize: 12,
                           fontFamily: BRAND_FONTS.regular,
-                          color: '#94A3B8',
+                          color: '#475569',
                           marginTop: 1,
                         }}
                       >
@@ -510,7 +527,7 @@ export function BroadcastDispatchModal({
                     )}
                     <View
                       style={{
-                        backgroundColor: '#2E1065',
+                        backgroundColor: '#EEF2FF',
                         paddingHorizontal: 8,
                         paddingVertical: 3,
                         borderRadius: 6,
@@ -522,7 +539,7 @@ export function BroadcastDispatchModal({
                         style={{
                           fontSize: 11,
                           fontFamily: BRAND_FONTS.semiBold,
-                          color: '#C4B5FD',
+                          color: '#4338CA',
                         }}
                       >
                         🧪 {(activeBroadcastMatch.order.specimens || []).length} Specimen(s) • Cold-Chain Custody
@@ -558,23 +575,23 @@ export function BroadcastDispatchModal({
                 <TouchableOpacity
                   style={{
                     flex: 1,
-                    backgroundColor: '#1E293B',
+                    backgroundColor: '#FEE2E2',
                     borderWidth: 1.5,
-                    borderColor: '#EF4444',
+                    borderColor: '#FCA5A5',
                     borderRadius: 14,
                     paddingVertical: 13,
                     alignItems: 'center',
                     justifyContent: 'center',
                   }}
                   disabled={submittingAction}
-                  onPress={() => onDismissBroadcast(activeBroadcastMatch.order.id)}
+                  onPress={() => onDismissBroadcast(activeBroadcastMatch.order.id, true)}
                   activeOpacity={0.8}
                 >
                   <Text
                     style={{
                       fontSize: 14.5,
                       fontFamily: BRAND_FONTS.bold,
-                      color: '#F87171',
+                      color: '#DC2626',
                     }}
                   >
                     ✕ Reject
@@ -584,7 +601,7 @@ export function BroadcastDispatchModal({
                 <TouchableOpacity
                   style={{
                     flex: 1.8,
-                    backgroundColor: '#10B981',
+                    backgroundColor: '#0D9488',
                     borderRadius: 14,
                     paddingVertical: 13,
                     alignItems: 'center',

@@ -1998,6 +1998,8 @@ export async function createLiveBooking(params: {
     orderNumber,
     smallLabId: params.smallLab.id,
     smallLabName: params.smallLab.name,
+    createdBy: auth.currentUser?.uid || params.smallLab.id,
+    smallLabEmail: auth.currentUser?.email?.toLowerCase() || (params.smallLab as { email?: string })?.email?.toLowerCase() || '',
     targetLabId: params.targetLab.id,
     ...(params.targetLab.parentLabId
       ? { targetParentLabId: params.targetLab.parentLabId }
@@ -2196,7 +2198,7 @@ export async function retryOrderBroadcast(
   const newSurge = currentSurge + Math.max(0, hikeInr);
   const newCourierFee = baseCourier + newSurge;
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + 45000).toISOString();
+  const expiresAt = new Date(now.getTime() + 60000).toISOString();
 
   const operatorUid = auth.currentUser?.uid || existing.smallLabId;
   const retryEvent: CustodyEvent = {
@@ -2209,7 +2211,7 @@ export async function retryOrderBroadcast(
     operatorRole: UserRole.SMALL_LAB,
     notes: hikeInr > 0
       ? `Broadcast retried with +₹${hikeInr} price hike incentive (Total rider payout ₹${newCourierFee})`
-      : 'Broadcast retried searching for nearby phlebotomists (45s window)',
+      : 'Broadcast retried searching for nearby phlebotomists (60s window)',
   };
 
   const updatedFields: Partial<PickupOrder> = {
@@ -2222,6 +2224,7 @@ export async function retryOrderBroadcast(
     status: OrderStatus.READY_FOR_PICKUP,
     phlebotomistId: '',
     phlebotomistName: undefined,
+    declinedPhleboIds: [],
     updatedAt: now.toISOString(),
     custodyHistory: [...(existing.custodyHistory || []), retryEvent],
   };
@@ -2234,23 +2237,21 @@ export async function retryOrderBroadcast(
     console.warn('[retryOrderBroadcast] custody_events log caught:', err);
   }
 
-  // If an order had an assigned phlebotomist, alert only that specific courier
-  if (existing.phlebotomistId) {
-    try {
-      await dispatchPlatformAlert({
-        title: hikeInr > 0
-          ? `⚡ SURGE +₹${hikeInr} ADD-ON: Pickup ${existing.orderNumber}`
-          : `🔄 RETRY BROADCAST: Pickup ${existing.orderNumber}`,
-        message: `${existing.smallLabName} pickup retried (${existing.distanceKm || 1} km route -> ${existing.targetLabName}). Payout boosted to ₹${newCourierFee}!`,
-        category: NotificationCategory.PICKUP_ASSIGNED,
-        priority: NotificationPriority.HIGH,
-        recipientRole: UserRole.PHLEBOTOMIST,
-        orderId: existing.id,
-        queueEmail: false,
-      });
-    } catch (err) {
-      console.warn('[retryOrderBroadcast] dispatchPlatformAlert caught:', err);
-    }
+  // Always alert couriers on broadcast retry and surge incentives
+  try {
+    await dispatchPlatformAlert({
+      title: hikeInr > 0
+        ? `⚡ SURGE +₹${hikeInr}: Pickup ${existing.orderNumber}`
+        : `🔄 RETRY BROADCAST: Pickup ${existing.orderNumber}`,
+      message: `${existing.smallLabName} retried pickup search (${existing.distanceKm || 1} km route -> ${existing.targetLabName}). Rider payout ₹${newCourierFee}!`,
+      category: NotificationCategory.PICKUP_ASSIGNED,
+      priority: NotificationPriority.HIGH,
+      recipientRole: UserRole.PHLEBOTOMIST,
+      orderId: existing.id,
+      queueEmail: false,
+    });
+  } catch (err) {
+    console.warn('[retryOrderBroadcast] dispatchPlatformAlert caught:', err);
   }
 
   return {

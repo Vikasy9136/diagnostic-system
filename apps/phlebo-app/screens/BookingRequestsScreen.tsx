@@ -151,7 +151,11 @@ export function BookingRequestsScreen({
         }));
 
   return (
-    <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={styles.scrollArea}
+      contentContainerStyle={{ paddingBottom: rs(120) }}
+      showsVerticalScrollIndicator={false}
+    >
       <LinearGradient
         colors={['#061D42', '#0A2A5E', '#0D5E6B']}
         start={{ x: 0, y: 0 }}
@@ -866,38 +870,79 @@ export function BookingRequestsScreen({
                     </TouchableOpacity>
                   </View>
                 ) : requestTab === 'active' && !isDone ? (
-                  <View style={styles.actionsRow}>
-                    {order.status === OrderStatus.ASSIGNED_TO_PHLEBO ? (
-                      <TouchableOpacity
-                        style={styles.btnSecondary}
-                        onPress={() => onDeclineAssignedOrder(order)}
-                      >
-                        <Text style={styles.btnSecondaryText}>Release</Text>
-                      </TouchableOpacity>
+                  <View style={{ marginTop: rs(10), gap: rs(8) }}>
+                    {/* Top utility row: Release & Collect */}
+                    {(order.status === OrderStatus.ASSIGNED_TO_PHLEBO || (!isPaidOrder && collectableInr >= 1)) ? (
+                      <View style={{ flexDirection: 'row', gap: rs(8) }}>
+                        {order.status === OrderStatus.ASSIGNED_TO_PHLEBO ? (
+                          <TouchableOpacity
+                            style={[
+                              styles.btnSecondary,
+                              {
+                                flex: 1,
+                                minHeight: 40,
+                                backgroundColor: '#F8FAFC',
+                                borderWidth: 1,
+                                borderColor: '#CBD5E1',
+                                borderRadius: 10,
+                                paddingVertical: rs(9),
+                              },
+                            ]}
+                            onPress={() => onDeclineAssignedOrder(order)}
+                          >
+                            <Text style={[styles.btnSecondaryText, { color: '#64748B' }]}>↩ Release</Text>
+                          </TouchableOpacity>
+                        ) : null}
+
+                        {!isPaidOrder && collectableInr >= 1 ? (
+                          <TouchableOpacity
+                            style={[
+                              styles.btnSecondary,
+                              {
+                                flex: 1,
+                                minHeight: 40,
+                                backgroundColor: '#EFF6FF',
+                                borderWidth: 1,
+                                borderColor: '#BFDBFE',
+                                borderRadius: 10,
+                                paddingVertical: rs(9),
+                                opacity: collectingOrderId === order.id ? 0.65 : 1,
+                              },
+                            ]}
+                            disabled={collectingOrderId === order.id}
+                            onPress={() => onCollectBookingPayment(order)}
+                          >
+                            <Text style={[styles.btnSecondaryText, { color: '#1D4ED8' }]}>
+                              {collectingOrderId === order.id ? 'Opening...' : `💳 Collect ₹${collectableInr}`}
+                            </Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
                     ) : null}
 
-                    {!isPaidOrder && collectableInr >= 1 ? (
-                      <TouchableOpacity
-                        style={[
-                          styles.btnSecondary,
-                          { backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE' },
-                          collectingOrderId === order.id && { opacity: 0.65 },
-                        ]}
-                        disabled={collectingOrderId === order.id}
-                        onPress={() => onCollectBookingPayment(order)}
-                      >
-                        <Text style={[styles.btnSecondaryText, { color: '#1D4ED8' }]}>
-                          {collectingOrderId === order.id ? 'Opening...' : 'Collect'}
-                        </Text>
-                      </TouchableOpacity>
-                    ) : null}
-
+                    {/* Prominent full-width Primary CTA */}
                     <TouchableOpacity
-                      style={styles.btnPrimary}
+                      style={[
+                        styles.btnPrimary,
+                        {
+                          width: '100%',
+                          minHeight: 48,
+                          borderRadius: 12,
+                          backgroundColor: COLORS.primaryNavy,
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                          paddingVertical: rs(12),
+                          shadowColor: COLORS.primaryNavy,
+                          shadowOffset: { width: 0, height: 4 },
+                          shadowOpacity: 0.22,
+                          shadowRadius: 6,
+                          elevation: 4,
+                        },
+                      ]}
                       onPress={() => onOpenOrderWorkflow(order)}
                     >
-                      <Text style={styles.btnPrimaryText}>
-                        {isInTransit ? 'Handover OTP →' : 'Start Collection →'}
+                      <Text style={[styles.btnPrimaryText, { fontSize: rf(14), fontWeight: '700' }]}>
+                        {isInTransit ? '📦 Handover OTP →' : '🚀 Start Collection →'}
                       </Text>
                     </TouchableOpacity>
                   </View>

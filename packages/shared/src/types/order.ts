@@ -59,6 +59,8 @@ export interface PickupOrder {
   orderNumber: string; // e.g. "ORD-202611-0001"
   smallLabId: string;
   smallLabName: string;
+  createdBy?: string;
+  smallLabEmail?: string;
   targetLabId: string;
   targetLabName: string;
   targetParentLabId?: string;

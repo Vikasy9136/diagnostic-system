@@ -26,9 +26,11 @@ import {
   DEFAULT_INVENTORY_KITS,
   DEFAULT_INVENTORY_MATERIALS,
   DEFAULT_PLATFORM_FAQS,
+  DEFAULT_PLATFORM_FEATURES,
   DEFAULT_PLATFORM_SOPS,
   DEFAULT_STARTER_SERVICE_ZONES,
   DEFAULT_SUPPORT_CONTACTS,
+  type PlatformFeaturesConfig,
   type PlatformFaqDocument,
   type PlatformSopDocument,
   type SupportContactsConfig,
@@ -2627,6 +2629,36 @@ export async function saveSupportContacts(
     ...(updatedBy ? { updatedBy } : {}),
   };
   await setDoc(doc(db, 'settings', 'support'), deepCleanFirestorePayload(merged), { merge: true });
+}
+
+export function subscribePlatformFeatures(
+  onData: (cfg: PlatformFeaturesConfig) => void,
+  onError?: (err: Error) => void
+): () => void {
+  return onSnapshot(
+    doc(db, 'settings', 'features'),
+    (snap) => {
+      if (snap.exists()) {
+        onData({ ...DEFAULT_PLATFORM_FEATURES, ...(snap.data() as Partial<PlatformFeaturesConfig>) });
+      } else {
+        onData(DEFAULT_PLATFORM_FEATURES);
+      }
+    },
+    (err) => onError?.(err)
+  );
+}
+
+export async function savePlatformFeatures(
+  cfg: Partial<PlatformFeaturesConfig>,
+  updatedBy?: string
+): Promise<void> {
+  const merged: PlatformFeaturesConfig = {
+    ...DEFAULT_PLATFORM_FEATURES,
+    ...cfg,
+    updatedAt: new Date().toISOString(),
+    ...(updatedBy ? { updatedBy } : {}),
+  };
+  await setDoc(doc(db, 'settings', 'features'), deepCleanFirestorePayload(merged), { merge: true });
 }
 
 export async function fetchPlatformSops(): Promise<PlatformSopDocument[]> {

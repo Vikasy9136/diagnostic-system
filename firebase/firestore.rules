@@ -324,12 +324,10 @@ service cloud.firestore {
           isAdmin()
           // Field Phlebotomists / Couriers: claim from pool, start trip, collect sample, deliver to lab
           || (
-            (
+            request.resource.data.status in ['READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED_TO_LAB']
+            && (
               isPhlebotomist()
-              || (
-                resource.data.status == 'READY_FOR_PICKUP'
-                && request.resource.data.status in ['ASSIGNED_TO_PHLEBO', 'READY_FOR_PICKUP']
-              )
+              || resource.data.status in ['READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO']
               || resource.data.get('phlebotomistId', '') == request.auth.uid
               || (getPhlebotomistId() != null && resource.data.get('phlebotomistId', '') == getPhlebotomistId())
               || (normalizedEmail() != '' && (
@@ -337,28 +335,20 @@ service cloud.firestore {
                 || resource.data.get('phleboEmail', '') == normalizedEmail()
               ))
             )
-            && request.resource.data.status in ['READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED_TO_LAB']
           )
           // Small Labs: retry search broadcast, apply surge hike, cancel before pickup
           || (
-            (
-              isSmallLab()
-              || resource.data.smallLabId == request.auth.uid
-              || resource.data.get('createdBy', '') == request.auth.uid
-              || (getLabId() != null && resource.data.smallLabId == getLabId())
-              || (normalizedEmail() != '' && resource.data.get('smallLabEmail', '') == normalizedEmail())
-            )
-            && resource.data.status in ['CREATED', 'READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO', 'SEARCH_EXPIRED', 'NO_SHOW_CANCELLED']
+            resource.data.status in ['CREATED', 'READY_FOR_PICKUP', 'ASSIGNED_TO_PHLEBO', 'SEARCH_EXPIRED', 'NO_SHOW_CANCELLED']
             && request.resource.data.status in ['READY_FOR_PICKUP', 'CANCELLED', 'ASSIGNED_TO_PHLEBO']
           )
           // Large Partner Labs (Branch center sees targetLabId == labId; Main HQ also sees child targetParentLabId == labId)
           || (
-            (
+            request.resource.data.status in ['DELIVERED_TO_LAB', 'UNDER_ANALYSIS', 'REPORT_UPLOADED', 'COMPLETED', 'REJECTED']
+            && (
               isLargeLab()
               || resource.data.targetLabId == request.auth.uid
               || (getLabId() != null && (resource.data.targetLabId == getLabId() || resource.data.get('targetParentLabId', '') == getLabId()))
             )
-            && request.resource.data.status in ['DELIVERED_TO_LAB', 'UNDER_ANALYSIS', 'REPORT_UPLOADED', 'COMPLETED', 'REJECTED']
           )
         );
     }
@@ -412,17 +402,9 @@ service cloud.firestore {
         || isSmallLab()
         || isLargeLab()
         || request.resource.data.smallLabId == request.auth.uid
+        || request.resource.data.get('phlebotomistId', '') != ''
       );
-      allow update: if isAuthenticated() && isAccountActive() && (
-        hasAnyPermission(['MANAGE_INVOICES', 'MANAGE_RECONCILIATION', 'CONFIGURE_COMMISSIONS_PAYOUTS'])
-        || resource.data.smallLabId == request.auth.uid
-        || (isSmallLab() && getLabId() != null && resource.data.smallLabId == getLabId())
-        || resource.data.get('phlebotomistId', '') == request.auth.uid
-        || (getPhlebotomistId() != null && resource.data.get('phlebotomistId', '') == getPhlebotomistId())
-        || (
-          request.resource.data.diff(resource.data).affectedKeys().hasAny(['phlebotomistId', 'phlebotomistName', 'updatedAt', 'paymentStatus', 'paidAt', 'razorpayPaymentId', 'collectionMethod'])
-        )
-      );
+      allow update: if isAuthenticated() && isAccountActive();
       allow delete: if isSuperAdmin();
     }
 

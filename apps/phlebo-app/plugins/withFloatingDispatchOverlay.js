@@ -328,8 +328,8 @@ class FloatingDispatchOverlayService : Service() {
       val bg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(24).toFloat()
-        setColor(Color.parseColor("#090D16")) // Ultra deep obsidian slate
-        setStroke(dp(2), Color.parseColor("#10B981")) // Bright emerald border
+        setColor(Color.WHITE)
+        setStroke(dp(2), Color.parseColor("#0D9488"))
       }
       background = bg
       elevation = dp(28).toFloat()
@@ -343,14 +343,15 @@ class FloatingDispatchOverlayService : Service() {
 
     val liveBadge = TextView(this).apply {
       text = "⚡ NEW PICKUP REQUEST"
-      setTextColor(Color.parseColor("#10B981"))
+      setTextColor(Color.parseColor("#047857"))
       textSize = 12f
       typeface = Typeface.DEFAULT_BOLD
       setPadding(dp(10), dp(5), dp(10), dp(5))
       background = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(8).toFloat()
-        setColor(Color.parseColor("#064E3B"))
+        setColor(Color.parseColor("#F0FDF4"))
+        setStroke(dp(1), Color.parseColor("#BBF7D0"))
       }
     }
     topRow.addView(liveBadge)
@@ -360,15 +361,16 @@ class FloatingDispatchOverlayService : Service() {
     topRow.addView(spacerTop, spacerTopLp)
 
     val timerBadge = TextView(this).apply {
-      text = "⏱ \${timeoutSec}s"
-      setTextColor(Color.parseColor("#F59E0B"))
+      text = "⏱ ${timeoutSec}s"
+      setTextColor(Color.parseColor("#B45309"))
       textSize = 13.5f
       typeface = Typeface.DEFAULT_BOLD
       setPadding(dp(10), dp(5), dp(10), dp(5))
       background = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(8).toFloat()
-        setColor(Color.parseColor("#451A03"))
+        setColor(Color.parseColor("#FEF3C7"))
+        setStroke(dp(1), Color.parseColor("#FDE68A"))
       }
     }
     topRow.addView(timerBadge)
@@ -385,7 +387,7 @@ class FloatingDispatchOverlayService : Service() {
         val bg = GradientDrawable().apply {
           shape = GradientDrawable.RECTANGLE
           cornerRadius = dp(8).toFloat()
-          setColor(Color.parseColor("#451A03"))
+          setColor(Color.parseColor("#FFFBEB"))
           setStroke(dp(1), Color.parseColor("#F59E0B"))
         }
         background = bg
@@ -397,8 +399,8 @@ class FloatingDispatchOverlayService : Service() {
         topMargin = dp(8)
       }
       val surgeText = TextView(this).apply {
-        text = "⚡ +₹\${surgeIncentive} SURGE HIKE INCLUDED"
-        setTextColor(Color.parseColor("#FBBF24"))
+        text = "⚡ +₹${surgeIncentive} SURGE HIKE INCLUDED"
+        setTextColor(Color.parseColor("#B45309"))
         textSize = 11.5f
         typeface = Typeface.DEFAULT_BOLD
       }
@@ -415,8 +417,8 @@ class FloatingDispatchOverlayService : Service() {
       val bg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(14).toFloat()
-        setColor(Color.parseColor("#062A24")) // Soft deep emerald tint
-        setStroke(dp(1), Color.parseColor("#0D9488"))
+        setColor(Color.parseColor("#F0FDF4"))
+        setStroke(dp(1), Color.parseColor("#99F6E4"))
       }
       background = bg
     }
@@ -434,7 +436,7 @@ class FloatingDispatchOverlayService : Service() {
 
     val priceText = TextView(this).apply {
       text = payout
-      setTextColor(Color.parseColor("#10B981"))
+      setTextColor(Color.parseColor("#047857"))
       textSize = 22f
       typeface = Typeface.DEFAULT_BOLD
     }
@@ -446,7 +448,7 @@ class FloatingDispatchOverlayService : Service() {
 
     val orderTag = TextView(this).apply {
       text = orderNum
-      setTextColor(Color.parseColor("#94A3B8"))
+      setTextColor(Color.parseColor("#64748B"))
       textSize = 12f
       typeface = Typeface.DEFAULT_BOLD
     }
@@ -455,7 +457,7 @@ class FloatingDispatchOverlayService : Service() {
 
     val payoutSub = TextView(this).apply {
       text = "Guaranteed Courier Earnings • Instant Transfer"
-      setTextColor(Color.parseColor("#5EEAD4"))
+      setTextColor(Color.parseColor("#0D9488"))
       textSize = 11f
       typeface = Typeface.DEFAULT
     }
@@ -470,8 +472,8 @@ class FloatingDispatchOverlayService : Service() {
       val bg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(16).toFloat()
-        setColor(Color.parseColor("#131D33")) // Elevated slate card
-        setStroke(dp(1), Color.parseColor("#1E293B"))
+        setColor(Color.parseColor("#F8FAFC"))
+        setStroke(dp(1), Color.parseColor("#E2E8F0"))
       }
       background = bg
     }
@@ -489,12 +491,12 @@ class FloatingDispatchOverlayService : Service() {
     }
     val pickupDot = TextView(this).apply {
       text = "● "
-      setTextColor(Color.parseColor("#10B981"))
+      setTextColor(Color.parseColor("#0D9488"))
       textSize = 16f
     }
     val pickupLabView = TextView(this).apply {
       text = pickupLab
-      setTextColor(Color.WHITE)
+      setTextColor(Color.parseColor("#0F172A"))
       textSize = 14.5f
       typeface = Typeface.DEFAULT_BOLD
     }
@@ -504,7 +506,7 @@ class FloatingDispatchOverlayService : Service() {
 
     val pickupAddressView = TextView(this).apply {
       text = pickupAddr
-      setTextColor(Color.parseColor("#94A3B8"))
+      setTextColor(Color.parseColor("#475569"))
       textSize = 12f
       setPadding(dp(16), dp(1), 0, dp(2))
     }
@@ -512,14 +514,14 @@ class FloatingDispatchOverlayService : Service() {
 
     val distanceChip = TextView(this).apply {
       text = "📍 $distance"
-      setTextColor(Color.parseColor("#38BDF8"))
+      setTextColor(Color.parseColor("#0369A1"))
       textSize = 11.5f
       typeface = Typeface.DEFAULT_BOLD
       setPadding(dp(8), dp(3), dp(8), dp(3))
       val chipBg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(6).toFloat()
-        setColor(Color.parseColor("#0C4A6E"))
+        setColor(Color.parseColor("#E0F2FE"))
       }
       background = chipBg
     }
@@ -537,7 +539,7 @@ class FloatingDispatchOverlayService : Service() {
     val pathLine = View(this).apply {
       background = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
-        setColor(Color.parseColor("#334155"))
+        setColor(Color.parseColor("#CBD5E1"))
       }
     }
     val pathLp = LinearLayout.LayoutParams(dp(2), dp(12)).apply {
@@ -559,7 +561,7 @@ class FloatingDispatchOverlayService : Service() {
     }
     val dropLabView = TextView(this).apply {
       text = "Drop: $targetLab"
-      setTextColor(Color.WHITE)
+      setTextColor(Color.parseColor("#0F172A"))
       textSize = 14f
       typeface = Typeface.DEFAULT_BOLD
     }
@@ -570,7 +572,7 @@ class FloatingDispatchOverlayService : Service() {
     if (targetAddr.isNotEmpty()) {
       val dropAddressView = TextView(this).apply {
         text = targetAddr
-        setTextColor(Color.parseColor("#94A3B8"))
+        setTextColor(Color.parseColor("#475569"))
         textSize = 12f
         setPadding(dp(16), dp(1), 0, dp(2))
       }
@@ -579,7 +581,7 @@ class FloatingDispatchOverlayService : Service() {
 
     val specimensView = TextView(this).apply {
       text = "🧪 $specimens"
-      setTextColor(Color.parseColor("#C4B5FD"))
+      setTextColor(Color.parseColor("#4338CA"))
       textSize = 11.5f
       setPadding(dp(16), dp(2), 0, 0)
     }
@@ -600,15 +602,15 @@ class FloatingDispatchOverlayService : Service() {
 
     val declineBtn = TextView(this).apply {
       text = "✕ Reject"
-      setTextColor(Color.parseColor("#F87171"))
+      setTextColor(Color.parseColor("#DC2626"))
       textSize = 14.5f
       typeface = Typeface.DEFAULT_BOLD
       gravity = Gravity.CENTER
       val bg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(14).toFloat()
-        setColor(Color.parseColor("#1E293B"))
-        setStroke(dp(2), Color.parseColor("#EF4444"))
+        setColor(Color.parseColor("#FEE2E2"))
+        setStroke(dp(1), Color.parseColor("#FCA5A5"))
       }
       background = bg
       setPadding(0, dp(14), 0, dp(14))
@@ -632,7 +634,7 @@ class FloatingDispatchOverlayService : Service() {
       val bg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(14).toFloat()
-        setColor(Color.parseColor("#10B981"))
+        setColor(Color.parseColor("#0D9488"))
       }
       background = bg
       setPadding(0, dp(14), 0, dp(14))

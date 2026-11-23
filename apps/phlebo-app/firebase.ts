@@ -113,6 +113,51 @@ export const storage: FirebaseStorage = getStorage(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
+export function uriToBlob(uri: string): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.onload = function () {
+      resolve(xhr.response as Blob);
+    };
+    xhr.onerror = function (e) {
+      reject(new Error(`Failed to convert image URI to blob: ${JSON.stringify(e)}`));
+    };
+    xhr.responseType = 'blob';
+    xhr.open('GET', uri, true);
+    xhr.send(null);
+  });
+}
+
+export async function uploadPhleboSampleUri(
+  path: string,
+  uri: string,
+  contentType: string = 'image/jpeg'
+): Promise<string> {
+  const storageRef = ref(storage, path);
+  if (Platform.OS === 'web') {
+    try {
+      const resp = await fetch(uri);
+      const blob = await resp.blob();
+      await uploadBytes(storageRef, blob, { contentType });
+      return await getDownloadURL(storageRef);
+    } catch {
+      // fallback
+    }
+  }
+
+  const blob = await uriToBlob(uri);
+  try {
+    await uploadBytes(storageRef, blob, { contentType });
+    return await getDownloadURL(storageRef);
+  } finally {
+    try {
+      (blob as any)?.close?.();
+    } catch {
+      // Ignore blob close error
+    }
+  }
+}
+
 export async function uploadPhleboSampleFile(
   path: string,
   file: Blob | File
@@ -127,10 +172,9 @@ export async function uploadPhleboSampleBase64(
   base64Data: string,
   contentType: string = 'image/jpeg'
 ): Promise<string> {
-  const storageRef = ref(storage, path);
   const cleanBase64 = base64Data.replace(/^data:image\/\w+;base64,/, '');
-  await uploadString(storageRef, cleanBase64, 'base64', { contentType });
-  return getDownloadURL(storageRef);
+  const dataUri = `data:${contentType};base64,${cleanBase64}`;
+  return uploadPhleboSampleUri(path, dataUri, contentType);
 }
 
 /**

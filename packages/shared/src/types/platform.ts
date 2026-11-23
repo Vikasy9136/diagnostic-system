@@ -435,6 +435,24 @@ export const DEFAULT_SUPPORT_CONTACTS: SupportContactsConfig = {
   dispatchSla: '< 5 Mins Immediate Dispatch Response',
 };
 
+export interface PlatformFeaturesConfig {
+  enableBarcodeScanner: boolean; // default false
+  enableFloatingIcon: boolean; // default true
+  enableCashCollection: boolean; // default true
+  enableDirectLabPayment: boolean; // default true
+  enableInstantPayout: boolean; // default true
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export const DEFAULT_PLATFORM_FEATURES: PlatformFeaturesConfig = {
+  enableBarcodeScanner: false,
+  enableFloatingIcon: true,
+  enableCashCollection: true,
+  enableDirectLabPayment: true,
+  enableInstantPayout: true,
+};
+
 export interface SopStepItem {
   title: string;
   description: string;
