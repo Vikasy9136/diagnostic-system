@@ -255,15 +255,34 @@ export function SmallLabDashboard({
     orders.forEach((o) => {
       if (
         o.phlebotomistId &&
-        (o.status === OrderStatus.ASSIGNED_TO_PHLEBO ||
-          o.status === OrderStatus.PICKED_UP ||
-          o.status === OrderStatus.IN_TRANSIT)
+        o.status !== OrderStatus.DELIVERED_TO_LAB &&
+        o.status !== OrderStatus.UNDER_ANALYSIS &&
+        o.status !== OrderStatus.REPORT_UPLOADED &&
+        o.status !== OrderStatus.COMPLETED &&
+        o.status !== OrderStatus.CANCELLED &&
+        o.status !== OrderStatus.REJECTED
       ) {
+        const rawPid = o.phlebotomistId.trim().toLowerCase();
+        set.add(rawPid);
         set.add(o.phlebotomistId);
+        const matching = phlebotomists.find(
+          (p) =>
+            p.id.toLowerCase() === rawPid ||
+            p.userCode?.toLowerCase() === rawPid ||
+            (p as any).uid?.toLowerCase() === rawPid
+        );
+        if (matching) {
+          set.add(matching.id);
+          set.add(matching.id.toLowerCase());
+          if (matching.userCode) {
+            set.add(matching.userCode);
+            set.add(matching.userCode.toLowerCase());
+          }
+        }
       }
     });
     return set;
-  }, [orders]);
+  }, [orders, phlebotomists]);
 
   const onlinePhlebos = useMemo(
     () => phlebotomists.filter((p) => p.status === 'ONLINE'),
@@ -271,7 +290,13 @@ export function SmallLabDashboard({
   );
 
   const availableOnlinePhlebos = useMemo(
-    () => onlinePhlebos.filter((p) => !busyPhleboIdSet.has(p.id)),
+    () =>
+      onlinePhlebos.filter(
+        (p) =>
+          !busyPhleboIdSet.has(p.id) &&
+          !busyPhleboIdSet.has(p.id.toLowerCase()) &&
+          (!p.userCode || !busyPhleboIdSet.has(p.userCode.toLowerCase()))
+      ),
     [onlinePhlebos, busyPhleboIdSet]
   );
 

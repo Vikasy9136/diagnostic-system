@@ -208,12 +208,9 @@ export function AdminPhlebotomistsTab({
 
                     {/* Live Telemetry */}
                     <td>
-                      <div>{p.currentLocation || '—'}</div>
+                      <div>{p.currentLocation || 'Active Service Area'}</div>
                       <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
-                        {typeof p.latitude === 'number' && typeof p.longitude === 'number'
-                          ? `${p.latitude.toFixed(4)}, ${p.longitude.toFixed(4)}`
-                          : ''}
-                        {` • ${p.chillerTempCelsius}°C`}
+                        {p.batteryPct ? `🔋 ${p.batteryPct}% • ` : ''}Active Field Location
                       </div>
                     </td>
 

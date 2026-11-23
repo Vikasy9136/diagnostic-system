@@ -4,6 +4,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { formatInr, type LiveGeoCoordinate, type PickupOrder } from '@diagnostic/shared';
 import { BRAND_COLORS } from '../components/LabSetuBrand';
 import { OsmWebMapPreview } from '../components/OsmWebMapPreview';
+import { formatFullProperAddress } from '../utils/addressUtils';
 import { FONTS, styles } from '../styles/phleboStyles';
 import { lh, MAX_TEXT_SCALE, rf, rs, useResponsive } from '../utils/responsive';
 
@@ -215,6 +216,7 @@ export function DropSampleScreen({
         <OsmWebMapPreview
           latitude={order.deliveryLocation?.latitude || riderLocation.latitude}
           longitude={order.deliveryLocation?.longitude || riderLocation.longitude}
+          address={formatFullProperAddress(order.deliveryLocation, order.targetLabName)}
           title={`Drop Destination • ${order.targetLabName}`}
           height={165}
           onOpenGoogleMaps={() =>

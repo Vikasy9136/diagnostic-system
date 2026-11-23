@@ -886,6 +886,18 @@ function PhleboAppContent() {
             filtered.forEach((n) => {
               if (!seenNotificationDocIdsRef.current.has(n.id) && !n.read) {
                 seenNotificationDocIdsRef.current.add(n.id);
+
+                // If phlebotomist has an active ongoing task, suppress generic booking/pickup broadcast popups & sounds
+                const isGenericBroadcast =
+                  n.category === NotificationCategory.BOOKING_CREATED ||
+                  n.category === NotificationCategory.PICKUP_ASSIGNED ||
+                  n.recipientRole === UserRole.PHLEBOTOMIST ||
+                  n.recipientRole === 'ALL';
+
+                if (activeAssignedOrdersRef.current > 0 && isGenericBroadcast) {
+                  return;
+                }
+
                 if (Platform.OS !== 'web') {
                   void Notifications.scheduleNotificationAsync({
                     content: {
@@ -1149,24 +1161,42 @@ function PhleboAppContent() {
     });
   }, [orders]);
 
-  const myAssignedOrders = useMemo(
-    () =>
-      orders.filter(
-        (o) => Boolean(effectivePhleboId) && o.phlebotomistId === effectivePhleboId
-      ),
-    [orders, effectivePhleboId]
-  );
+  const activeAssignedOrdersRef = useRef<number>(0);
+
+  const myAssignedOrders = useMemo(() => {
+    const validIds = new Set<string>();
+    if (effectivePhleboId) validIds.add(effectivePhleboId.trim().toLowerCase());
+    if (myPhleboProfile?.id) validIds.add(myPhleboProfile.id.trim().toLowerCase());
+    if (myPhleboProfile?.userCode) validIds.add(myPhleboProfile.userCode.trim().toLowerCase());
+    if (session?.firebaseUser?.uid) validIds.add(session.firebaseUser.uid.trim().toLowerCase());
+    if (myPhleboId) validIds.add(myPhleboId.trim().toLowerCase());
+
+    if (validIds.size === 0) return [];
+
+    return orders.filter((o) => {
+      if (!o.phlebotomistId) return false;
+      return validIds.has(o.phlebotomistId.trim().toLowerCase());
+    });
+  }, [orders, effectivePhleboId, myPhleboProfile?.id, myPhleboProfile?.userCode, session?.firebaseUser?.uid, myPhleboId]);
 
   const activeAssignedOrders = useMemo(
     () =>
       myAssignedOrders.filter(
         (o) =>
-          o.status === OrderStatus.ASSIGNED_TO_PHLEBO ||
-          o.status === OrderStatus.PICKED_UP ||
-          o.status === OrderStatus.IN_TRANSIT
+          o.status !== OrderStatus.DELIVERED_TO_LAB &&
+          o.status !== OrderStatus.UNDER_ANALYSIS &&
+          o.status !== OrderStatus.REPORT_UPLOADED &&
+          o.status !== OrderStatus.COMPLETED &&
+          o.status !== OrderStatus.CANCELLED &&
+          o.status !== OrderStatus.REJECTED &&
+          !isOrderCompleted(o.status)
       ),
     [myAssignedOrders]
   );
+
+  useEffect(() => {
+    activeAssignedOrdersRef.current = activeAssignedOrders.length;
+  }, [activeAssignedOrders.length]);
 
   const completedAssignedOrders = useMemo(
     () =>
@@ -3142,14 +3172,7 @@ function PhleboAppContent() {
       return;
     }
 
-    if (Number.isNaN(numericTemp)) {
-      showDynamicAlert({
-        variant: 'warning',
-        title: 'Temperature Required',
-        message: 'Enter a numeric chiller temperature in °C.',
-      });
-      return;
-    }
+    const finalTemp = Number.isNaN(numericTemp) ? 4.0 : numericTemp;
 
     setSubmittingAction(true);
     try {
@@ -3165,10 +3188,10 @@ function PhleboAppContent() {
         operatorId: session.firebaseUser.uid,
         operatorName: phleboName,
         operatorRole: UserRole.PHLEBOTOMIST,
-        temperatureCelsius: numericTemp,
+        temperatureCelsius: finalTemp,
         notes: platformFeatures.enableBarcodeScanner
-          ? `All ${verifiedSpecimens.length} tubes barcode-verified (${barcodeSummary}) + phlebo photo proof verified at ${numericTemp}°C by ${phleboName}`
-          : `Collected ${verifiedSpecimens.length} specimen tubes + phlebo photo proof at ${numericTemp}°C by ${phleboName}`,
+          ? `All ${verifiedSpecimens.length} tubes barcode-verified (${barcodeSummary}) + phlebo photo proof verified at ${finalTemp}°C by ${phleboName}`
+          : `Collected ${verifiedSpecimens.length} specimen tubes + phlebo photo proof at ${finalTemp}°C by ${phleboName}`,
       };
 
       await updateDoc(doc(db, 'orders', order.id), {
@@ -3182,7 +3205,7 @@ function PhleboAppContent() {
           updatedAt: now,
         },
         actualPickupAt: now,
-        arrivalTemperatureCelsius: numericTemp,
+        arrivalTemperatureCelsius: finalTemp,
         custodyHistory: [...(order.custodyHistory || []), evt],
         updatedAt: now,
       });
@@ -3190,7 +3213,7 @@ function PhleboAppContent() {
 
       await addDoc(collection(db, 'notifications'), {
         title: `Sample Collected & Photo Proof: ${order.orderNumber}`,
-        message: `${phleboName} verified ${verifiedSpecimens.length} tube barcode(s) (${numericTemp}°C) en route to ${order.targetLabName}.`,
+        message: `${phleboName} verified ${verifiedSpecimens.length} tube barcode(s) (${finalTemp}°C) en route to ${order.targetLabName}.`,
         category: NotificationCategory.SAMPLE_COLLECTED,
         priority: NotificationPriority.NORMAL,
         recipientRole: UserRole.SMALL_LAB,
@@ -3206,7 +3229,7 @@ function PhleboAppContent() {
       if (order.dropType !== 'SELF_DROP' && order.dropType !== 'CUSTOM_ADDRESS' && order.targetLabId) {
         await addDoc(collection(db, 'notifications'), {
           title: `Samples Picked Up En Route: ${order.orderNumber}`,
-          message: `${phleboName} picked up ${verifiedSpecimens.length} barcode-verified specimen(s) (${numericTemp}°C) heading to ${order.targetLabName}.`,
+          message: `${phleboName} picked up ${verifiedSpecimens.length} barcode-verified specimen(s) (${finalTemp}°C) heading to ${order.targetLabName}.`,
           category: NotificationCategory.SAMPLE_COLLECTED,
           priority: NotificationPriority.NORMAL,
           recipientRole: UserRole.LARGE_LAB,

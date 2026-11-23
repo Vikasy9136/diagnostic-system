@@ -439,7 +439,7 @@ export function TodayCollectionsScreen({
 
                 {/* 1-Tap Direct Call Patient & Call Lab */}
                 {(Boolean(patientPhone) || Boolean(labPhone)) && (
-                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 6, marginBottom: 10 }}>
+                  <View style={{ flexDirection: 'row', gap: rs(10), marginTop: rs(6), marginBottom: rs(10) }}>
                     {Boolean(patientPhone) && (
                       <TouchableOpacity
                         style={{
@@ -447,19 +447,14 @@ export function TodayCollectionsScreen({
                           flexDirection: 'row',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          gap: 8,
+                          gap: rs(8),
                           backgroundColor: '#F0FDF4',
-                          borderWidth: 1.6,
-                          borderColor: '#22C55E',
-                          borderRadius: 12,
-                          paddingVertical: 10,
-                          paddingHorizontal: 10,
-                          minHeight: 44,
-                          elevation: 1,
-                          shadowColor: '#16A34A',
-                          shadowOffset: { width: 0, height: 1 },
-                          shadowOpacity: 0.1,
-                          shadowRadius: 2,
+                          borderWidth: 1.2,
+                          borderColor: '#86EFAC',
+                          borderRadius: rs(10),
+                          paddingVertical: rs(10),
+                          paddingHorizontal: rs(10),
+                          minHeight: rs(44),
                         }}
                         onPress={(e) => {
                           e.stopPropagation();
@@ -467,7 +462,16 @@ export function TodayCollectionsScreen({
                         }}
                       >
                         <Ionicons name="call" size={16} color="#15803D" />
-                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#15803D' }} numberOfLines={1}>
+                        <Text
+                          maxFontSizeMultiplier={MAX_TEXT_SCALE}
+                          style={{
+                            fontSize: rf(13),
+                            lineHeight: lh(rf(13)),
+                            fontFamily: FONTS.bold,
+                            color: '#15803D',
+                          }}
+                          numberOfLines={1}
+                        >
                           Call Patient
                         </Text>
                       </TouchableOpacity>
@@ -480,19 +484,14 @@ export function TodayCollectionsScreen({
                           flexDirection: 'row',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          gap: 8,
+                          gap: rs(8),
                           backgroundColor: '#EFF6FF',
-                          borderWidth: 1.6,
-                          borderColor: '#3B82F6',
-                          borderRadius: 12,
-                          paddingVertical: 10,
-                          paddingHorizontal: 10,
-                          minHeight: 44,
-                          elevation: 1,
-                          shadowColor: '#2563EB',
-                          shadowOffset: { width: 0, height: 1 },
-                          shadowOpacity: 0.1,
-                          shadowRadius: 2,
+                          borderWidth: 1.2,
+                          borderColor: '#93C5FD',
+                          borderRadius: rs(10),
+                          paddingVertical: rs(10),
+                          paddingHorizontal: rs(10),
+                          minHeight: rs(44),
                         }}
                         onPress={(e) => {
                           e.stopPropagation();
@@ -500,7 +499,16 @@ export function TodayCollectionsScreen({
                         }}
                       >
                         <Ionicons name="business" size={16} color="#1D4ED8" />
-                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#1D4ED8' }} numberOfLines={1}>
+                        <Text
+                          maxFontSizeMultiplier={MAX_TEXT_SCALE}
+                          style={{
+                            fontSize: rf(13),
+                            lineHeight: lh(rf(13)),
+                            fontFamily: FONTS.bold,
+                            color: '#1D4ED8',
+                          }}
+                          numberOfLines={1}
+                        >
                           Call Lab Desk
                         </Text>
                       </TouchableOpacity>

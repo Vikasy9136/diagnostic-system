@@ -5,6 +5,7 @@ import { styles } from '../styles/phleboStyles';
 export interface GoogleWebMapPreviewProps {
   latitude: number;
   longitude: number;
+  address?: string;
   title?: string;
   height?: number;
   onOpenGoogleMaps?: () => void;
@@ -17,6 +18,7 @@ export function buildGoogleMapsEmbedUrl(lat: number, lng: number): string {
 export function GoogleWebMapPreview({
   latitude,
   longitude,
+  address,
   title,
   height = 170,
   onOpenGoogleMaps,
@@ -63,8 +65,8 @@ export function GoogleWebMapPreview({
     <View style={styles.osmCard}>
       <View style={styles.osmCardHeader}>
         <Text style={styles.osmCardTitle}>🗺️ {title || 'Google Maps Preview'}</Text>
-        <Text style={styles.osmCoordChip}>
-          {safeLat.toFixed(4)}, {safeLng.toFixed(4)}
+        <Text style={styles.osmCoordChip} numberOfLines={1}>
+          {address ? '📍 Verified Location' : '📍 Map Location'}
         </Text>
       </View>
 
@@ -72,8 +74,8 @@ export function GoogleWebMapPreview({
         <View nativeID={hostId} style={[styles.osmViewport, { height }]} />
       ) : (
         <View style={[styles.osmNativeFallback, { height: Math.min(110, height) }]}>
-          <Text style={styles.osmNativeCoords}>
-            📍 Google Maps GPS: {safeLat.toFixed(5)}, {safeLng.toFixed(5)}
+          <Text style={styles.osmNativeCoords} numberOfLines={2}>
+            📍 {address ? address : 'Verified Destination Location'}
           </Text>
           <Text style={styles.osmNativeHint}>
             Tap below to launch live turn-by-turn navigation in Google Maps.

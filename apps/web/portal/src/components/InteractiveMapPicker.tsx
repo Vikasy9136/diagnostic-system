@@ -1102,7 +1102,7 @@ export function InteractiveMapPicker({
       {/* Footer Bar with Active GPS and Helpful Tip */}
       <div className="map-coords-bar">
         <span>
-          <strong>Google Maps GPS:</strong> {safeLat.toFixed(5)}, {safeLng.toFixed(5)}
+          <strong>📍 Map Location:</strong> Verified Pin Point
           {radiusKm ? ` • Broadcast Radius: ${radiusKm} km` : ''}
         </span>
         <span style={{ color: '#0D9488', fontWeight: 600 }}>

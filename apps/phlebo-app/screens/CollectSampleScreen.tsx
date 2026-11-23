@@ -133,7 +133,7 @@ export function CollectSampleScreen({
           </Text>
 
           {/* 1-Tap Direct Call Buttons */}
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+          <View style={{ flexDirection: 'row', gap: rs(10), marginTop: rs(12) }}>
             {(order.patient?.phone || (order as any).patientPhone) ? (
               <TouchableOpacity
                 style={{
@@ -141,19 +141,14 @@ export function CollectSampleScreen({
                   flexDirection: 'row',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: 8,
+                  gap: rs(8),
                   backgroundColor: '#F0FDF4',
-                  borderWidth: 1.6,
-                  borderColor: '#22C55E',
-                  borderRadius: 12,
-                  paddingVertical: 10,
-                  paddingHorizontal: 10,
-                  minHeight: 46,
-                  elevation: 1,
-                  shadowColor: '#16A34A',
-                  shadowOffset: { width: 0, height: 1 },
-                  shadowOpacity: 0.1,
-                  shadowRadius: 2,
+                  borderWidth: 1.2,
+                  borderColor: '#86EFAC',
+                  borderRadius: rs(10),
+                  paddingVertical: rs(10),
+                  paddingHorizontal: rs(10),
+                  minHeight: rs(44),
                 }}
                 onPress={() => {
                   const phone = order.patient?.phone || (order as any).patientPhone;
@@ -161,7 +156,16 @@ export function CollectSampleScreen({
                 }}
               >
                 <Ionicons name="call" size={16} color="#15803D" />
-                <Text style={{ fontSize: 13, fontWeight: '800', color: '#15803D' }} numberOfLines={1}>
+                <Text
+                  maxFontSizeMultiplier={MAX_TEXT_SCALE}
+                  style={{
+                    fontSize: rf(13),
+                    lineHeight: lh(rf(13)),
+                    fontFamily: FONTS.bold,
+                    color: '#15803D',
+                  }}
+                  numberOfLines={1}
+                >
                   Call Patient ({order.patient.pseudonym})
                 </Text>
               </TouchableOpacity>
@@ -174,26 +178,30 @@ export function CollectSampleScreen({
                   flexDirection: 'row',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: 8,
+                  gap: rs(8),
                   backgroundColor: '#EFF6FF',
-                  borderWidth: 1.6,
-                  borderColor: '#3B82F6',
-                  borderRadius: 12,
-                  paddingVertical: 10,
-                  paddingHorizontal: 10,
-                  minHeight: 46,
-                  elevation: 1,
-                  shadowColor: '#2563EB',
-                  shadowOffset: { width: 0, height: 1 },
-                  shadowOpacity: 0.1,
-                  shadowRadius: 2,
+                  borderWidth: 1.2,
+                  borderColor: '#93C5FD',
+                  borderRadius: rs(10),
+                  paddingVertical: rs(10),
+                  paddingHorizontal: rs(10),
+                  minHeight: rs(44),
                 }}
                 onPress={() => {
                   Linking.openURL(`tel:${order.pickupLocation.contactPhone}`).catch(() => {});
                 }}
               >
                 <Ionicons name="business" size={16} color="#1D4ED8" />
-                <Text style={{ fontSize: 13, fontWeight: '800', color: '#1D4ED8' }} numberOfLines={1}>
+                <Text
+                  maxFontSizeMultiplier={MAX_TEXT_SCALE}
+                  style={{
+                    fontSize: rf(13),
+                    lineHeight: lh(rf(13)),
+                    fontFamily: FONTS.bold,
+                    color: '#1D4ED8',
+                  }}
+                  numberOfLines={1}
+                >
                   Call Lab Desk
                 </Text>
               </TouchableOpacity>
@@ -205,24 +213,28 @@ export function CollectSampleScreen({
           <View
             style={{
               backgroundColor: '#DCFCE7',
-              borderColor: '#22C55E',
-              borderWidth: 1.8,
-              borderRadius: 14,
-              paddingHorizontal: 14,
-              paddingVertical: 12,
-              marginBottom: 14,
+              borderColor: '#86EFAC',
+              borderWidth: 1.2,
+              borderRadius: rs(12),
+              paddingHorizontal: rs(14),
+              paddingVertical: rs(12),
+              marginBottom: rs(14),
               flexDirection: 'row',
               alignItems: 'center',
-              gap: 10,
-              elevation: 2,
-              shadowColor: '#16A34A',
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.12,
-              shadowRadius: 4,
+              gap: rs(10),
             }}
           >
             <Ionicons name="checkmark-circle" size={22} color="#15803D" />
-            <Text style={{ fontSize: 13.5, color: '#15803D', fontWeight: '800', flex: 1 }}>
+            <Text
+              maxFontSizeMultiplier={MAX_TEXT_SCALE}
+              style={{
+                fontSize: rf(13.5),
+                lineHeight: lh(rf(13.5)),
+                color: '#15803D',
+                fontFamily: FONTS.bold,
+                flex: 1,
+              }}
+            >
               ✓ Payment Completed ({order.paymentMethod || 'Settled directly with lab'})
             </Text>
           </View>
@@ -230,16 +242,11 @@ export function CollectSampleScreen({
           <View
             style={{
               backgroundColor: '#FFFBEB',
-              borderColor: '#F59E0B',
-              borderWidth: 1.8,
-              borderRadius: 14,
-              padding: 14,
-              marginBottom: 14,
-              elevation: 2,
-              shadowColor: '#B45309',
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.1,
-              shadowRadius: 4,
+              borderColor: '#FCD34D',
+              borderWidth: 1.2,
+              borderRadius: rs(14),
+              padding: rs(14),
+              marginBottom: rs(14),
             }}
           >
             <View
@@ -247,71 +254,108 @@ export function CollectSampleScreen({
                 flexDirection: 'row',
                 justifyContent: 'space-between',
                 alignItems: 'center',
-                marginBottom: 10,
+                marginBottom: rs(10),
               }}
             >
-              <Text style={{ fontSize: 14, fontWeight: '800', color: '#92400E' }}>
+              <Text
+                maxFontSizeMultiplier={MAX_TEXT_SCALE}
+                style={{
+                  fontSize: rf(14),
+                  lineHeight: lh(rf(14)),
+                  fontFamily: FONTS.bold,
+                  color: '#92400E',
+                }}
+              >
                 ⚠️ Payment Due: ₹{order.totalAmountInr || order.courierFeeInr || 0}
               </Text>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#B45309' }}>
+              <Text
+                maxFontSizeMultiplier={MAX_TEXT_SCALE}
+                style={{
+                  fontSize: rf(12),
+                  lineHeight: lh(rf(12)),
+                  fontFamily: FONTS.semiBold,
+                  color: '#B45309',
+                }}
+              >
                 Direct or Cash Collection
               </Text>
             </View>
-            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+            <View style={{ flexDirection: 'row', gap: rs(8), flexWrap: 'wrap' }}>
               <TouchableOpacity
                 style={{
                   backgroundColor: '#059669',
-                  borderWidth: 1.5,
+                  borderWidth: 1,
                   borderColor: '#047857',
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                  borderRadius: 10,
-                  minHeight: 44,
+                  paddingHorizontal: rs(12),
+                  paddingVertical: rs(10),
+                  borderRadius: rs(10),
+                  minHeight: rs(42),
                   alignItems: 'center',
                   justifyContent: 'center',
-                  elevation: 2,
                 }}
                 onPress={() => onMarkDirectPayment?.(order, 'DIRECT_TO_LAB')}
               >
-                <Text style={{ color: '#FFFFFF', fontSize: 12.5, fontWeight: '800' }}>
+                <Text
+                  maxFontSizeMultiplier={MAX_TEXT_SCALE}
+                  style={{
+                    color: '#FFFFFF',
+                    fontSize: rf(12.5),
+                    lineHeight: lh(rf(12.5)),
+                    fontFamily: FONTS.bold,
+                  }}
+                >
                   ✓ Paid to Lab Directly
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={{
                   backgroundColor: '#0284C7',
-                  borderWidth: 1.5,
+                  borderWidth: 1,
                   borderColor: '#0369A1',
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                  borderRadius: 10,
-                  minHeight: 44,
+                  paddingHorizontal: rs(12),
+                  paddingVertical: rs(10),
+                  borderRadius: rs(10),
+                  minHeight: rs(42),
                   alignItems: 'center',
                   justifyContent: 'center',
-                  elevation: 2,
                 }}
                 onPress={() => onMarkDirectPayment?.(order, 'CASH')}
               >
-                <Text style={{ color: '#FFFFFF', fontSize: 12.5, fontWeight: '800' }}>
+                <Text
+                  maxFontSizeMultiplier={MAX_TEXT_SCALE}
+                  style={{
+                    color: '#FFFFFF',
+                    fontSize: rf(12.5),
+                    lineHeight: lh(rf(12.5)),
+                    fontFamily: FONTS.bold,
+                  }}
+                >
                   💵 Collect Cash
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={{
                   backgroundColor: '#4F46E5',
-                  borderWidth: 1.5,
+                  borderWidth: 1,
                   borderColor: '#4338CA',
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                  borderRadius: 10,
-                  minHeight: 44,
+                  paddingHorizontal: rs(12),
+                  paddingVertical: rs(10),
+                  borderRadius: rs(10),
+                  minHeight: rs(42),
                   alignItems: 'center',
                   justifyContent: 'center',
-                  elevation: 2,
                 }}
                 onPress={() => onCollectBookingPayment?.(order)}
               >
-                <Text style={{ color: '#FFFFFF', fontSize: 12.5, fontWeight: '800' }}>
+                <Text
+                  maxFontSizeMultiplier={MAX_TEXT_SCALE}
+                  style={{
+                    color: '#FFFFFF',
+                    fontSize: rf(12.5),
+                    lineHeight: lh(rf(12.5)),
+                    fontFamily: FONTS.bold,
+                  }}
+                >
                   💳 Online / UPI
                 </Text>
               </TouchableOpacity>
@@ -744,15 +788,6 @@ export function CollectSampleScreen({
               <Ionicons name="add" size={18} color={BRAND_COLORS.navyPrimary} />
             </TouchableOpacity>
           </View>
-
-          <Text style={styles.inputLabelSm}>Chiller Box Temperature (°C)</Text>
-          <TextInput
-            style={[styles.fieldInput, { marginBottom: 12 }]}
-            value={pickupTempInput}
-            onChangeText={onChangePickupTemp}
-            keyboardType="numeric"
-            placeholder="4.2"
-          />
 
           <Text style={styles.inputLabelSm}>Remarks (Optional)</Text>
           <TextInput

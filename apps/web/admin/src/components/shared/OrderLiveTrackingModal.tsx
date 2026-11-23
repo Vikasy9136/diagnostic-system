@@ -131,7 +131,7 @@ export function OrderLiveTrackingModal({
               </div>
               {order.phleboLiveLocation && (
                 <div style={{ fontSize: '0.75rem', color: '#0F766E', marginTop: '4px' }}>
-                  Live GPS: {order.phleboLiveLocation.latitude.toFixed(5)}, {order.phleboLiveLocation.longitude.toFixed(5)}
+                  📍 Live Location: {order.smallLabName ? `${order.smallLabName} Operational Route` : 'Active Route Area'}
                   {order.phleboLiveLocation.updatedAt
                     ? ` • Updated ${new Date(order.phleboLiveLocation.updatedAt).toLocaleTimeString('en-IN')}`
                     : ''}

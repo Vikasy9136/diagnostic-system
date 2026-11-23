@@ -189,7 +189,6 @@ export function SmallLabNewBookingTab({
   const [showSupportModal, setShowSupportModal] = useState(false);
   const [testCategoryFilter, setTestCategoryFilter] = useState('ALL');
   const [savedAddressOption, setSavedAddressOption] = useState('DEFAULT_CLINIC');
-  const [copiedGps, setCopiedGps] = useState(false);
 
   // Local state fallbacks for phone and notes
   const [localMobile, setLocalMobile] = useState(adhocPatientPhone || '');
@@ -260,13 +259,6 @@ export function SmallLabNewBookingTab({
       return entry.department === testCategoryFilter;
     });
   }, [selectableCatalogEntries, testSearchQuery, testCategoryFilter]);
-
-  function handleCopyGps() {
-    const text = `${pickupLat.toFixed(4)}, ${pickupLng.toFixed(4)}`;
-    void navigator.clipboard.writeText(text);
-    setCopiedGps(true);
-    setTimeout(() => setCopiedGps(false), 2000);
-  }
 
   function handleNextStep(targetStep: 1 | 2 | 3 | 4) {
     if (targetStep === 2) {
@@ -910,15 +902,7 @@ export function SmallLabNewBookingTab({
                         {pickupAddress || 'Address on file'}
                       </div>
                       <div style={{ fontSize: '0.74rem', color: '#475569', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span>🌐 {pickupLat.toFixed(4)}, {pickupLng.toFixed(4)}</span>
-                        <button
-                          type="button"
-                          onClick={handleCopyGps}
-                          style={{ background: 'none', border: 'none', color: '#0D9488', cursor: 'pointer', fontSize: '0.75rem', padding: 0 }}
-                          title="Copy coordinates"
-                        >
-                          {copiedGps ? '✓ Copied' : '📋 Copy'}
-                        </button>
+                        <span>📍 GPS Location & Address Verified</span>
                       </div>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>

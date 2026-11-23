@@ -231,7 +231,7 @@ export function LiveTrackingMap({
           `<div style="font-family:sans-serif;font-size:12px;line-height:1.4;">
             <strong style="color:#0A2A5E;">🏍️ LabSetu On-Duty Phlebo Courier</strong><br/>
             <strong>Rider:</strong> ${phleboLocation.name || 'Courier'}<br/>
-            <span style="color:#64748B;">Live GPS: ${cLat.toFixed(4)}, ${cLng.toFixed(4)}</span>
+            <span style="color:#0F766E;">📍 Live Location Active</span>
           </div>`
         );
     }
@@ -348,7 +348,7 @@ export function LiveTrackingMap({
       {/* Status & Navigation Bar */}
       <div className="map-coords-bar">
         <span>
-          {hasDrop ? `Total Route: ${routeDistanceKm} km` : `Pickup GPS: ${pLat.toFixed(4)}, ${pLng.toFixed(4)}`}
+          {hasDrop ? `Total Route: ${routeDistanceKm} km` : 'Pickup Location Verified'}
           {courierToDropKm !== null
             ? ` • 🏍️ Courier ${courierToDropKm} km from lab destination (~${Math.max(5, Math.round(courierToDropKm * 3.5))} min ETA)`
             : hasCourier

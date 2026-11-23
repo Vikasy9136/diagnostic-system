@@ -34,6 +34,7 @@ import { type DynamicAlertVariant } from './DynamicAlertModal';
 import { BRAND_COLORS, BRAND_FONTS } from './LabSetuBrand';
 import { OsmWebMapPreview } from './OsmWebMapPreview';
 import { COLORS, styles } from '../styles/phleboStyles';
+import { formatFullProperAddress } from '../utils/addressUtils';
 import { lh, MAX_TEXT_SCALE, rf } from '../utils/responsive';
 import {
   type ActivePaymentLinkState,
@@ -558,6 +559,10 @@ export function BroadcastDispatchModal({
                   longitude={
                     activeBroadcastMatch.order.pickupLocation?.longitude || riderLocation.longitude
                   }
+                  address={formatFullProperAddress(
+                    activeBroadcastMatch.order.pickupLocation,
+                    activeBroadcastMatch.order.smallLabName
+                  )}
                   title={`Pickup Point • ${activeBroadcastMatch.order.smallLabName}`}
                   height={110}
                   onOpenGoogleMaps={() =>
@@ -859,7 +864,8 @@ export function LocationPickerModal({
             <OsmWebMapPreview
               latitude={riderLocation.latitude}
               longitude={riderLocation.longitude}
-              title="Live GPS Location Area"
+              address={assignedAdminZone?.name || myPhleboProfile?.currentLocation || 'Active Operational Area'}
+              title="Live Location Area"
               height={155}
             />
 

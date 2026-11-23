@@ -354,7 +354,7 @@ export function BookingRequestsScreen({
         <View style={styles.quickTilesGrid}>
           <TouchableOpacity
             style={[styles.quickTileCard, { width: quickTileWidth, flexGrow: 0 }]}
-            onPress={() => onSelectRequestTab('active')}
+            onPress={() => (onOpenTodayCollections ? onOpenTodayCollections() : onSelectRequestTab('active'))}
             activeOpacity={0.8}
           >
             <View style={{ position: 'relative' }}>

@@ -16,7 +16,7 @@ import { OsmWebMapPreview } from '../components/OsmWebMapPreview';
 import { COLORS, FONTS, styles } from '../styles/phleboStyles';
 import { formatLabel } from '../utils/phleboHelpers';
 import { formatFullProperAddress } from '../utils/addressUtils';
-import { lh, MAX_TEXT_SCALE, rf } from '../utils/responsive';
+import { lh, MAX_TEXT_SCALE, rf, rs } from '../utils/responsive';
 
 export interface BookingDetailsScreenProps {
   order: PickupOrder;
@@ -231,6 +231,7 @@ export function BookingDetailsScreen({
         <OsmWebMapPreview
           latitude={order.pickupLocation?.latitude || riderLocation.latitude}
           longitude={order.pickupLocation?.longitude || riderLocation.longitude}
+          address={formatFullProperAddress(order.pickupLocation, order.smallLabName)}
           title={`Pickup Map • ${order.smallLabName}`}
           height={165}
           onOpenGoogleMaps={() =>
@@ -338,29 +339,29 @@ export function BookingDetailsScreen({
                 marginBottom: 10,
               }}
             >
-              <Text style={{ fontSize: 13, fontWeight: '700', color: BRAND_COLORS.navyPrimary }}>
+              <Text style={{ fontSize: rf(13.5), fontFamily: FONTS.bold, color: BRAND_COLORS.navyPrimary }}>
                 Collect Payment ({formatInr(order.totalAmountInr || order.courierFeeInr || 0)})
               </Text>
-              <Text style={{ fontSize: 11, color: '#C2410C', fontWeight: '600' }}>
+              <Text style={{ fontSize: rf(11), fontFamily: FONTS.semiBold, color: '#C2410C' }}>
                 Payment Due
               </Text>
             </View>
 
-            <View style={{ gap: 8 }}>
+            <View style={{ gap: rs(8) }}>
               {/* Primary: Patient Paid Directly to Lab */}
               <TouchableOpacity
                 style={[
                   styles.ctaButton,
-                  { backgroundColor: '#059669', marginBottom: 0, paddingVertical: 12 },
+                  { backgroundColor: '#059669', marginBottom: 0, paddingVertical: rs(12) },
                 ]}
                 onPress={() => onMarkDirectPayment?.(order, 'DIRECT_TO_LAB')}
               >
-                <Text style={styles.ctaButtonText}>
+                <Text style={[styles.ctaButtonText, { fontFamily: FONTS.bold, fontSize: rf(13) }]}>
                   ✓ Patient Paid Directly to Lab
                 </Text>
               </TouchableOpacity>
 
-              <View style={{ flexDirection: 'row', gap: 8 }}>
+              <View style={{ flexDirection: 'row', gap: rs(8) }}>
                 <TouchableOpacity
                   style={[
                     styles.btnSecondary,
@@ -368,12 +369,12 @@ export function BookingDetailsScreen({
                       flex: 1,
                       borderColor: '#0284C7',
                       backgroundColor: '#F0F9FF',
-                      paddingVertical: 10,
+                      paddingVertical: rs(10),
                     },
                   ]}
                   onPress={() => onMarkDirectPayment?.(order, 'CASH')}
                 >
-                  <Text style={[styles.btnSecondaryText, { color: '#0284C7', fontWeight: '700' }]}>
+                  <Text style={[styles.btnSecondaryText, { color: '#0284C7', fontFamily: FONTS.bold, fontSize: rf(12.5) }]}>
                     💵 Collect Cash
                   </Text>
                 </TouchableOpacity>
@@ -385,14 +386,14 @@ export function BookingDetailsScreen({
                       flex: 1,
                       borderColor: '#6366F1',
                       backgroundColor: '#EEF2FF',
-                      paddingVertical: 10,
+                      paddingVertical: rs(10),
                     },
                     collectingOrderId === order.id && { opacity: 0.65 },
                   ]}
                   disabled={collectingOrderId === order.id}
                   onPress={() => onCollectBookingPayment(order)}
                 >
-                  <Text style={[styles.btnSecondaryText, { color: '#6366F1', fontWeight: '700' }]}>
+                  <Text style={[styles.btnSecondaryText, { color: '#6366F1', fontFamily: FONTS.bold, fontSize: rf(12.5) }]}>
                     {collectingOrderId === order.id ? 'Opening...' : '💳 Online / UPI'}
                   </Text>
                 </TouchableOpacity>
