@@ -191,7 +191,7 @@ export function SmallLabDashboard({
 
   useEffect(() => {
     if (!session.firebaseUser) return;
-    const noop = () => {};
+    const noop = () => { };
     const unsubs = [
       subscribeLabs(setLabs),
       subscribePhlebotomists(setPhlebotomists),
@@ -206,14 +206,14 @@ export function SmallLabDashboard({
       subscribePlatformSops(setPlatformSops, noop),
       subscribePlatformFaqs(setPlatformFaqs, noop),
       subscribeSettings(
-        () => {},
+        () => { },
         (cfg) => {
           setCommConfig(cfg);
           if (cfg.defaultBroadcastRadiusKm) {
             setBroadcastRadiusKm(cfg.defaultBroadcastRadiusKm);
           }
         },
-        () => {}
+        () => { }
       ),
     ];
     return () => unsubs.forEach((u) => u());
@@ -298,9 +298,9 @@ export function SmallLabDashboard({
     if (!orders.length) return;
     orders.forEach((o) => {
       if (isOrderCompleted(o.status)) {
-        void cleanupCompletedOrderChats(o).catch(() => {});
+        void cleanupCompletedOrderChats(o).catch(() => { });
       }
-      void purgeExpiredOrderMedia(o).catch(() => {});
+      void purgeExpiredOrderMedia(o).catch(() => { });
     });
   }, [orders]);
 
@@ -1422,11 +1422,11 @@ export function SmallLabDashboard({
               const matchingOrder = orders.find((o) => o.id === stl.orderId);
               handleMarkPaidByLab(
                 matchingOrder ||
-                  ({
-                    id: stl.orderId,
-                    orderNumber: stl.orderNumber,
-                    totalAmountInr: stl.grossAmountInr,
-                  } as PickupOrder)
+                ({
+                  id: stl.orderId,
+                  orderNumber: stl.orderNumber,
+                  totalAmountInr: stl.grossAmountInr,
+                } as PickupOrder)
               );
               return Promise.resolve();
             }}

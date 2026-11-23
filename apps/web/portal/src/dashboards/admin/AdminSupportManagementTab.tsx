@@ -1,4 +1,4 @@
-import { useState, useMemo, type FormEvent } from 'react';
+import { useState, useMemo, useEffect, type FormEvent } from 'react';
 import {
   DEFAULT_PLATFORM_FAQS,
   DEFAULT_PLATFORM_SOPS,
@@ -18,6 +18,7 @@ import {
 export interface AdminSupportManagementTabProps {
   adminEmail: string;
   supportContacts: SupportContactsConfig;
+  onSupportContactsChange?: (next: SupportContactsConfig) => void;
   platformSops: PlatformSopDocument[];
   platformFaqs: PlatformFaqDocument[];
   onShowAlert: (params: {
@@ -32,6 +33,7 @@ export interface AdminSupportManagementTabProps {
 export function AdminSupportManagementTab({
   adminEmail,
   supportContacts,
+  onSupportContactsChange,
   platformSops,
   platformFaqs,
   onShowAlert,
@@ -44,6 +46,15 @@ export function AdminSupportManagementTab({
     ...supportContacts,
   });
   const [savingContacts, setSavingContacts] = useState(false);
+
+  useEffect(() => {
+    if (supportContacts) {
+      setContactsForm({
+        ...DEFAULT_SUPPORT_CONTACTS,
+        ...supportContacts,
+      });
+    }
+  }, [supportContacts]);
 
   // SOP Modal & State
   const [editingSop, setEditingSop] = useState<PlatformSopDocument | null>(null);
@@ -80,6 +91,7 @@ export function AdminSupportManagementTab({
     setSavingContacts(true);
     try {
       await saveSupportContacts(contactsForm, adminEmail);
+      onSupportContactsChange?.(contactsForm);
       onShowAlert({
         variant: 'success',
         title: 'Support Contacts Saved',

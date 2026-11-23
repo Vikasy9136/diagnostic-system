@@ -54,6 +54,12 @@ export function useDashboardPageRouter<TTab extends string>({
         }
       }
 
+      // Guarantee immediate scroll to top on tab switch
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+      document.querySelectorAll('.dashboard-content, .main-wrapper, .admin-layout, main, #root').forEach((el) => {
+        el.scrollTop = 0;
+      });
+
       onTabChange?.(nextTab);
     },
     [getTargetUrl, onTabChange, resolvePathForTab, resolveTitleForTab]
@@ -72,10 +78,20 @@ export function useDashboardPageRouter<TTab extends string>({
       window.history.replaceState(null, '', getTargetUrl(activeTab));
     }
 
+    // Ensure initial scroll is at top
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    document.querySelectorAll('.dashboard-content, .main-wrapper, .admin-layout, main, #root').forEach((el) => {
+      el.scrollTop = 0;
+    });
+
     const handlePopState = () => {
       const matchedTab = resolveTabFromPath(window.location.pathname);
       setActiveTabState(matchedTab);
       document.title = resolveTitleForTab(matchedTab);
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+      document.querySelectorAll('.dashboard-content, .main-wrapper, .admin-layout, main, #root').forEach((el) => {
+        el.scrollTop = 0;
+      });
       onTabChange?.(matchedTab);
     };
 

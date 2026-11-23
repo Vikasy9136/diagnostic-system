@@ -33,6 +33,8 @@ export interface AdminOnboardingModalProps {
   onClose: () => void;
   isSuperAdmin: boolean;
   rootAdminEmail: string;
+  currentUserEmail?: string;
+  currentUserName?: string;
   bearerToken?: string;
   largeLabOrgs: LabFacility[];
   serviceZones: ServiceZoneRecord[];
@@ -48,6 +50,8 @@ export function AdminOnboardingModal({
   onClose,
   isSuperAdmin: _isSuperAdmin,
   rootAdminEmail,
+  currentUserEmail,
+  currentUserName,
   bearerToken,
   largeLabOrgs,
   serviceZones,
@@ -72,6 +76,17 @@ export function AdminOnboardingModal({
   const [nabl, setNabl] = useState('');
   const [radiusKm, setRadiusKm] = useState<number>(15);
   const [vehicle, setVehicle] = useState('Cold-Chain Two-Wheeler');
+  const [dlNumber, setDlNumber] = useState('');
+  const [vehicleNumber, setVehicleNumber] = useState('');
+  const [vehicleType, setVehicleType] = useState<'BIKE' | 'SCOOTER' | 'EV_BIKE' | 'BICYCLE' | 'OTHER'>('BIKE');
+  const [aadhaarNumber, setAadhaarNumber] = useState('');
+  const [panNumber, setPanNumber] = useState('');
+  const [dlDocUrl, setDlDocUrl] = useState('');
+  const [rcDocUrl, setRcDocUrl] = useState('');
+  const [aadhaarDocUrl, setAadhaarDocUrl] = useState('');
+  const [panDocUrl, setPanDocUrl] = useState('');
+  const [signedAgreementUrl, setSignedAgreementUrl] = useState('');
+  const [signerName, setSignerName] = useState('');
   const [selectedZoneId, setSelectedZoneId] = useState('');
   const [lat, setLat] = useState<number>(LOCALITY_GPS_PRESETS[0].latitude);
   const [lng, setLng] = useState<number>(LOCALITY_GPS_PRESETS[0].longitude);
@@ -123,6 +138,17 @@ export function AdminOnboardingModal({
     setNabl('');
     setRadiusKm(15);
     setVehicle('Cold-Chain Two-Wheeler');
+    setDlNumber('');
+    setVehicleNumber('');
+    setVehicleType('BIKE');
+    setAadhaarNumber('');
+    setPanNumber('');
+    setDlDocUrl('');
+    setRcDocUrl('');
+    setAadhaarDocUrl('');
+    setPanDocUrl('');
+    setSignedAgreementUrl('');
+    setSignerName('');
     setSelectedZoneId(initZone?.id || '');
     setLat(
       presetRole === UserRole.PHLEBOTOMIST && initZone
@@ -381,6 +407,129 @@ export function AdminOnboardingModal({
     }
   }
 
+  // Handle Dedicated Secure Document Upload (DL, RC, Aadhaar, PAN, Signed Agreement)
+  async function handleDirectDocUpload(
+    file: File,
+    category: 'DL' | 'RC' | 'AADHAAR' | 'PAN' | 'AGREEMENT'
+  ) {
+    try {
+      setUploadingTarget(category.toLowerCase());
+      let fileUrl = '';
+      const cleanName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const storagePath = `documents/${category.toLowerCase()}/${Date.now()}_${cleanName}`;
+      try {
+        fileUrl = await uploadDiagnosticDocument(storagePath, file);
+      } catch {
+        fileUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      }
+
+      if (category === 'DL') setDlDocUrl(fileUrl);
+      else if (category === 'RC') setRcDocUrl(fileUrl);
+      else if (category === 'AADHAAR') setAadhaarDocUrl(fileUrl);
+      else if (category === 'PAN') setPanDocUrl(fileUrl);
+      else if (category === 'AGREEMENT') setSignedAgreementUrl(fileUrl);
+
+      const categoryLabels: Record<string, string> = {
+        DL: `Driving License (${dlNumber || 'Transport DL'})`,
+        RC: `Vehicle RC (${vehicleNumber || 'Vehicle Registration'})`,
+        AADHAAR: `Aadhaar Card (${aadhaarNumber || 'UIDAI'})`,
+        PAN: `PAN Card (${panNumber || 'Income Tax Dept'})`,
+        AGREEMENT: `Signed Master Agreement (${signerName || 'Authorized Signatory'})`,
+      };
+
+      const docRecord: LabDocumentRecord = {
+        id: `DOC-${Date.now()}`,
+        type:
+          category === 'DL'
+            ? 'DRIVING_LICENSE'
+            : category === 'AADHAAR'
+            ? 'AADHAAR_CARD'
+            : category === 'PAN'
+            ? 'PAN_CARD'
+            : 'OTHER',
+        title: categoryLabels[category],
+        url: fileUrl,
+        fileName: file.name,
+        uploadedAt: new Date().toISOString(),
+        verified: false,
+      };
+      setUploadedDocs((prev) => [...prev, docRecord]);
+
+      onShowAlert({
+        variant: 'success',
+        title: 'Document Secured',
+        message: `${file.name} uploaded and securely attached to verification file.`,
+      });
+    } catch (err: unknown) {
+      onShowAlert({
+        variant: 'error',
+        title: 'Upload Failed',
+        message: err instanceof Error ? err.message : 'Could not upload document.',
+      });
+    } finally {
+      setUploadingTarget(null);
+    }
+  }
+
+  // Download Master Agreement Template
+  function handleDownloadAgreementTemplate(targetRole: 'PHLEBOTOMIST' | 'SMALL_LAB' | 'LARGE_LAB') {
+    const agreementTitle =
+      targetRole === 'PHLEBOTOMIST'
+        ? 'LabSetu Field Phlebotomist & Cold-Chain Transit Service Agreement (v2.1)'
+        : targetRole === 'SMALL_LAB'
+        ? 'LabSetu Collection Centre B2B Dispatch & Tariff Agreement (v2.1)'
+        : 'LabSetu Central Reference Laboratory Testing & SLA Agreement (v2.1)';
+
+    const content = `================================================================================
+${agreementTitle.toUpperCase()}
+================================================================================
+Platform: LabSetu Diagnostic Logistics & Cold-Chain Network
+Version: 2.1 (Active Standard Agreement)
+Date of Generation: ${new Date().toLocaleDateString('en-IN')}
+
+1. PARTIES & ENGAGEMENT:
+This Master Agreement is executed between LabSetu Healthcare Technologies Private Limited ("Platform")
+and the undersigned Onboarding Partner ("Partner / Courier / Laboratory").
+
+2. OPERATIONAL ROLES & RESPONSIBILITIES:
+- Compliance with cold-chain protocols (2°C - 8°C vacutainer carrier integrity).
+- Mandatory sample scan, QR custody barcode chain-of-custody handshakes.
+- Instant 30-minute payout settlement eligibility upon validated test drop verification.
+- Accurate GPS dispatch radar and verified route tracking.
+
+3. DATA PROTECTION & HIPAA / NABH COMPLIANCE:
+All patient identifiers, test manifests, and diagnostic specimens shall remain strictly encrypted
+and confidential under Applicable Indian Information Technology & Healthcare Laws.
+
+4. EXECUTION & SIGNATURE:
+Party Name / Laboratory / Courier: _____________________________________________
+Authorized Signer Name: _______________________________________________________
+Designation / Relationship: ___________________________________________________
+Contact Phone / Email: ________________________________________________________
+Govt ID / Aadhaar / DL / PAN No: ______________________________________________
+Place: ____________________________________ Date: _____________________________
+
+Signature & Official Seal: ____________________________________________________
+================================================================================
+Instructions: Download, print/sign with official signature, and upload scan/PDF in the onboarding verification portal.
+`;
+
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `LabSetu_${targetRole}_Master_Agreement_v2.1.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!email.trim() || !name.trim()) return;
@@ -454,7 +603,24 @@ export function AdminOnboardingModal({
         centerType: role === UserRole.LARGE_LAB ? centerType : undefined,
         parentLabName: parentOrg?.name,
         nablNumber: nabl.trim() || undefined,
-        vehicleInfo: vehicle.trim() || undefined,
+        vehicleInfo:
+          role === UserRole.PHLEBOTOMIST
+            ? `${vehicleType} (${vehicleNumber.trim() || 'Reg Pending'}) — ${vehicle.trim()}`
+            : vehicle.trim() || undefined,
+        dlNumber: dlNumber.trim() || undefined,
+        vehicleNumber: vehicleNumber.trim() || undefined,
+        vehicleType: role === UserRole.PHLEBOTOMIST ? vehicleType : undefined,
+        aadhaarNumber: aadhaarNumber.trim() || undefined,
+        panNumber: panNumber.trim() || undefined,
+        dlDocumentUrl: dlDocUrl || undefined,
+        rcDocumentUrl: rcDocUrl || undefined,
+        aadhaarDocumentUrl: aadhaarDocUrl || undefined,
+        panDocumentUrl: panDocUrl || undefined,
+        signedAgreementUrl: signedAgreementUrl || undefined,
+        signerName: signerName.trim() || undefined,
+        signedAt: signedAgreementUrl ? new Date().toISOString() : undefined,
+        onboardedByEmail: currentUserEmail,
+        onboardedByName: currentUserName,
         assignedZoneId: effectiveZone?.id,
         assignedZoneCode: effectiveZone?.zoneCode,
         assignedZoneName: effectiveZone?.name,
@@ -1265,11 +1431,326 @@ export function AdminOnboardingModal({
           </div>
         )}
 
-        {/* Phlebo Transport Info */}
+        {/* SECTION 3: PHLEBOTOMIST VEHICLE & REGULATORY KYC (DL, Vehicle, Aadhaar, PAN) */}
         {role === UserRole.PHLEBOTOMIST && (
-          <div className="form-group">
-            <label className="form-label">Cold-Chain Vehicle / Transport</label>
-            <input className="form-input" value={vehicle} onChange={(e) => setVehicle(e.target.value)} />
+          <div
+            style={{
+              background: '#F8FAFC',
+              border: '1.5px solid #CBD5E1',
+              borderRadius: '12px',
+              padding: '14px',
+              marginBottom: '14px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '1.2rem' }}>🚗</span>
+              <div>
+                <strong style={{ fontSize: '0.86rem', color: '#0F172A', display: 'block' }}>
+                  Phlebotomist Transport &amp; Regulatory KYC
+                </strong>
+                <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
+                  Mandatory vehicle registration, driving license, Aadhaar and PAN verification documents
+                </span>
+              </div>
+            </div>
+
+            {/* Vehicle Type, Vehicle Number & Vehicle Info */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr 1.2fr', gap: '10px' }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" style={{ fontSize: '0.74rem' }}>Vehicle Type *</label>
+                <select
+                  className="form-select"
+                  style={{ fontSize: '0.78rem' }}
+                  value={vehicleType}
+                  onChange={(e) => setVehicleType(e.target.value as 'BIKE' | 'SCOOTER' | 'EV_BIKE' | 'BICYCLE' | 'OTHER')}
+                >
+                  <option value="BIKE">Motorcycle / Bike</option>
+                  <option value="SCOOTER">Scooter / Moped</option>
+                  <option value="EV_BIKE">Electric Two-Wheeler (EV)</option>
+                  <option value="BICYCLE">Bicycle</option>
+                  <option value="OTHER">Other Transport</option>
+                </select>
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" style={{ fontSize: '0.74rem' }}>Vehicle Reg. Number *</label>
+                <input
+                  className="form-input"
+                  style={{ fontSize: '0.78rem', textTransform: 'uppercase' }}
+                  placeholder="e.g. MH-02-EH-4921"
+                  value={vehicleNumber}
+                  onChange={(e) => setVehicleNumber(e.target.value)}
+                />
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" style={{ fontSize: '0.74rem' }}>Vehicle Description / Make</label>
+                <input
+                  className="form-input"
+                  style={{ fontSize: '0.78rem' }}
+                  placeholder="e.g. Hero Splendor Plus / Honda Activa"
+                  value={vehicle}
+                  onChange={(e) => setVehicle(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {/* DL Number & DL Document Upload */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1.4fr auto', gap: '10px', alignItems: 'flex-end' }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" style={{ fontSize: '0.74rem' }}>Driving License (DL) Number *</label>
+                <input
+                  className="form-input"
+                  style={{ fontSize: '0.78rem', textTransform: 'uppercase' }}
+                  placeholder="e.g. MH02-20220012345"
+                  value={dlNumber}
+                  onChange={(e) => setDlNumber(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label
+                  className="btn-secondary"
+                  style={{
+                    fontSize: '0.75rem',
+                    padding: '8px 12px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    backgroundColor: dlDocUrl ? '#ECFDF5' : '#FFFFFF',
+                    borderColor: dlDocUrl ? '#10B981' : '#CBD5E1',
+                    color: dlDocUrl ? '#047857' : '#334155',
+                  }}
+                >
+                  <span>{dlDocUrl ? '✓ DL Attached' : '📄 Upload DL (PDF/Photo)'}</span>
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void handleDirectDocUpload(f, 'DL');
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+
+            {/* Vehicle RC Document Upload Slot */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', background: '#FFFFFF', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
+              <div style={{ fontSize: '0.76rem', color: '#334155' }}>
+                <strong>Vehicle RC Book / Smart Card Document</strong>
+                <div style={{ fontSize: '0.7rem', color: '#64748B' }}>Registration certificate copy showing vehicle ownership</div>
+              </div>
+              <label
+                className="btn-secondary"
+                style={{
+                  fontSize: '0.75rem',
+                  padding: '6px 12px',
+                  cursor: 'pointer',
+                  backgroundColor: rcDocUrl ? '#ECFDF5' : '#FFFFFF',
+                  borderColor: rcDocUrl ? '#10B981' : '#CBD5E1',
+                  color: rcDocUrl ? '#047857' : '#334155',
+                }}
+              >
+                <span>{rcDocUrl ? '✓ RC Attached' : '📄 Upload RC'}</span>
+                <input
+                  type="file"
+                  accept="image/*,application/pdf"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) void handleDirectDocUpload(f, 'RC');
+                  }}
+                />
+              </label>
+            </div>
+
+            {/* Aadhaar Number & Aadhaar Document Upload */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1.4fr auto', gap: '10px', alignItems: 'flex-end' }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" style={{ fontSize: '0.74rem' }}>Aadhaar Card Number *</label>
+                <input
+                  className="form-input"
+                  style={{ fontSize: '0.78rem' }}
+                  placeholder="e.g. 5412-3489-0123"
+                  maxLength={14}
+                  value={aadhaarNumber}
+                  onChange={(e) => setAadhaarNumber(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label
+                  className="btn-secondary"
+                  style={{
+                    fontSize: '0.75rem',
+                    padding: '8px 12px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    backgroundColor: aadhaarDocUrl ? '#ECFDF5' : '#FFFFFF',
+                    borderColor: aadhaarDocUrl ? '#10B981' : '#CBD5E1',
+                    color: aadhaarDocUrl ? '#047857' : '#334155',
+                  }}
+                >
+                  <span>{aadhaarDocUrl ? '✓ Aadhaar Attached' : '📄 Upload Aadhaar (Front/Back)'}</span>
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void handleDirectDocUpload(f, 'AADHAAR');
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+
+            {/* PAN Card Number & PAN Document Upload */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1.4fr auto', gap: '10px', alignItems: 'flex-end' }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" style={{ fontSize: '0.74rem' }}>PAN Card Number *</label>
+                <input
+                  className="form-input"
+                  style={{ fontSize: '0.78rem', textTransform: 'uppercase' }}
+                  placeholder="e.g. ABCDE1234F"
+                  maxLength={10}
+                  value={panNumber}
+                  onChange={(e) => setPanNumber(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label
+                  className="btn-secondary"
+                  style={{
+                    fontSize: '0.75rem',
+                    padding: '8px 12px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    backgroundColor: panDocUrl ? '#ECFDF5' : '#FFFFFF',
+                    borderColor: panDocUrl ? '#10B981' : '#CBD5E1',
+                    color: panDocUrl ? '#047857' : '#334155',
+                  }}
+                >
+                  <span>{panDocUrl ? '✓ PAN Attached' : '📄 Upload PAN Card'}</span>
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void handleDirectDocUpload(f, 'PAN');
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* SECTION 4: ROLE MASTER AGREEMENT (Template Download & Signed Document Upload) */}
+        {(role === UserRole.PHLEBOTOMIST || role === UserRole.SMALL_LAB || role === UserRole.LARGE_LAB) && (
+          <div
+            style={{
+              background: '#F0FDFA',
+              border: '1px solid #99F6E4',
+              borderRadius: '12px',
+              padding: '14px',
+              marginBottom: '14px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '10px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '1.2rem', color: '#0F766E' }}>🤝</span>
+                <div>
+                  <strong style={{ fontSize: '0.86rem', color: '#0F766E', display: 'block' }}>
+                    Role Master Agreement &amp; Signed Counterpart
+                  </strong>
+                  <span style={{ fontSize: '0.72rem', color: '#115E59' }}>
+                    Download official template, acquire counterparty signature, and upload signed copy
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{
+                  fontSize: '0.74rem',
+                  padding: '6px 12px',
+                  fontWeight: 700,
+                  backgroundColor: '#FFFFFF',
+                  borderColor: '#0D9488',
+                  color: '#0F766E',
+                }}
+                onClick={() =>
+                  handleDownloadAgreementTemplate(
+                    role === UserRole.PHLEBOTOMIST
+                      ? 'PHLEBOTOMIST'
+                      : role === UserRole.LARGE_LAB
+                      ? 'LARGE_LAB'
+                      : 'SMALL_LAB'
+                  )
+                }
+              >
+                📥 Download Agreement Template (v2.1)
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1.3fr auto', gap: '10px', alignItems: 'flex-end', marginTop: '4px' }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" style={{ fontSize: '0.74rem' }}>Signer Full Name / Representative</label>
+                <input
+                  className="form-input"
+                  style={{ fontSize: '0.78rem' }}
+                  placeholder="e.g. Vikas Yadav / Lab Director"
+                  value={signerName}
+                  onChange={(e) => setSignerName(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label
+                  className="btn-secondary"
+                  style={{
+                    fontSize: '0.75rem',
+                    padding: '8px 14px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    backgroundColor: signedAgreementUrl ? '#ECFDF5' : '#FFFFFF',
+                    borderColor: signedAgreementUrl ? '#10B981' : '#0D9488',
+                    color: signedAgreementUrl ? '#047857' : '#0F766E',
+                    fontWeight: 700,
+                  }}
+                >
+                  <span>{signedAgreementUrl ? '✓ Signed Agreement Uploaded' : '📄 Upload Signed Agreement (PDF/Scan)'}</span>
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void handleDirectDocUpload(f, 'AGREEMENT');
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
           </div>
         )}
 

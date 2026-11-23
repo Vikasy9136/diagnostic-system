@@ -193,6 +193,13 @@ export const ADMIN_ROUTES: Record<AdminTab, DashboardRouteMeta<AdminTab>> = {
     title: 'LabSetu | Service Zones & Pincode Coverage',
     navLabel: 'Service Zones',
   },
+  agreements: {
+    tab: 'agreements',
+    path: '/dashboard/agreements',
+    aliases: ['/agreements', '/dashboard/contracts'],
+    title: 'LabSetu | Master Role Agreements & Signatures',
+    navLabel: 'Master Agreements',
+  },
   'master-data': {
     tab: 'master-data',
     path: '/dashboard/catalogue',

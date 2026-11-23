@@ -86,59 +86,35 @@ export function AdminBookingsTab({
                   <td>{o.specimens.map((s) => s.testCode).join(', ')}</td>
                   <td>{o.phlebotomistName || 'Unassigned'}</td>
                   <td>{formatInr(o.totalAmountInr || 0)}</td>
+                  <td><span className="status-pill-blue">{formatOrderStatus(o.status)}</span></td>
                   <td>
-                    {o.status === OrderStatus.CANCELLED ? (
-                      <span
-                        style={{
-                          background: '#FEE2E2',
-                          color: '#DC2626',
-                          border: '1px solid #FECACA',
-                          borderRadius: '999px',
-                          padding: '3px 10px',
-                          fontSize: '0.75rem',
-                          fontWeight: 700,
-                        }}
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => onTrackOrder(o)}
                       >
-                        ✕ Cancelled
-                      </span>
-                    ) : (
-                      <span className="status-pill-blue">{formatOrderStatus(o.status)}</span>
-                    )}
-                  </td>
-                  <td>
-                    {o.status === OrderStatus.CANCELLED ? (
-                      <span style={{ color: '#94A3B8', fontSize: '0.78rem', fontStyle: 'italic', fontWeight: 600 }}>
-                        ✕ Cancelled (No Action)
-                      </span>
-                    ) : (
-                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        📍 Live Map
+                      </button>
+                      {(o.sampleCollectionPhotoUrl || (o as unknown as { samplePhotoUrl?: string }).samplePhotoUrl) && (
                         <button
                           type="button"
                           className="btn-secondary"
+                          style={{ borderColor: '#86EFAC', background: '#F0FDF4', color: '#166534' }}
                           onClick={() => onTrackOrder(o)}
+                          title="View Specimen Collection Proof Photo"
                         >
-                          📍 Live Map
+                          📸 Proof
                         </button>
-                        {(o.sampleCollectionPhotoUrl || (o as unknown as { samplePhotoUrl?: string }).samplePhotoUrl) && (
-                          <button
-                            type="button"
-                            className="btn-secondary"
-                            style={{ borderColor: '#86EFAC', background: '#F0FDF4', color: '#166534' }}
-                            onClick={() => onTrackOrder(o)}
-                            title="View Specimen Collection Proof Photo"
-                          >
-                            📸 Proof
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="btn-secondary"
-                          onClick={() => onAssignCourier(o)}
-                        >
-                          Assign Courier
-                        </button>
-                      </div>
-                    )}
+                      )}
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => onAssignCourier(o)}
+                      >
+                        Assign Courier
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

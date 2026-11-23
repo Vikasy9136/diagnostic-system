@@ -80,6 +80,13 @@ export function DashboardShell<TTab extends string>({
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    document.querySelectorAll('.dashboard-content, .main-wrapper, .admin-layout, main, #root').forEach((el) => {
+      el.scrollTop = 0;
+    });
+  }, [activeTab]);
+
+  useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (
         searchContainerRef.current &&

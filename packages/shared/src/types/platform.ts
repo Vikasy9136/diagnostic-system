@@ -73,6 +73,11 @@ export interface LabFacility {
   documents?: LabDocumentRecord[];
   contactPersonName?: string;
   operatingHours?: string;
+  signedAgreementUrl?: string;
+  signerName?: string;
+  signedAt?: string;
+  onboardedByEmail?: string;
+  onboardedByName?: string;
   pendingPlatformFeeDueInr?: number;
   unsettledCashSince?: string;
   serviceSuspended?: boolean;
@@ -102,6 +107,20 @@ export interface PhlebotomistProfile {
   chillerTempCelsius: number;
   coolerBoxId?: string;
   vehicleInfo?: string;
+  dlNumber?: string;
+  vehicleNumber?: string;
+  vehicleType?: 'BIKE' | 'SCOOTER' | 'EV_BIKE' | 'BICYCLE' | 'OTHER';
+  aadhaarNumber?: string;
+  panNumber?: string;
+  dlDocumentUrl?: string;
+  rcDocumentUrl?: string;
+  aadhaarDocumentUrl?: string;
+  panDocumentUrl?: string;
+  signedAgreementUrl?: string;
+  signerName?: string;
+  signedAt?: string;
+  onboardedByEmail?: string;
+  onboardedByName?: string;
   rating: number;
   totalPickups: number;
   verified: boolean;
@@ -275,6 +294,12 @@ export interface LargeLabB2bAgreement {
   b2bMarkupPct: number;
   minPayoutInr?: number;
   settlementCycle?: 'DAILY' | 'T_PLUS_2' | 'WEEKLY';
+  rateModel?: 'FIXED' | 'COMMISSION_PCT' | 'CUSTOM' | string;
+  smallLabPayableInr?: number;
+  largeLabRateInr?: number;
+  routeMaxKm?: number;
+  urgency?: 'Routine' | 'Priority' | 'Express' | string;
+  status?: 'ACTIVE' | 'PAUSED';
   notes?: string;
   updatedAt?: string;
 }
@@ -302,9 +327,51 @@ export interface CommissionConfig {
   perKmFeeInr?: number;
   customDropBaseFeeInr?: number;
   statSurchargeInr: number;
-  defaultBroadcastRadiusKm?: number; // 1 to 5 km live trigger radius
+  defaultBroadcastRadiusKm?: number; // Live rider broadcast min km (e.g. 3 km)
+  broadcastRadiusMaxKm?: number; // Live rider broadcast max km (e.g. 15 km)
   largeLabAgreements?: Record<string, LargeLabB2bAgreement>;
   updatedBy?: string;
+  updatedAt: string;
+}
+
+export type AgreementRoleTarget = 'PHLEBOTOMIST' | 'SMALL_LAB' | 'LARGE_LAB';
+
+export interface RoleAgreementTemplate {
+  id: string;
+  roleTarget: AgreementRoleTarget;
+  title: string;
+  version: string;
+  description: string;
+  templateFileUrl: string;
+  fileName: string;
+  fileSizeBytes?: number;
+  isActive: boolean;
+  requiredFields?: string[];
+  updatedBy: string;
+  updatedAt: string;
+  createdAt: string;
+}
+
+export interface AreaExpansionRequest {
+  id: string;
+  proposedZoneName: string;
+  city: string;
+  state: string;
+  pincodes: string[];
+  centerLatitude: number;
+  centerLongitude: number;
+  radiusKm: number;
+  targetLabsCount?: number;
+  potentialMonthlyVolume?: number;
+  justification: string;
+  submittedByEmail: string;
+  submittedByName: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  approvedZoneId?: string;
+  reviewedByEmail?: string;
+  reviewedAt?: string;
+  reviewRemarks?: string;
+  createdAt: string;
   updatedAt: string;
 }
 

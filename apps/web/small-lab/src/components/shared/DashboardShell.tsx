@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { LABSETU_THEME, type PlatformNotification } from '@diagnostic/shared';
 import { type FormatLabelFn, type SidebarNavItem } from '../../dashboards/types';
 import { markNotificationRead } from '../../services/firestoreService';
@@ -56,6 +56,13 @@ export function DashboardShell<TTab extends string>({
 }: DashboardShellProps<TTab>) {
   const [notifOpen, setNotifOpen] = useState(false);
   const unreadCount = notifications.filter((n) => !n.read).length;
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    document.querySelectorAll('.dashboard-content, .main-wrapper, .admin-layout, main, #root').forEach((el) => {
+      el.scrollTop = 0;
+    });
+  }, [activeTab]);
 
   function renderBadgeClass(variant?: 'teal' | 'green' | 'red') {
     if (variant === 'green') return 'nav-badge-green';

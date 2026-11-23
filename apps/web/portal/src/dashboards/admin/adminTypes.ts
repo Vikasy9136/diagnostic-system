@@ -29,6 +29,7 @@ export type AdminTab =
   | 'analytics'
   | 'zones'
   | 'master-data'
+  | 'agreements'
   | 'support-sop-faq'
   | 'settings';
 
@@ -73,4 +74,3 @@ export interface AdminPasswordTarget {
 }
 
 export type AdminCredentialSlip = CredentialSlipData;
-

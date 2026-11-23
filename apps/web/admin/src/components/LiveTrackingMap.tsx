@@ -147,8 +147,8 @@ export function LiveTrackingMap({
 
   const hasCourier = Boolean(
     phleboLocation &&
-      Number.isFinite(phleboLocation.latitude) &&
-      Number.isFinite(phleboLocation.longitude)
+    Number.isFinite(phleboLocation.latitude) &&
+    Number.isFinite(phleboLocation.longitude)
   );
   const cLat = hasCourier && phleboLocation ? phleboLocation.latitude : pLat;
   const cLng = hasCourier && phleboLocation ? phleboLocation.longitude : pLng;
@@ -292,11 +292,10 @@ export function LiveTrackingMap({
   }, [mapLayer]);
 
   const googleDirectionsUrl = hasDrop
-    ? `https://www.google.com/maps/dir/?api=1&origin=${
-        hasCourier && phleboLocation
-          ? `${phleboLocation.latitude},${phleboLocation.longitude}`
-          : `${pLat},${pLng}`
-      }&destination=${dLat},${dLng}&travelmode=driving`
+    ? `https://www.google.com/maps/dir/?api=1&origin=${hasCourier && phleboLocation
+      ? `${phleboLocation.latitude},${phleboLocation.longitude}`
+      : `${pLat},${pLng}`
+    }&destination=${dLat},${dLng}&travelmode=driving`
     : `https://www.google.com/maps/search/?api=1&query=${pLat},${pLng}`;
 
   return (
@@ -352,8 +351,8 @@ export function LiveTrackingMap({
           {courierToDropKm !== null
             ? ` • 🏍️ Courier ${courierToDropKm} km from lab destination (~${Math.max(5, Math.round(courierToDropKm * 3.5))} min ETA)`
             : hasCourier
-            ? ' • 🏍️ Courier is active on route'
-            : ' • Dispatch broadcasting to nearby riders'}
+              ? ' • 🏍️ Courier is active on route'
+              : ' • Dispatch broadcasting to nearby riders'}
         </span>
         <a
           href={googleDirectionsUrl}

@@ -1,14 +1,22 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
+  type AreaExpansionRequest,
   DEFAULT_SUPER_ADMIN_EMAIL,
   hasPermission,
   isEffectiveSuperAdmin,
+  type LabFacility,
   type LeadRecord,
   type LeadStage,
   type MarketingCampaignRecord,
+  type PhlebotomistProfile,
   type ServiceZoneRecord,
   type UserProfile,
+  UserRole,
 } from '@diagnostic/shared';
+import {
+  getAreaExpansionRequests,
+  submitAreaExpansionRequest,
+} from '../../services/firestoreService';
 import { type DynamicAlertVariant } from '../../components/DynamicAlertModal';
 import {
   createCampaignApi,
@@ -32,7 +40,13 @@ type AlertTriggerFn = (opts: {
   onConfirm?: () => void;
 }) => void;
 
-type MarketingSubTab = 'leads' | 'campaigns' | 'analytics' | 'runs';
+type MarketingSubTab =
+  | 'leads'
+  | 'campaigns'
+  | 'analytics'
+  | 'runs'
+  | 'expansion'
+  | 'executive-analytics';
 
 const LEAD_STAGES: LeadStage[] = [
   'NEW',
@@ -46,16 +60,22 @@ const LEAD_STAGES: LeadStage[] = [
 
 const EST_REVENUE_PER_SAMPLE_INR = 750;
 
-interface MarketingGrowthPanelProps {
+export interface MarketingGrowthPanelProps {
   currentUser: UserProfile;
   bearerToken?: string;
   onShowAlert: AlertTriggerFn;
+  onOpenAddUserModal?: (role: UserRole) => void;
+  labs?: LabFacility[];
+  phlebotomists?: PhlebotomistProfile[];
 }
 
 export function MarketingGrowthPanel({
   currentUser,
   bearerToken,
   onShowAlert,
+  onOpenAddUserModal,
+  labs = [],
+  phlebotomists = [],
 }: MarketingGrowthPanelProps) {
   const [subTab, setSubTab] = useState<MarketingSubTab>('leads');
   const [data, setData] = useState<MarketingOverviewData | null>(null);
@@ -68,6 +88,39 @@ export function MarketingGrowthPanel({
   const [stageFilter, setStageFilter] = useState<'ALL' | LeadStage>('ALL');
   const [cityFilter, setCityFilter] = useState('');
   const [runningFollowUps, setRunningFollowUps] = useState(false);
+
+  // Area Expansion Proposals State
+  const [expansionList, setExpansionList] = useState<AreaExpansionRequest[]>([]);
+  const [loadingExpansions, setLoadingExpansions] = useState(false);
+  const [showExpansionModal, setShowExpansionModal] = useState(false);
+  const [expZoneName, setExpZoneName] = useState('');
+  const [expCity, setExpCity] = useState('Mumbai');
+  const [expState, setExpState] = useState('Maharashtra');
+  const [expPincodes, setExpPincodes] = useState('');
+  const [expRadius, setExpRadius] = useState(6);
+  const [expTargetLabs, setExpTargetLabs] = useState(15);
+  const [expMonthlyVol, setExpMonthlyVol] = useState(400);
+  const [expLat, setExpLat] = useState(19.124);
+  const [expLng, setExpLng] = useState(72.866);
+  const [expJustification, setExpJustification] = useState('');
+  const [submittingExpansion, setSubmittingExpansion] = useState(false);
+
+  // My Onboarded facilities & couriers
+  const myOnboardedLabs = useMemo(() => {
+    return labs.filter(
+      (l) =>
+        l.onboardedByEmail?.toLowerCase() === currentUser.email.toLowerCase() ||
+        l.onboardedByName?.toLowerCase() === currentUser.displayName.toLowerCase()
+    );
+  }, [labs, currentUser]);
+
+  const myOnboardedPhlebos = useMemo(() => {
+    return phlebotomists.filter(
+      (p) =>
+        p.onboardedByEmail?.toLowerCase() === currentUser.email.toLowerCase() ||
+        p.onboardedByName?.toLowerCase() === currentUser.displayName.toLowerCase()
+    );
+  }, [phlebotomists, currentUser]);
 
   // Add Lead Modal
   const [showLeadModal, setShowLeadModal] = useState(false);
@@ -203,6 +256,65 @@ export function MarketingGrowthPanel({
   useEffect(() => {
     void loadOverview();
   }, [loadOverview]);
+
+  const loadExpansions = useCallback(async () => {
+    setLoadingExpansions(true);
+    try {
+      const list = await getAreaExpansionRequests();
+      setExpansionList(list);
+    } catch {
+      setExpansionList([]);
+    } finally {
+      setLoadingExpansions(false);
+    }
+  }, []);
+
+  async function handleSubmitExpansionRequest(e: FormEvent) {
+    e.preventDefault();
+    if (!expZoneName.trim() || !expCity.trim()) return;
+    setSubmittingExpansion(true);
+    try {
+      const pins = expPincodes
+        .split(',')
+        .map((p) => p.trim())
+        .filter((p) => p.length === 6);
+
+      await submitAreaExpansionRequest({
+        proposedZoneName: expZoneName.trim(),
+        city: expCity.trim(),
+        state: expState.trim() || 'Maharashtra',
+        pincodes: pins,
+        radiusKm: Number(expRadius) || 6,
+        centerLatitude: Number(expLat) || 19.124,
+        centerLongitude: Number(expLng) || 72.866,
+        targetLabsCount: Number(expTargetLabs) || 10,
+        potentialMonthlyVolume: Number(expMonthlyVol) || 300,
+        justification:
+          expJustification.trim() || 'Field expansion proposal submitted by Marketing BD Executive.',
+        submittedByEmail: currentUser.email,
+        submittedByName: currentUser.displayName,
+      });
+
+      setShowExpansionModal(false);
+      setExpZoneName('');
+      setExpPincodes('');
+      setExpJustification('');
+      onShowAlert({
+        variant: 'success',
+        title: 'Area Expansion Proposal Submitted',
+        message: `Proposal for "${expZoneName}" has been submitted to Admin for approval. Once approved, the zone will become live instantly.`,
+      });
+      void loadExpansions();
+    } catch (err) {
+      onShowAlert({
+        variant: 'error',
+        title: 'Submission Error',
+        message: err instanceof Error ? err.message : 'Could not submit proposal.',
+      });
+    } finally {
+      setSubmittingExpansion(false);
+    }
+  }
 
   const activeZoneCities = useMemo(() => {
     const set = new Set<string>();
@@ -584,6 +696,23 @@ export function MarketingGrowthPanel({
         >
           Follow-Up Automation Runs ({data?.automationRuns.length || 0})
         </button>
+        <button
+          type="button"
+          className={`sub-tab-pill ${subTab === 'executive-analytics' ? 'active' : ''}`}
+          onClick={() => setSubTab('executive-analytics')}
+        >
+          👤 Executive Profile &amp; Onboardings ({myOnboardedLabs.length + myOnboardedPhlebos.length})
+        </button>
+        <button
+          type="button"
+          className={`sub-tab-pill ${subTab === 'expansion' ? 'active' : ''}`}
+          onClick={() => {
+            setSubTab('expansion');
+            void loadExpansions();
+          }}
+        >
+          🗺️ Area Expansion Proposals ({expansionList.length})
+        </button>
       </div>
 
       {/* SUB-TAB: LEADS CRM */}
@@ -862,6 +991,471 @@ export function MarketingGrowthPanel({
                 </div>
               ))
             )}
+          </div>
+        </div>
+      )}
+
+      {/* SUB-TAB: EXECUTIVE PROFILE & ONBOARDINGS */}
+      {subTab === 'executive-analytics' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {/* Executive Overview Profile Card */}
+          <div className="chart-card-modern" style={{ margin: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                <div
+                  style={{
+                    width: '48px',
+                    height: '48px',
+                    borderRadius: '50%',
+                    backgroundColor: '#0D9488',
+                    color: '#FFFFFF',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '1.2rem',
+                    fontWeight: 800,
+                  }}
+                >
+                  {(currentUser.displayName || 'ME')[0].toUpperCase()}
+                </div>
+                <div>
+                  <h2 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>
+                    {currentUser.displayName}
+                  </h2>
+                  <div style={{ fontSize: '0.78rem', color: '#64748B' }}>
+                    {currentUser.email} • Marketing &amp; Field BD Executive
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons to Onboard New Partners */}
+              {onOpenAddUserModal && (
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    style={{ fontSize: '0.76rem', padding: '7px 12px' }}
+                    onClick={() => onOpenAddUserModal(UserRole.SMALL_LAB)}
+                  >
+                    + Onboard Collection Lab
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    style={{ fontSize: '0.76rem', padding: '7px 12px' }}
+                    onClick={() => onOpenAddUserModal(UserRole.LARGE_LAB)}
+                  >
+                    + Onboard Reference Lab
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    style={{ fontSize: '0.76rem', padding: '7px 12px' }}
+                    onClick={() => onOpenAddUserModal(UserRole.PHLEBOTOMIST)}
+                  >
+                    + Onboard Phlebotomist
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Performance KPI Cards */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                gap: '12px',
+                marginTop: '16px',
+                paddingTop: '16px',
+                borderTop: '1px solid #E2E8F0',
+              }}
+            >
+              <div style={{ backgroundColor: '#F0FDFA', border: '1px solid #99F6E4', borderRadius: '10px', padding: '12px' }}>
+                <div style={{ fontSize: '0.74rem', color: '#0F766E', fontWeight: 600 }}>Total Labs Onboarded</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#0D9488' }}>
+                  {myOnboardedLabs.length}
+                </div>
+                <div style={{ fontSize: '0.7rem', color: '#0F766E' }}>
+                  {myOnboardedLabs.filter((l) => l.verified).length} verified • {myOnboardedLabs.filter((l) => !l.verified).length} pending
+                </div>
+              </div>
+
+              <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '10px', padding: '12px' }}>
+                <div style={{ fontSize: '0.74rem', color: '#1E40AF', fontWeight: 600 }}>Phlebotomists Onboarded</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#2563EB' }}>
+                  {myOnboardedPhlebos.length}
+                </div>
+                <div style={{ fontSize: '0.7rem', color: '#1E40AF' }}>
+                  {myOnboardedPhlebos.filter((p) => p.verified).length} verified • {myOnboardedPhlebos.filter((p) => !p.verified).length} pending
+                </div>
+              </div>
+
+              <div style={{ backgroundColor: '#FDF4FF', border: '1px solid #F0ABFC', borderRadius: '10px', padding: '12px' }}>
+                <div style={{ fontSize: '0.74rem', color: '#86198F', fontWeight: 600 }}>Signed Agreements Collected</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#A21CAF' }}>
+                  {myOnboardedLabs.filter((l) => Boolean(l.signedAgreementUrl)).length +
+                    myOnboardedPhlebos.filter((p) => Boolean(p.signedAgreementUrl)).length}
+                </div>
+                <div style={{ fontSize: '0.7rem', color: '#86198F' }}>Master agreements archived</div>
+              </div>
+
+              <div style={{ backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '10px', padding: '12px' }}>
+                <div style={{ fontSize: '0.74rem', color: '#92400E', fontWeight: 600 }}>Pending Compliance Review</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#B45309' }}>
+                  {myOnboardedLabs.filter((l) => !l.verified).length +
+                    myOnboardedPhlebos.filter((p) => !p.verified).length}
+                </div>
+                <div style={{ fontSize: '0.7rem', color: '#92400E' }}>Awaiting Admin approval</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Table of Onboarded Users & Facilities */}
+          <div className="chart-card-modern" style={{ margin: 0 }}>
+            <h3 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#0F172A', margin: '0 0 12px 0' }}>
+              My Field Onboardings Directory ({myOnboardedLabs.length + myOnboardedPhlebos.length})
+            </h3>
+
+            {myOnboardedLabs.length + myOnboardedPhlebos.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '24px', backgroundColor: '#F8FAFC', borderRadius: '8px', color: '#64748B' }}>
+                No partners or phlebotomists onboarded by your account yet. Use the buttons above to onboard new labs and couriers.
+              </div>
+            ) : (
+              <div className="data-table-container">
+                <table className="modern-data-table">
+                  <thead>
+                    <tr>
+                      <th>Entity Name</th>
+                      <th>Role</th>
+                      <th>Email / Contact</th>
+                      <th>Location</th>
+                      <th>KYC Verification</th>
+                      <th>Signed Agreement</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {myOnboardedLabs.map((lab) => (
+                      <tr key={lab.id}>
+                        <td>
+                          <strong style={{ color: '#0F172A' }}>{lab.name}</strong>
+                          <div style={{ fontSize: '0.72rem', color: '#64748B' }}>{lab.userCode || lab.id}</div>
+                        </td>
+                        <td>
+                          <span className="status-pill-blue">
+                            {lab.type === 'LARGE_LAB' ? 'Reference Lab' : 'Collection Center'}
+                          </span>
+                        </td>
+                        <td>
+                          <div>{lab.email}</div>
+                          <div style={{ fontSize: '0.72rem', color: '#64748B' }}>{lab.phone || '—'}</div>
+                        </td>
+                        <td>
+                          <div>{lab.city}</div>
+                          <div style={{ fontSize: '0.72rem', color: '#64748B' }}>{lab.pincode || '—'}</div>
+                        </td>
+                        <td>
+                          <span className={lab.verified ? 'status-pill-green' : 'status-pill-amber'}>
+                            {lab.verified ? '✓ Verified' : 'Pending Review'}
+                          </span>
+                        </td>
+                        <td>
+                          {lab.signedAgreementUrl ? (
+                            <a
+                              href={lab.signedAgreementUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="btn-secondary"
+                              style={{ fontSize: '0.72rem', padding: '3px 8px' }}
+                            >
+                              View Signed ↗
+                            </a>
+                          ) : (
+                            <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>Pending</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+
+                    {myOnboardedPhlebos.map((p) => (
+                      <tr key={p.id}>
+                        <td>
+                          <strong style={{ color: '#0F172A' }}>{p.name}</strong>
+                          <div style={{ fontSize: '0.72rem', color: '#64748B' }}>{p.userCode || p.id}</div>
+                        </td>
+                        <td>
+                          <span className="status-pill-blue">Phlebotomist</span>
+                        </td>
+                        <td>
+                          <div>{p.email}</div>
+                          <div style={{ fontSize: '0.72rem', color: '#64748B' }}>{p.phone || '—'}</div>
+                        </td>
+                        <td>
+                          <div>{p.assignedCity || p.currentLocation || 'Zone Pending'}</div>
+                        </td>
+                        <td>
+                          <span className={p.verified ? 'status-pill-green' : 'status-pill-amber'}>
+                            {p.verified ? '✓ Verified' : 'Pending Review'}
+                          </span>
+                        </td>
+                        <td>
+                          {p.signedAgreementUrl ? (
+                            <a
+                              href={p.signedAgreementUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="btn-secondary"
+                              style={{ fontSize: '0.72rem', padding: '3px 8px' }}
+                            >
+                              View Signed ↗
+                            </a>
+                          ) : (
+                            <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>Pending</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* SUB-TAB: AREA EXPANSION PROPOSALS */}
+      {subTab === 'expansion' && (
+        <div className="chart-card-modern" style={{ margin: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
+            <div>
+              <h2 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>
+                Field Area Expansion Proposals ({expansionList.length})
+              </h2>
+              <div style={{ fontSize: '0.78rem', color: '#64748B' }}>
+                Submit proposed geographic clusters for diagnostic network expansion. Admin reviews and approves to activate the service zone.
+              </div>
+            </div>
+
+            <button
+              type="button"
+              className="btn-primary"
+              style={{ fontSize: '0.8rem', padding: '8px 14px' }}
+              onClick={() => setShowExpansionModal(true)}
+            >
+              + Propose New Service Area
+            </button>
+          </div>
+
+          {loadingExpansions ? (
+            <div style={{ textAlign: 'center', padding: '24px', color: '#64748B' }}>Loading expansion proposals...</div>
+          ) : expansionList.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '24px', backgroundColor: '#F8FAFC', borderRadius: '8px', color: '#64748B' }}>
+              No area expansion requests submitted yet. Click &ldquo;+ Propose New Service Area&rdquo; to suggest a new service zone.
+            </div>
+          ) : (
+            <div className="data-table-container">
+              <table className="modern-data-table">
+                <thead>
+                  <tr>
+                    <th>Proposed Zone</th>
+                    <th>City / State</th>
+                    <th>Target Pincodes</th>
+                    <th>Potential Volume</th>
+                    <th>Status</th>
+                    <th>Submitted</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {expansionList.map((req) => (
+                    <tr key={req.id}>
+                      <td>
+                        <strong style={{ color: '#0F172A' }}>{req.proposedZoneName}</strong>
+                        <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
+                          Radius: {req.radiusKm} km • {req.justification}
+                        </div>
+                      </td>
+                      <td>
+                        <div>{req.city}</div>
+                        <div style={{ fontSize: '0.72rem', color: '#64748B' }}>{req.state}</div>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                          {(req.pincodes || []).map((p) => (
+                            <span key={p} style={{ fontSize: '0.7rem', backgroundColor: '#F1F5F9', padding: '2px 6px', borderRadius: '4px' }}>
+                              {p}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td>
+                        <div style={{ fontWeight: 700, color: '#0F172A' }}>{req.targetLabsCount || 10} Labs</div>
+                        <div style={{ fontSize: '0.72rem', color: '#64748B' }}>~{req.potentialMonthlyVolume || 300} samples/mo</div>
+                      </td>
+                      <td>
+                        <span
+                          style={{
+                            fontSize: '0.72rem',
+                            fontWeight: 700,
+                            padding: '3px 8px',
+                            borderRadius: '12px',
+                            backgroundColor:
+                              req.status === 'APPROVED' ? '#ECFDF5' : req.status === 'REJECTED' ? '#FEF2F2' : '#FEF3C7',
+                            color:
+                              req.status === 'APPROVED' ? '#047857' : req.status === 'REJECTED' ? '#DC2626' : '#B45309',
+                          }}
+                        >
+                          {req.status}
+                        </span>
+                        {req.reviewRemarks && (
+                          <div style={{ fontSize: '0.68rem', color: '#64748B', marginTop: '2px' }}>
+                            {req.reviewRemarks}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ fontSize: '0.74rem', color: '#64748B' }}>
+                        {req.createdAt ? new Date(req.createdAt).toLocaleDateString('en-IN') : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* MODAL: PROPOSE AREA EXPANSION */}
+      {showExpansionModal && (
+        <div className="modal-overlay" onClick={() => !submittingExpansion && setShowExpansionModal(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '580px' }}>
+            <div className="modal-header">
+              <h3>Propose Geographic Area Expansion</h3>
+              <button type="button" className="btn-secondary" onClick={() => setShowExpansionModal(false)}>✕</button>
+            </div>
+            <form onSubmit={handleSubmitExpansionRequest}>
+              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Proposed Zone Name *</label>
+                  <input
+                    className="form-input"
+                    required
+                    placeholder="e.g. Nashik City Diagnostic Corridor"
+                    value={expZoneName}
+                    onChange={(e) => setExpZoneName(e.target.value)}
+                  />
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">City *</label>
+                    <input
+                      className="form-input"
+                      required
+                      placeholder="e.g. Nashik"
+                      value={expCity}
+                      onChange={(e) => setExpCity(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">State *</label>
+                    <input
+                      className="form-input"
+                      required
+                      placeholder="e.g. Maharashtra"
+                      value={expState}
+                      onChange={(e) => setExpState(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Target Pincodes (Comma-separated 6-digit codes) *</label>
+                  <input
+                    className="form-input"
+                    required
+                    placeholder="e.g. 422001, 422002, 422005"
+                    value={expPincodes}
+                    onChange={(e) => setExpPincodes(e.target.value)}
+                  />
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">Radius (km)</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      min={1}
+                      max={30}
+                      value={expRadius}
+                      onChange={(e) => setExpRadius(Number(e.target.value))}
+                    />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">Target Labs</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      min={1}
+                      value={expTargetLabs}
+                      onChange={(e) => setExpTargetLabs(Number(e.target.value))}
+                    />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">Monthly Vol</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      min={10}
+                      value={expMonthlyVol}
+                      onChange={(e) => setExpMonthlyVol(Number(e.target.value))}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">Center Latitude</label>
+                    <input
+                      type="number"
+                      step="0.0001"
+                      className="form-input"
+                      value={expLat}
+                      onChange={(e) => setExpLat(Number(e.target.value))}
+                    />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">Center Longitude</label>
+                    <input
+                      type="number"
+                      step="0.0001"
+                      className="form-input"
+                      value={expLng}
+                      onChange={(e) => setExpLng(Number(e.target.value))}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Field Justification &amp; Ground Survey Notes</label>
+                  <textarea
+                    className="form-textarea"
+                    rows={3}
+                    placeholder="Describe competitive presence, doctor density, lab interest, and courier viability..."
+                    value={expJustification}
+                    onChange={(e) => setExpJustification(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', padding: '12px 16px' }}>
+                <button type="button" className="btn-secondary" onClick={() => setShowExpansionModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary" disabled={submittingExpansion}>
+                  {submittingExpansion ? 'Submitting Proposal...' : 'Submit to Admin for Approval'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

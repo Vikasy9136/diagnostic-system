@@ -29,6 +29,7 @@ export type AdminTab =
   | 'analytics'
   | 'zones'
   | 'master-data'
+  | 'agreements'
   | 'support-sop-faq'
   | 'settings';
 

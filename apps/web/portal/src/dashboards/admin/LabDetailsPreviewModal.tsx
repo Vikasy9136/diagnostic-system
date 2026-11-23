@@ -29,8 +29,8 @@ export function LabDetailsPreviewModal({
     lab.type === 'SMALL_LAB'
       ? 'Small Collection Center'
       : lab.centerType === 'COLLECTION_CENTER'
-        ? `Large Lab Branch (${lab.parentLabName || lab.parentLabId || 'HQ'})`
-        : 'Large Reference Lab HQ';
+      ? `Large Lab Branch (${lab.parentLabName || lab.parentLabId || 'HQ'})`
+      : 'Large Reference Lab HQ';
 
   const hasPhotos = Boolean(lab.exteriorPhotoUrl || lab.livePhotoUrl || lab.interiorPhotoUrl || (lab.photos && lab.photos.length > 0));
   const docs: LabDocumentRecord[] = lab.documents || [];
@@ -512,3 +512,4 @@ export function LabDetailsPreviewModal({
     </ModalFrame>
   );
 }
+

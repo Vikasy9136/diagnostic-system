@@ -4304,6 +4304,7 @@ function PhleboAppContent() {
                 order={selectedOrder}
                 riderLocation={riderLocation}
                 collectingOrderId={collectingOrderId}
+                supportContacts={supportContacts}
                 onBack={() => setCurrentScreen(detailsReturnScreen)}
                 onShowAlert={showDynamicAlert}
                 onOpenDirectionsMap={openDirectionsMap}

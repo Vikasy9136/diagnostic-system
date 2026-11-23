@@ -32,6 +32,7 @@ export type AdminTab =
   | 'commission'
   | 'analytics'
   | 'zones'
+  | 'agreements'
   | 'master-data'
   | 'support-sop-faq'
   | 'settings';

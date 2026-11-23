@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Image, Linking, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { formatInr, type LiveGeoCoordinate, type PickupOrder } from '@diagnostic/shared';
+import { formatInr, type LiveGeoCoordinate, type PickupOrder, type SupportContactsConfig } from '@diagnostic/shared';
 import { BRAND_COLORS } from '../components/LabSetuBrand';
 import { OsmWebMapPreview } from '../components/OsmWebMapPreview';
 import { formatFullProperAddress } from '../utils/addressUtils';
@@ -22,6 +22,7 @@ export interface DropSampleScreenProps {
   onChangeDropTemp: (val: string) => void;
   onConfirmDropOtp: (order: PickupOrder) => void;
   onOpenOrderChat?: (order: PickupOrder) => void;
+  supportContacts?: SupportContactsConfig;
 }
 
 export function DropSampleScreen({
@@ -38,6 +39,7 @@ export function DropSampleScreen({
   onChangeDropTemp,
   onConfirmDropOtp,
   onOpenOrderChat,
+  supportContacts,
 }: DropSampleScreenProps) {
   const { width: winWidth } = useResponsive();
   const [receivedByStaff, setReceivedByStaff] = useState('');

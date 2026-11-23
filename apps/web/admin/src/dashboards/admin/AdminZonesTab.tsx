@@ -1,12 +1,16 @@
-import { type FormEvent, useMemo, useState } from 'react';
+import { useEffect, type FormEvent, useMemo, useState } from 'react';
 import {
+  type AreaExpansionRequest,
   LOCALITY_GPS_PRESETS,
   type PhlebotomistProfile,
   type ServiceZoneRecord,
 } from '@diagnostic/shared';
 import { InteractiveMapPicker } from '../../components/InteractiveMapPicker';
 import {
+  approveAreaExpansionRequest,
   deleteServiceZone,
+  getAreaExpansionRequests,
+  rejectAreaExpansionRequest,
   saveServiceZone,
   toggleServiceZoneActive,
 } from '../../services/firestoreService';
@@ -210,6 +214,64 @@ export function AdminZonesTab({
   const [zoneLaunchPhase, setZoneLaunchPhase] = useState<'PILOT' | 'EXPANSION' | 'PAUSED'>('EXPANSION');
   const [zoneNotes, setZoneNotes] = useState('');
   const [savingZone, setSavingZone] = useState(false);
+
+  // Field Expansion Requests state (submitted by Marketing Executives)
+  const [expansionRequests, setExpansionRequests] = useState<AreaExpansionRequest[]>([]);
+  const [loadingRequests, setLoadingRequests] = useState(false);
+
+  async function loadExpansionRequests() {
+    setLoadingRequests(true);
+    try {
+      const list = await getAreaExpansionRequests();
+      setExpansionRequests(list);
+    } catch {
+      setExpansionRequests([]);
+    } finally {
+      setLoadingRequests(false);
+    }
+  }
+
+  async function handleApproveRequest(req: AreaExpansionRequest) {
+    try {
+      await approveAreaExpansionRequest(req, actorEmail);
+      onShowAlert({
+        variant: 'success',
+        title: 'Expansion Request Approved',
+        message: `Zone "${req.proposedZoneName}" (${req.city}) has been approved and activated into live Service Zones.`,
+      });
+      void loadExpansionRequests();
+    } catch (err) {
+      onShowAlert({
+        variant: 'error',
+        title: 'Approval Failed',
+        message: err instanceof Error ? err.message : 'Could not approve request.',
+      });
+    }
+  }
+
+  async function handleRejectRequest(req: AreaExpansionRequest) {
+    const reason = window.prompt('Enter reason for rejecting this expansion request:');
+    if (reason === null) return;
+    try {
+      await rejectAreaExpansionRequest(req.id, actorEmail, reason || 'Rejected by Admin');
+      onShowAlert({
+        variant: 'info',
+        title: 'Expansion Request Rejected',
+        message: `Request for "${req.proposedZoneName}" marked as Rejected.`,
+      });
+      void loadExpansionRequests();
+    } catch (err) {
+      onShowAlert({
+        variant: 'error',
+        title: 'Rejection Failed',
+        message: err instanceof Error ? err.message : 'Could not reject request.',
+      });
+    }
+  }
+
+  useEffect(() => {
+    void loadExpansionRequests();
+  }, []);
 
   // Distinct cities list from current zones + presets
   const availableCities = useMemo(() => {
@@ -421,6 +483,134 @@ export function AdminZonesTab({
             Booking orders from diagnostic labs check both <strong>Pincode coverage list</strong> and <strong>GPS flight distance radius</strong>.
           </div>
         </div>
+      </div>
+
+      {/* Field Area Expansion Requests (Marketing & Field BD Submissions) */}
+      <div className="chart-card-modern" style={{ margin: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '1.2rem', color: '#0D9488' }}>📋</span>
+            <div>
+              <strong style={{ fontSize: '0.95rem', color: '#0F172A' }}>
+                Field Area Expansion Requests ({expansionRequests.filter((r) => r.status === 'PENDING').length} Pending Approval)
+              </strong>
+              <div style={{ fontSize: '0.74rem', color: '#64748B' }}>
+                Proposals submitted by Marketing Executives for new diagnostic clusters. Approving activates the zone immediately.
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{ fontSize: '0.74rem', padding: '4px 10px' }}
+            onClick={loadExpansionRequests}
+            disabled={loadingRequests}
+          >
+            {loadingRequests ? 'Refreshing...' : '🔄 Refresh Requests'}
+          </button>
+        </div>
+
+        {expansionRequests.length === 0 ? (
+          <div style={{ fontSize: '0.78rem', color: '#64748B', backgroundColor: '#F8FAFC', padding: '12px', borderRadius: '8px', textAlign: 'center' }}>
+            No area expansion requests submitted by field marketing executives yet.
+          </div>
+        ) : (
+          <div className="data-table-container">
+            <table className="modern-data-table">
+              <thead>
+                <tr>
+                  <th>Proposed Zone</th>
+                  <th>City / State</th>
+                  <th>Target Pincodes</th>
+                  <th>Target Labs</th>
+                  <th>Submitted By</th>
+                  <th>Status</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {expansionRequests.map((req) => (
+                  <tr key={req.id}>
+                    <td>
+                      <strong style={{ color: '#0F172A' }}>{req.proposedZoneName}</strong>
+                      <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
+                        Radius: {req.radiusKm} km • GPS: {req.centerLatitude.toFixed(3)}, {req.centerLongitude.toFixed(3)}
+                      </div>
+                    </td>
+                    <td>
+                      <div>{req.city}</div>
+                      <div style={{ fontSize: '0.7rem', color: '#64748B' }}>{req.state}</div>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                        {(req.pincodes || []).slice(0, 4).map((p) => (
+                          <span key={p} style={{ fontSize: '0.7rem', backgroundColor: '#F1F5F9', padding: '2px 6px', borderRadius: '4px' }}>
+                            {p}
+                          </span>
+                        ))}
+                        {(req.pincodes || []).length > 4 && (
+                          <span style={{ fontSize: '0.7rem', color: '#64748B' }}>+{req.pincodes.length - 4} more</span>
+                        )}
+                      </div>
+                    </td>
+                    <td>
+                      <span style={{ fontWeight: 700, color: '#0F172A' }}>{req.targetLabsCount || 10} Labs</span>
+                      <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
+                        ~{req.potentialMonthlyVolume || 300} samples/mo
+                      </div>
+                    </td>
+                    <td>
+                      <div style={{ fontSize: '0.78rem', color: '#0F172A' }}>{req.submittedByName}</div>
+                      <div style={{ fontSize: '0.7rem', color: '#64748B' }}>{req.submittedByEmail}</div>
+                    </td>
+                    <td>
+                      <span
+                        style={{
+                          fontSize: '0.7rem',
+                          fontWeight: 700,
+                          padding: '3px 8px',
+                          borderRadius: '12px',
+                          backgroundColor:
+                            req.status === 'APPROVED' ? '#ECFDF5' : req.status === 'REJECTED' ? '#FEF2F2' : '#FEF3C7',
+                          color:
+                            req.status === 'APPROVED' ? '#047857' : req.status === 'REJECTED' ? '#DC2626' : '#B45309',
+                        }}
+                      >
+                        {req.status}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      {req.status === 'PENDING' ? (
+                        <div style={{ display: 'inline-flex', gap: '6px' }}>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            style={{ fontSize: '0.72rem', padding: '4px 10px', backgroundColor: '#0D9488' }}
+                            onClick={() => void handleApproveRequest(req)}
+                          >
+                            ✓ Approve Area
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ fontSize: '0.72rem', padding: '4px 8px', color: '#DC2626' }}
+                            onClick={() => void handleRejectRequest(req)}
+                          >
+                            ✕ Reject
+                          </button>
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
+                          {req.reviewedByEmail ? `Reviewed by ${req.reviewedByEmail.split('@')[0]}` : 'Completed'}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* KPI Row */}

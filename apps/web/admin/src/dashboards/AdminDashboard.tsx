@@ -139,6 +139,7 @@ import {
   AdminSupportManagementTab,
   AdminUsersTab,
   AdminZonesTab,
+  AdminAgreementsTab,
   AuditLogsPanel,
   EmployeeManagementPanel,
   FinanceAutomationPanel,
@@ -324,6 +325,8 @@ export function AdminDashboard({
             );
           case 'master-data':
             return hasAnyPerm('MANAGE_TEST_CATALOG', 'VIEW_OPERATIONS_DASHBOARD');
+          case 'agreements':
+            return true;
           case 'support-sop-faq':
             return true;
           case 'settings':
@@ -1061,6 +1064,12 @@ export function AdminDashboard({
           badgeVariant: 'green' as const,
           path: getPathForTab('zones'),
         },
+        canViewTab('agreements') && {
+          id: 'agreements',
+          icon: '🤝',
+          label: 'Master Agreements',
+          path: getPathForTab('agreements'),
+        },
         canViewTab('master-data') && { id: 'master-data', icon: '📁', label: 'Master Test Data', path: getPathForTab('master-data') },
         canViewTab('support-sop-faq') && {
           id: 'support-sop-faq',
@@ -1443,6 +1452,9 @@ export function AdminDashboard({
             currentUser={session.profile}
             bearerToken={session.bearerToken}
             onShowAlert={onShowAlert}
+            onOpenAddUserModal={(r) => openAddUserModal(r)}
+            labs={labs}
+            phlebotomists={phlebotomists}
           />
         )}
 
@@ -1654,6 +1666,15 @@ export function AdminDashboard({
           />
         )}
 
+        {activeTab === 'agreements' && canViewTab('agreements') && (
+          <AdminAgreementsTab
+            actorEmail={session.profile.email}
+            labs={labs}
+            phlebotomists={phlebotomists}
+            onShowAlert={onShowAlert}
+          />
+        )}
+
         {activeTab === 'master-data' && (
           <AdminMasterCatalogTab
             testCatalog={testCatalog}
@@ -1674,6 +1695,7 @@ export function AdminDashboard({
           <AdminSupportManagementTab
             adminEmail={session.profile.email}
             supportContacts={supportContacts}
+            onSupportContactsChange={setSupportContacts}
             platformSops={platformSops}
             platformFaqs={platformFaqs}
             onShowAlert={onShowAlert}
@@ -1726,6 +1748,8 @@ export function AdminDashboard({
         onClose={() => setOnboardingModal((prev) => ({ ...prev, open: false }))}
         isSuperAdmin={isSuperAdmin}
         rootAdminEmail={rootAdminEmail}
+        currentUserEmail={session.profile.email}
+        currentUserName={session.profile.displayName}
         bearerToken={session.bearerToken}
         largeLabOrgs={largeLabOrgs}
         serviceZones={serviceZones}

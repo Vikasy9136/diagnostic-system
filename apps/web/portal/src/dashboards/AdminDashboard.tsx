@@ -44,6 +44,8 @@ import {
   type VendorPurchaseRecord,
   DEFAULT_SUPPORT_CONTACTS,
   type SupportContactsConfig,
+  DEFAULT_PLATFORM_FEATURES,
+  type PlatformFeaturesConfig,
   type PlatformSopDocument,
   type PlatformFaqDocument,
 } from '@diagnostic/shared';
@@ -81,6 +83,7 @@ import {
   saveAdminSettings,
   saveCommissionSettings,
   saveDiagnosticTest,
+  savePlatformFeatures,
   saveSupportContacts,
   subscribeCustodyEvents,
   subscribeInventoryKits,
@@ -92,6 +95,7 @@ import {
   subscribePayouts,
   subscribePhlebotomists,
   subscribePlatformFaqs,
+  subscribePlatformFeatures,
   subscribePlatformSops,
   subscribeReports,
   subscribeServiceZones,
@@ -135,6 +139,7 @@ import {
   AdminSupportManagementTab,
   AdminUsersTab,
   AdminZonesTab,
+  AdminAgreementsTab,
   AuditLogsPanel,
   EmployeeManagementPanel,
   FinanceAutomationPanel,
@@ -183,12 +188,12 @@ export function AdminDashboard({
 
   const roleTitleDisplay = useMemo(() => {
     if (session.profile.founderRoles && session.profile.founderRoles.length > 0) {
-      return session.profile.founderRoles.map((r) => FOUNDER_ROLE_LABELS[r] || r).join(' + ');
+      return session.profile.founderRoles.map((r: string) => (FOUNDER_ROLE_LABELS as Record<string, string>)[r] || r).join(' + ');
     }
     if (isSuperAdmin) return 'Super Admin + Product & Tech Head';
     if (session.profile.designationTitle) return session.profile.designationTitle;
     if (session.profile.adminSubRole) {
-      return ADMIN_SUB_ROLE_LABELS[session.profile.adminSubRole] || session.profile.adminSubRole;
+      return (ADMIN_SUB_ROLE_LABELS as Record<string, string>)[session.profile.adminSubRole] || session.profile.adminSubRole;
     }
     return 'Platform Admin';
   }, [session.profile, isSuperAdmin]);
@@ -320,6 +325,8 @@ export function AdminDashboard({
             );
           case 'master-data':
             return hasAnyPerm('MANAGE_TEST_CATALOG', 'VIEW_OPERATIONS_DASHBOARD');
+          case 'agreements':
+            return true;
           case 'support-sop-faq':
             return true;
           case 'settings':
@@ -372,6 +379,7 @@ export function AdminDashboard({
   const [commConfig, setCommConfig] = useState<CommissionConfig>(DEFAULT_COMMISSION_CONFIG);
   const [emailSettings, setEmailSettings] = useState<EmailDeliverySettings>(DEFAULT_EMAIL_SETTINGS);
   const [supportContacts, setSupportContacts] = useState<SupportContactsConfig>(DEFAULT_SUPPORT_CONTACTS);
+  const [featuresConfig, setFeaturesConfig] = useState<PlatformFeaturesConfig>(DEFAULT_PLATFORM_FEATURES);
   const [platformSops, setPlatformSops] = useState<PlatformSopDocument[]>([]);
   const [platformFaqs, setPlatformFaqs] = useState<PlatformFaqDocument[]>([]);
 
@@ -453,6 +461,7 @@ export function AdminDashboard({
       subscribeNotifications(session.profile, setNotifications, noop),
       subscribeSettings(setSlaConfig, setCommConfig, setEmailSettings),
       subscribeSupportContacts(setSupportContacts, noop),
+      subscribePlatformFeatures(setFeaturesConfig, noop),
       subscribePlatformSops(setPlatformSops, noop),
       subscribePlatformFaqs(setPlatformFaqs, noop),
       subscribeServiceZones(setServiceZones, noop),
@@ -957,7 +966,7 @@ export function AdminDashboard({
 
   const initials = (session.profile.displayName || 'AD')
     .split(' ')
-    .map((p) => p[0])
+    .map((p: string) => p[0])
     .join('')
     .toUpperCase()
     .slice(0, 2);
@@ -1054,6 +1063,12 @@ export function AdminDashboard({
           badgeCount: activeZonesCount,
           badgeVariant: 'green' as const,
           path: getPathForTab('zones'),
+        },
+        canViewTab('agreements') && {
+          id: 'agreements',
+          icon: '🤝',
+          label: 'Master Agreements',
+          path: getPathForTab('agreements'),
         },
         canViewTab('master-data') && { id: 'master-data', icon: '📁', label: 'Master Test Data', path: getPathForTab('master-data') },
         canViewTab('support-sop-faq') && {
@@ -1437,6 +1452,9 @@ export function AdminDashboard({
             currentUser={session.profile}
             bearerToken={session.bearerToken}
             onShowAlert={onShowAlert}
+            onOpenAddUserModal={(r) => openAddUserModal(r)}
+            labs={labs}
+            phlebotomists={phlebotomists}
           />
         )}
 
@@ -1648,6 +1666,15 @@ export function AdminDashboard({
           />
         )}
 
+        {activeTab === 'agreements' && canViewTab('agreements') && (
+          <AdminAgreementsTab
+            actorEmail={session.profile.email}
+            labs={labs}
+            phlebotomists={phlebotomists}
+            onShowAlert={onShowAlert}
+          />
+        )}
+
         {activeTab === 'master-data' && (
           <AdminMasterCatalogTab
             testCatalog={testCatalog}
@@ -1668,6 +1695,7 @@ export function AdminDashboard({
           <AdminSupportManagementTab
             adminEmail={session.profile.email}
             supportContacts={supportContacts}
+            onSupportContactsChange={setSupportContacts}
             platformSops={platformSops}
             platformFaqs={platformFaqs}
             onShowAlert={onShowAlert}
@@ -1683,6 +1711,8 @@ export function AdminDashboard({
             onEmailSettingsChange={setEmailSettings}
             supportContacts={supportContacts}
             onSupportContactsChange={setSupportContacts}
+            featuresConfig={featuresConfig}
+            onFeaturesConfigChange={setFeaturesConfig}
             onSaveSettings={async () => {
               await saveAdminSettings({
                 sla: slaConfig,
@@ -1690,10 +1720,11 @@ export function AdminDashboard({
                 adminEmail: session.profile.email,
               });
               await saveSupportContacts(supportContacts, session.profile.email);
+              await savePlatformFeatures(featuresConfig, session.profile.email);
               onShowAlert({
                 variant: 'success',
                 title: 'Settings Saved',
-                message: 'Pickup targets, alert preferences, and live Support Desk contacts saved successfully.',
+                message: 'Pickup targets, alert preferences, feature controls, and live Support Desk contacts saved successfully.',
               });
             }}
             newAccountPassword={newAccountPassword}
@@ -1717,6 +1748,8 @@ export function AdminDashboard({
         onClose={() => setOnboardingModal((prev) => ({ ...prev, open: false }))}
         isSuperAdmin={isSuperAdmin}
         rootAdminEmail={rootAdminEmail}
+        currentUserEmail={session.profile.email}
+        currentUserName={session.profile.displayName}
         bearerToken={session.bearerToken}
         largeLabOrgs={largeLabOrgs}
         serviceZones={serviceZones}

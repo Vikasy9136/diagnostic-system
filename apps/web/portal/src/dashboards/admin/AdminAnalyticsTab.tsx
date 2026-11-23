@@ -13,4 +13,3 @@ export function AdminAnalyticsTab({ weeklyBars }: AdminAnalyticsTabProps) {
     />
   );
 }
-

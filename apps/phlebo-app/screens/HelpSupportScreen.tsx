@@ -96,9 +96,9 @@ export function HelpSupportScreen({
 
   const contacts = supportContacts || DEFAULT_SUPPORT_CONTACTS;
   const emergencyPhone = contacts.emergencyPhone || '+9118008897388';
-  const displayEmergencyPhone = contacts.displayEmergencyPhone || '1800-889-SETU (1800-889-7388)';
+  const displayEmergencyPhone = contacts.displayEmergencyPhone || contacts.emergencyPhone || '1800-889-SETU (1800-889-7388)';
   const dispatchDirectMobile = contacts.dispatchMobile || '+919820012345';
-  const displayDirectMobile = contacts.displayDirectMobile || '+91 98200 12345';
+  const displayDirectMobile = contacts.displayDirectMobile || contacts.dispatchMobile || '+91 98200 12345';
   const supportEmail = contacts.supportEmail || 'support@labsetu.com';
   const operatingHours = contacts.operatingHours || '6:00 AM – 11:00 PM (All 7 Days)';
   const dispatchSla = contacts.dispatchSla || '< 5 Mins Immediate Dispatch Response';

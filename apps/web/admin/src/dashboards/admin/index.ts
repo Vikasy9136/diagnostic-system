@@ -18,6 +18,7 @@ export { AdminPaymentsTab, type AdminPaymentsTabProps } from './AdminPaymentsTab
 export { AdminCommissionTab, type AdminCommissionTabProps } from './AdminCommissionTab';
 export { AdminAnalyticsTab, type AdminAnalyticsTabProps } from './AdminAnalyticsTab';
 export { AdminZonesTab, type AdminZonesTabProps } from './AdminZonesTab';
+export { AdminAgreementsTab, type AdminAgreementsTabProps } from './AdminAgreementsTab';
 export { AdminMasterCatalogTab, type AdminMasterCatalogTabProps } from './AdminMasterCatalogTab';
 export { AdminSettingsTab, type AdminSettingsTabProps } from './AdminSettingsTab';
 export {

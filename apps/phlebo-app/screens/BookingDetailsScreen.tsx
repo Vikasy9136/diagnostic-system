@@ -7,6 +7,7 @@ import {
   type LiveGeoCoordinate,
   OrderStatus,
   type PickupOrder,
+  type SupportContactsConfig,
   TUBE_METADATA,
   TubeType,
 } from '@diagnostic/shared';
@@ -35,6 +36,7 @@ export interface BookingDetailsScreenProps {
   onProceedToCollect: () => void;
   onProceedToDrop?: () => void;
   onOpenOrderChat?: (order: PickupOrder) => void;
+  supportContacts?: SupportContactsConfig;
 }
 
 export function BookingDetailsScreen({
@@ -49,6 +51,7 @@ export function BookingDetailsScreen({
   onProceedToCollect,
   onProceedToDrop,
   onOpenOrderChat,
+  supportContacts,
 }: BookingDetailsScreenProps) {
   const specimens = order.specimens || [];
   const stUpper = String(order.status || '').toUpperCase();
@@ -75,7 +78,7 @@ export function BookingDetailsScreen({
   const isInTransit =
     stUpper === 'PICKED_UP' ||
     stUpper === 'IN_TRANSIT';
-    stUpper.includes('REJECT') ||
+  stUpper.includes('REJECT') ||
     hasDeliveryEvent ||
     isOrderCompleted(order.status);
 
@@ -152,7 +155,7 @@ export function BookingDetailsScreen({
                 style={[styles.callCircleBtn, { backgroundColor: '#16A34A', width: 34, height: 34, borderRadius: 17 }]}
                 onPress={() => {
                   const phone = order.patient?.phone || (order as any).patientPhone;
-                  Linking.openURL(`tel:${phone}`).catch(() => {});
+                  Linking.openURL(`tel:${phone}`).catch(() => { });
                 }}
               >
                 <Ionicons name="call" size={16} color="#FFFFFF" />
@@ -175,7 +178,7 @@ export function BookingDetailsScreen({
               <TouchableOpacity
                 style={[styles.callCircleBtn, { backgroundColor: '#2563EB', width: 34, height: 34, borderRadius: 17 }]}
                 onPress={() => {
-                  Linking.openURL(`tel:${order.pickupLocation.contactPhone}`).catch(() => {});
+                  Linking.openURL(`tel:${order.pickupLocation.contactPhone}`).catch(() => { });
                 }}
               >
                 <Ionicons name="call" size={16} color="#FFFFFF" />
@@ -192,8 +195,8 @@ export function BookingDetailsScreen({
                 {order.dropType === 'SELF_DROP'
                   ? 'Return to Partner Collection Centre'
                   : order.dropType === 'CUSTOM_ADDRESS'
-                  ? 'Custom Drop Address'
-                  : 'Drop Reference Hub Address'}
+                    ? 'Custom Drop Address'
+                    : 'Drop Reference Hub Address'}
               </Text>
               <Text style={styles.timelineTitle}>{order.targetLabName}</Text>
               <Text style={[styles.timelineSub, { color: '#0F172A', fontWeight: '600', marginTop: 2 }]}>
@@ -204,7 +207,7 @@ export function BookingDetailsScreen({
               <TouchableOpacity
                 style={[styles.callCircleBtn, { backgroundColor: '#0D9488', width: 34, height: 34, borderRadius: 17 }]}
                 onPress={() => {
-                  Linking.openURL(`tel:${order.deliveryLocation.contactPhone}`).catch(() => {});
+                  Linking.openURL(`tel:${order.deliveryLocation.contactPhone}`).catch(() => { });
                 }}
               >
                 <Ionicons name="call" size={16} color="#FFFFFF" />
@@ -335,8 +338,8 @@ export function BookingDetailsScreen({
         </View>
 
         {!isCancelled &&
-        order.paymentStatus !== 'PAID' &&
-        (order.totalAmountInr || order.courierFeeInr || 0) >= 1 ? (
+          order.paymentStatus !== 'PAID' &&
+          (order.totalAmountInr || order.courierFeeInr || 0) >= 1 ? (
           <View
             style={{
               backgroundColor: '#FFFFFF',

@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import {
   type AdminTeamRole,
+  type AreaExpansionRequest,
   calculateHaversineDistanceKm,
   type CommissionConfig,
   computeOrderPricingSplit,
@@ -26,9 +27,11 @@ import {
   DEFAULT_INVENTORY_KITS,
   DEFAULT_INVENTORY_MATERIALS,
   DEFAULT_PLATFORM_FAQS,
+  DEFAULT_PLATFORM_FEATURES,
   DEFAULT_PLATFORM_SOPS,
   DEFAULT_STARTER_SERVICE_ZONES,
   DEFAULT_SUPPORT_CONTACTS,
+  type PlatformFeaturesConfig,
   type PlatformFaqDocument,
   type PlatformSopDocument,
   type SupportContactsConfig,
@@ -62,6 +65,7 @@ import {
   type PickupOrder,
   type PlatformNotification,
   type PlatformSlaConfig,
+  type RoleAgreementTemplate,
   ROLE_LABELS,
   type ServiceZoneRecord,
   type SettlementRecord,
@@ -460,6 +464,173 @@ export async function deleteServiceZone(zoneId: string): Promise<void> {
   } catch (err) {
     console.warn('[firestoreService] deleteServiceZone warning:', err);
   }
+}
+
+// =========================================================================
+// Area Expansion Requests (Marketing Field Executive -> Admin Approval)
+// =========================================================================
+
+export async function submitAreaExpansionRequest(
+  request: Omit<AreaExpansionRequest, 'id' | 'status' | 'createdAt' | 'updatedAt'>
+): Promise<AreaExpansionRequest> {
+  const now = new Date().toISOString();
+  const id = `exp-req-${Date.now()}`;
+  const full: AreaExpansionRequest = {
+    ...request,
+    id,
+    status: 'PENDING',
+    createdAt: now,
+    updatedAt: now,
+  };
+  await setDoc(doc(db, 'area_expansion_requests', id), full, { merge: true });
+  return full;
+}
+
+export async function getAreaExpansionRequests(): Promise<AreaExpansionRequest[]> {
+  try {
+    const snap = await getDocs(collection(db, 'area_expansion_requests'));
+    return snap.docs
+      .map((d) => d.data() as AreaExpansionRequest)
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  } catch (err) {
+    console.warn('[firestoreService] getAreaExpansionRequests error:', err);
+    return [];
+  }
+}
+
+export async function approveAreaExpansionRequest(
+  request: AreaExpansionRequest,
+  reviewerEmail: string
+): Promise<ServiceZoneRecord> {
+  const now = new Date().toISOString();
+  const zoneId = `ZONE-${String(request.city || 'EXP').slice(0, 3).toUpperCase()}-${Date.now().toString().slice(-6)}`;
+  const zone = await saveServiceZone(
+    {
+      id: zoneId,
+      zoneCode: zoneId,
+      name: request.proposedZoneName,
+      city: request.city,
+      state: request.state,
+      pincodes: request.pincodes,
+      centerLatitude: request.centerLatitude,
+      centerLongitude: request.centerLongitude,
+      radiusKm: request.radiusKm,
+      isActive: true,
+      launchPhase: 'PILOT',
+      notes: `Approved expansion requested by ${request.submittedByName} (${request.submittedByEmail}). Justification: ${request.justification}`,
+    },
+    reviewerEmail
+  );
+
+  await updateDoc(doc(db, 'area_expansion_requests', request.id), {
+    status: 'APPROVED',
+    approvedZoneId: zone.id,
+    reviewedByEmail: reviewerEmail,
+    reviewedAt: now,
+    updatedAt: now,
+  });
+
+  return zone;
+}
+
+export async function rejectAreaExpansionRequest(
+  requestId: string,
+  reviewerEmail: string,
+  remarks: string
+): Promise<void> {
+  const now = new Date().toISOString();
+  await updateDoc(doc(db, 'area_expansion_requests', requestId), {
+    status: 'REJECTED',
+    reviewedByEmail: reviewerEmail,
+    reviewedAt: now,
+    reviewRemarks: remarks,
+    updatedAt: now,
+  });
+}
+
+// =========================================================================
+// Role Master Agreements (Admin Management: Phlebo, Small Lab, Large Lab)
+// =========================================================================
+
+export const DEFAULT_ROLE_AGREEMENTS: RoleAgreementTemplate[] = [
+  {
+    id: 'ag-template-phlebo',
+    roleTarget: 'PHLEBOTOMIST',
+    title: 'Field Phlebotomist & Cold-Chain Transit Agreement',
+    version: 'v2.1',
+    description: 'Mandatory agreement covering specimen temperature integrity (2–8°C), QR scan custody handshakes, instant 30-min payouts & transport safety.',
+    templateFileUrl: '',
+    fileName: 'LabSetu_PHLEBOTOMIST_Master_Agreement_v2.1.txt',
+    isActive: true,
+    updatedBy: ADMIN_LOGIN_EMAIL,
+    updatedAt: '2026-11-23T00:00:00.000Z',
+    createdAt: '2026-11-23T00:00:00.000Z',
+  },
+  {
+    id: 'ag-template-small-lab',
+    roleTarget: 'SMALL_LAB',
+    title: 'Collection Centre B2B Dispatch & Billing Agreement',
+    version: 'v2.1',
+    description: 'Agreement for partner collection centres covering sample dispatch SLAs, tariff markup schedules, digital payments and daily reconciliations.',
+    templateFileUrl: '',
+    fileName: 'LabSetu_SMALL_LAB_Master_Agreement_v2.1.txt',
+    isActive: true,
+    updatedBy: ADMIN_LOGIN_EMAIL,
+    updatedAt: '2026-11-23T00:00:00.000Z',
+    createdAt: '2026-11-23T00:00:00.000Z',
+  },
+  {
+    id: 'ag-template-large-lab',
+    roleTarget: 'LARGE_LAB',
+    title: 'Reference Laboratory Testing & SLA Agreement',
+    version: 'v2.1',
+    description: 'Master contract for central reference labs governing diagnostic report turnaround times, NABL QA compliance and net B2B settlements.',
+    templateFileUrl: '',
+    fileName: 'LabSetu_LARGE_LAB_Master_Agreement_v2.1.txt',
+    isActive: true,
+    updatedBy: ADMIN_LOGIN_EMAIL,
+    updatedAt: '2026-11-23T00:00:00.000Z',
+    createdAt: '2026-11-23T00:00:00.000Z',
+  },
+];
+
+export async function getRoleAgreementTemplates(): Promise<RoleAgreementTemplate[]> {
+  try {
+    const snap = await getDocs(collection(db, 'agreements'));
+    if (snap.empty) {
+      return DEFAULT_ROLE_AGREEMENTS;
+    }
+    return snap.docs.map((d) => d.data() as RoleAgreementTemplate);
+  } catch (err) {
+    console.warn('[firestoreService] getRoleAgreementTemplates error:', err);
+    return DEFAULT_ROLE_AGREEMENTS;
+  }
+}
+
+export async function saveRoleAgreementTemplate(
+  template: RoleAgreementTemplate,
+  actorEmail: string
+): Promise<void> {
+  const now = new Date().toISOString();
+  const full = {
+    ...template,
+    updatedBy: actorEmail,
+    updatedAt: now,
+  };
+  await setDoc(doc(db, 'agreements', template.id), full, { merge: true });
+}
+
+export async function toggleRoleAgreementActive(
+  templateId: string,
+  isActive: boolean,
+  actorEmail: string
+): Promise<void> {
+  const now = new Date().toISOString();
+  await updateDoc(doc(db, 'agreements', templateId), {
+    isActive,
+    updatedBy: actorEmail,
+    updatedAt: now,
+  });
 }
 
 export function computeNextAssignedIdForRole(params: {
@@ -1068,6 +1239,20 @@ export async function provisionRoleUser(
     operatingHours?: string;
     verified?: boolean;
     verificationStatus?: LabVerificationStatus;
+    dlNumber?: string;
+    vehicleNumber?: string;
+    vehicleType?: 'BIKE' | 'SCOOTER' | 'EV_BIKE' | 'BICYCLE' | 'OTHER';
+    aadhaarNumber?: string;
+    panNumber?: string;
+    dlDocumentUrl?: string;
+    rcDocumentUrl?: string;
+    aadhaarDocumentUrl?: string;
+    panDocumentUrl?: string;
+    signedAgreementUrl?: string;
+    signerName?: string;
+    signedAt?: string;
+    onboardedByEmail?: string;
+    onboardedByName?: string;
   }
 ): Promise<{ profile: UserProfile; apiSynced: boolean }> {
   const normalized = payload.email.trim().toLowerCase();
@@ -1343,6 +1528,11 @@ export async function provisionRoleUser(
           ...(extra?.documents && extra.documents.length > 0 ? { documents: extra.documents } : {}),
           ...(extra?.contactPersonName ? { contactPersonName: extra.contactPersonName } : {}),
           ...(extra?.operatingHours ? { operatingHours: extra.operatingHours } : {}),
+          ...(extra?.signedAgreementUrl ? { signedAgreementUrl: extra.signedAgreementUrl } : {}),
+          ...(extra?.signerName ? { signerName: extra.signerName } : {}),
+          ...(extra?.signedAt ? { signedAt: extra.signedAt } : {}),
+          ...(extra?.onboardedByEmail ? { onboardedByEmail: extra.onboardedByEmail } : {}),
+          ...(extra?.onboardedByName ? { onboardedByName: extra.onboardedByName } : {}),
           createdAt: now,
           updatedAt: now,
         };
@@ -1379,6 +1569,20 @@ export async function provisionRoleUser(
           chillerTempCelsius: 4.2,
           coolerBoxId: `CB-${effectivePhleboId}`,
           vehicleInfo: extra?.vehicleInfo?.trim() || 'Cold-Chain Two-Wheeler',
+          ...(extra?.dlNumber ? { dlNumber: extra.dlNumber.trim().toUpperCase() } : {}),
+          ...(extra?.vehicleNumber ? { vehicleNumber: extra.vehicleNumber.trim().toUpperCase() } : {}),
+          ...(extra?.vehicleType ? { vehicleType: extra.vehicleType } : {}),
+          ...(extra?.aadhaarNumber ? { aadhaarNumber: extra.aadhaarNumber.trim() } : {}),
+          ...(extra?.panNumber ? { panNumber: extra.panNumber.trim().toUpperCase() } : {}),
+          ...(extra?.dlDocumentUrl ? { dlDocumentUrl: extra.dlDocumentUrl } : {}),
+          ...(extra?.rcDocumentUrl ? { rcDocumentUrl: extra.rcDocumentUrl } : {}),
+          ...(extra?.aadhaarDocumentUrl ? { aadhaarDocumentUrl: extra.aadhaarDocumentUrl } : {}),
+          ...(extra?.panDocumentUrl ? { panDocumentUrl: extra.panDocumentUrl } : {}),
+          ...(extra?.signedAgreementUrl ? { signedAgreementUrl: extra.signedAgreementUrl } : {}),
+          ...(extra?.signerName ? { signerName: extra.signerName } : {}),
+          ...(extra?.signedAt ? { signedAt: extra.signedAt } : {}),
+          ...(extra?.onboardedByEmail ? { onboardedByEmail: extra.onboardedByEmail } : {}),
+          ...(extra?.onboardedByName ? { onboardedByName: extra.onboardedByName } : {}),
           rating: 5.0,
           totalPickups: 0,
           verified: extra?.verified !== undefined ? extra.verified : false,
@@ -2196,7 +2400,7 @@ export async function retryOrderBroadcast(
   const newSurge = currentSurge + Math.max(0, hikeInr);
   const newCourierFee = baseCourier + newSurge;
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + 120 * 1000).toISOString();
+  const expiresAt = new Date(now.getTime() + 45000).toISOString();
 
   const operatorUid = auth.currentUser?.uid || existing.smallLabId;
   const retryEvent: CustodyEvent = {
@@ -2209,7 +2413,7 @@ export async function retryOrderBroadcast(
     operatorRole: UserRole.SMALL_LAB,
     notes: hikeInr > 0
       ? `Broadcast retried with +₹${hikeInr} price hike incentive (Total rider payout ₹${newCourierFee})`
-      : 'Broadcast retried searching for nearby phlebotomists (120s window)',
+      : 'Broadcast retried searching for nearby phlebotomists (45s window)',
   };
 
   const updatedFields: Partial<PickupOrder> = {
@@ -2222,7 +2426,6 @@ export async function retryOrderBroadcast(
     status: OrderStatus.READY_FOR_PICKUP,
     phlebotomistId: '',
     phlebotomistName: undefined,
-    declinedPhleboIds: [],
     updatedAt: now.toISOString(),
     custodyHistory: [...(existing.custodyHistory || []), retryEvent],
   };
@@ -2235,21 +2438,23 @@ export async function retryOrderBroadcast(
     console.warn('[retryOrderBroadcast] custody_events log caught:', err);
   }
 
-  // Always alert couriers on broadcast retry and surge incentives
-  try {
-    await dispatchPlatformAlert({
-      title: hikeInr > 0
-        ? `⚡ SURGE +₹${hikeInr}: Pickup ${existing.orderNumber}`
-        : `🔄 RETRY BROADCAST: Pickup ${existing.orderNumber}`,
-      message: `${existing.smallLabName} retried pickup search (${existing.distanceKm || 1} km route -> ${existing.targetLabName}). Rider payout ₹${newCourierFee}!`,
-      category: NotificationCategory.PICKUP_ASSIGNED,
-      priority: NotificationPriority.HIGH,
-      recipientRole: UserRole.PHLEBOTOMIST,
-      orderId: existing.id,
-      queueEmail: false,
-    });
-  } catch (err) {
-    console.warn('[retryOrderBroadcast] dispatchPlatformAlert caught:', err);
+  // If an order had an assigned phlebotomist, alert only that specific courier
+  if (existing.phlebotomistId) {
+    try {
+      await dispatchPlatformAlert({
+        title: hikeInr > 0
+          ? `⚡ SURGE +₹${hikeInr} ADD-ON: Pickup ${existing.orderNumber}`
+          : `🔄 RETRY BROADCAST: Pickup ${existing.orderNumber}`,
+        message: `${existing.smallLabName} pickup retried (${existing.distanceKm || 1} km route -> ${existing.targetLabName}). Payout boosted to ₹${newCourierFee}!`,
+        category: NotificationCategory.PICKUP_ASSIGNED,
+        priority: NotificationPriority.HIGH,
+        recipientRole: UserRole.PHLEBOTOMIST,
+        orderId: existing.id,
+        queueEmail: false,
+      });
+    } catch (err) {
+      console.warn('[retryOrderBroadcast] dispatchPlatformAlert caught:', err);
+    }
   }
 
   return {
@@ -2265,30 +2470,6 @@ export async function assignPhlebotomistToOrder(params: {
   operatorName: string;
   operatorRole: UserRole;
 }): Promise<void> {
-  // Strict single-task exclusivity: verify phlebotomist does not have an active ongoing task
-  try {
-    const busySnap = await getDocs(
-      query(
-        collection(db, 'orders'),
-        where('phlebotomistId', '==', params.phlebo.id),
-        where('status', 'in', [
-          OrderStatus.ASSIGNED_TO_PHLEBO,
-          OrderStatus.PICKED_UP,
-          OrderStatus.IN_TRANSIT,
-        ])
-      )
-    );
-    if (!busySnap.empty && busySnap.docs.some((d) => d.id !== params.order.id)) {
-      throw new Error(
-        `Phlebotomist ${params.phlebo.name} is currently in transit on another delivery. They must complete and drop their current sample before accepting a new assignment.`
-      );
-    }
-  } catch (err: any) {
-    if (err?.message?.includes('currently in transit')) {
-      throw err;
-    }
-  }
-
   const now = new Date().toISOString();
   const evt: CustodyEvent = {
     id: `EVT-${Date.now()}`,
@@ -2650,6 +2831,36 @@ export async function saveSupportContacts(
     ...(updatedBy ? { updatedBy } : {}),
   };
   await setDoc(doc(db, 'settings', 'support'), deepCleanFirestorePayload(merged), { merge: true });
+}
+
+export function subscribePlatformFeatures(
+  onData: (cfg: PlatformFeaturesConfig) => void,
+  onError?: (err: Error) => void
+): () => void {
+  return onSnapshot(
+    doc(db, 'settings', 'features'),
+    (snap) => {
+      if (snap.exists()) {
+        onData({ ...DEFAULT_PLATFORM_FEATURES, ...(snap.data() as Partial<PlatformFeaturesConfig>) });
+      } else {
+        onData(DEFAULT_PLATFORM_FEATURES);
+      }
+    },
+    (err) => onError?.(err)
+  );
+}
+
+export async function savePlatformFeatures(
+  cfg: Partial<PlatformFeaturesConfig>,
+  updatedBy?: string
+): Promise<void> {
+  const merged: PlatformFeaturesConfig = {
+    ...DEFAULT_PLATFORM_FEATURES,
+    ...cfg,
+    updatedAt: new Date().toISOString(),
+    ...(updatedBy ? { updatedBy } : {}),
+  };
+  await setDoc(doc(db, 'settings', 'features'), deepCleanFirestorePayload(merged), { merge: true });
 }
 
 export async function fetchPlatformSops(): Promise<PlatformSopDocument[]> {

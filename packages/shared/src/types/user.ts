@@ -37,7 +37,8 @@ export type AdminTeamRole =
   | 'OPERATIONS_PARTNERSHIPS_HEAD'
   | 'MARKETING_GROWTH_HEAD'
   | 'PRODUCT_TECHNOLOGY_HEAD'
-  | 'DEPARTMENT_EMPLOYEE';
+  | 'DEPARTMENT_EMPLOYEE'
+  | 'MARKETING_EXECUTIVE';
 
 export const ADMIN_SUB_ROLE_LABELS: Record<AdminTeamRole, string> = {
   SUPER_ADMIN: 'Super Admin (Full Control)',
@@ -49,6 +50,7 @@ export const ADMIN_SUB_ROLE_LABELS: Record<AdminTeamRole, string> = {
   MARKETING_GROWTH_HEAD: 'Head — Marketing & Growth',
   PRODUCT_TECHNOLOGY_HEAD: 'Head — Product & Technology',
   DEPARTMENT_EMPLOYEE: 'Department Team Member',
+  MARKETING_EXECUTIVE: 'Marketing & Field BD Executive',
 };
 
 /**

@@ -1,6 +1,7 @@
 import { type FormEvent } from 'react';
 import {
   type EmailDeliverySettings,
+  type PlatformFeaturesConfig,
   type PlatformSlaConfig,
   type SupportContactsConfig,
 } from '@diagnostic/shared';
@@ -13,6 +14,8 @@ export interface AdminSettingsTabProps {
   onEmailSettingsChange: (next: EmailDeliverySettings) => void;
   supportContacts: SupportContactsConfig;
   onSupportContactsChange: (next: SupportContactsConfig) => void;
+  featuresConfig?: PlatformFeaturesConfig;
+  onFeaturesConfigChange?: (next: PlatformFeaturesConfig) => void;
   onSaveSettings: () => Promise<void>;
   newAccountPassword: string;
   onNewAccountPasswordChange: (val: string) => void;
@@ -34,6 +37,8 @@ export function AdminSettingsTab({
   onEmailSettingsChange,
   supportContacts,
   onSupportContactsChange,
+  featuresConfig,
+  onFeaturesConfigChange,
   onSaveSettings,
   newAccountPassword,
   onNewAccountPasswordChange,
@@ -222,7 +227,190 @@ export function AdminSettingsTab({
         </div>
       </div>
 
-      {/* 4. Live Test Notification Check */}
+      {/* 4. Platform Feature & Workflow Controls */}
+      {featuresConfig && onFeaturesConfigChange && (
+        <div className="chart-card-modern" style={{ gridColumn: 'span 2' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+            <div>
+              <h2 className="card-top-title">Platform Feature &amp; Workflow Controls (Active / Hide Modules)</h2>
+              <p style={{ fontSize: '0.82rem', color: '#64748B', marginTop: '4px' }}>
+                Control live visibility and operational behavior of platform features across the Phlebotomist App and partner portals in real-time.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => void onSaveSettings()}
+            >
+              Save Feature Controls
+            </button>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '14px', marginTop: '16px' }}>
+            {/* Barcode Scanner Toggle */}
+            <div style={{
+              padding: '14px 16px',
+              borderRadius: '12px',
+              border: featuresConfig.enableBarcodeScanner ? '1.5px solid #0D9488' : '1.5px solid #CBD5E1',
+              backgroundColor: featuresConfig.enableBarcodeScanner ? '#F0FDFA' : '#F8FAFC',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+            }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: '0.92rem', color: '#0F172A' }}>
+                  📷 Phlebo Sample Barcode / QR Scanner
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '3px' }}>
+                  {featuresConfig.enableBarcodeScanner
+                    ? 'Active: Phlebotomist is required to scan tube barcodes during sample collection.'
+                    : 'Hidden (Default): Barcode scanner is hidden in app; phlebotomist collects samples without scanning tube tags.'}
+                </div>
+              </div>
+              <label className="switch" style={{ position: 'relative', display: 'inline-block', width: '48px', height: '26px', flexShrink: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={featuresConfig.enableBarcodeScanner}
+                  onChange={(e) => onFeaturesConfigChange({ ...featuresConfig, enableBarcodeScanner: e.target.checked })}
+                  style={{ opacity: 0, width: 0, height: 0 }}
+                />
+                <span style={{
+                  position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0,
+                  backgroundColor: featuresConfig.enableBarcodeScanner ? '#0D9488' : '#CBD5E1',
+                  borderRadius: '26px', transition: '0.3s',
+                }}>
+                  <span style={{
+                    position: 'absolute', height: '20px', width: '20px', left: featuresConfig.enableBarcodeScanner ? '24px' : '4px', bottom: '3px',
+                    backgroundColor: 'white', borderRadius: '50%', transition: '0.3s',
+                  }} />
+                </span>
+              </label>
+            </div>
+
+            {/* Floating Dispatch Icon Toggle */}
+            <div style={{
+              padding: '14px 16px',
+              borderRadius: '12px',
+              border: featuresConfig.enableFloatingIcon ? '1.5px solid #0D9488' : '1.5px solid #CBD5E1',
+              backgroundColor: featuresConfig.enableFloatingIcon ? '#F0FDFA' : '#F8FAFC',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+            }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: '0.92rem', color: '#0F172A' }}>
+                  🫧 Phlebotomist Floating Dispatch Icon
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '3px' }}>
+                  {featuresConfig.enableFloatingIcon
+                    ? 'Active: System-level Rapido bubble overlay visible over other apps.'
+                    : 'Disabled: Floating overlay icon is suppressed.'}
+                </div>
+              </div>
+              <label className="switch" style={{ position: 'relative', display: 'inline-block', width: '48px', height: '26px', flexShrink: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={featuresConfig.enableFloatingIcon}
+                  onChange={(e) => onFeaturesConfigChange({ ...featuresConfig, enableFloatingIcon: e.target.checked })}
+                  style={{ opacity: 0, width: 0, height: 0 }}
+                />
+                <span style={{
+                  position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0,
+                  backgroundColor: featuresConfig.enableFloatingIcon ? '#0D9488' : '#CBD5E1',
+                  borderRadius: '26px', transition: '0.3s',
+                }}>
+                  <span style={{
+                    position: 'absolute', height: '20px', width: '20px', left: featuresConfig.enableFloatingIcon ? '24px' : '4px', bottom: '3px',
+                    backgroundColor: 'white', borderRadius: '50%', transition: '0.3s',
+                  }} />
+                </span>
+              </label>
+            </div>
+
+            {/* Cash on Collection */}
+            <div style={{
+              padding: '14px 16px',
+              borderRadius: '12px',
+              border: featuresConfig.enableCashCollection ? '1.5px solid #0D9488' : '1.5px solid #CBD5E1',
+              backgroundColor: featuresConfig.enableCashCollection ? '#F0FDFA' : '#F8FAFC',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+            }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: '0.92rem', color: '#0F172A' }}>
+                  💵 Cash on Collection by Courier
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '3px' }}>
+                  Allow riders to collect physical cash at collection site with platform tracking.
+                </div>
+              </div>
+              <label className="switch" style={{ position: 'relative', display: 'inline-block', width: '48px', height: '26px', flexShrink: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={featuresConfig.enableCashCollection}
+                  onChange={(e) => onFeaturesConfigChange({ ...featuresConfig, enableCashCollection: e.target.checked })}
+                  style={{ opacity: 0, width: 0, height: 0 }}
+                />
+                <span style={{
+                  position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0,
+                  backgroundColor: featuresConfig.enableCashCollection ? '#0D9488' : '#CBD5E1',
+                  borderRadius: '26px', transition: '0.3s',
+                }}>
+                  <span style={{
+                    position: 'absolute', height: '20px', width: '20px', left: featuresConfig.enableCashCollection ? '24px' : '4px', bottom: '3px',
+                    backgroundColor: 'white', borderRadius: '50%', transition: '0.3s',
+                  }} />
+                </span>
+              </label>
+            </div>
+
+            {/* Direct to Lab Payment */}
+            <div style={{
+              padding: '14px 16px',
+              borderRadius: '12px',
+              border: featuresConfig.enableDirectLabPayment ? '1.5px solid #0D9488' : '1.5px solid #CBD5E1',
+              backgroundColor: featuresConfig.enableDirectLabPayment ? '#F0FDFA' : '#F8FAFC',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+            }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: '0.92rem', color: '#0F172A' }}>
+                  🏢 Direct Lab Payment Option
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '3px' }}>
+                  Allow phlebotomists to mark that payment was settled directly by lab desk.
+                </div>
+              </div>
+              <label className="switch" style={{ position: 'relative', display: 'inline-block', width: '48px', height: '26px', flexShrink: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={featuresConfig.enableDirectLabPayment}
+                  onChange={(e) => onFeaturesConfigChange({ ...featuresConfig, enableDirectLabPayment: e.target.checked })}
+                  style={{ opacity: 0, width: 0, height: 0 }}
+                />
+                <span style={{
+                  position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0,
+                  backgroundColor: featuresConfig.enableDirectLabPayment ? '#0D9488' : '#CBD5E1',
+                  borderRadius: '26px', transition: '0.3s',
+                }}>
+                  <span style={{
+                    position: 'absolute', height: '20px', width: '20px', left: featuresConfig.enableDirectLabPayment ? '24px' : '4px', bottom: '3px',
+                    backgroundColor: 'white', borderRadius: '50%', transition: '0.3s',
+                  }} />
+                </span>
+              </label>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. Live Test Notification Check */}
       <div className="chart-card-modern" style={{ gridColumn: 'span 2' }}>
         <h2 className="card-top-title">Document Upload &amp; Email Check</h2>
         <div style={{ marginTop: '16px' }}>

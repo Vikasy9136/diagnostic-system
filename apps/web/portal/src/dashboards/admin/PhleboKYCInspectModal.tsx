@@ -176,6 +176,76 @@ export function PhleboKYCInspectModal({
           )}
         </div>
 
+        {/* Phlebotomist Vehicle & Identity KYC Overview */}
+        <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '10px', padding: '14px' }}>
+          <strong style={{ fontSize: '0.85rem', color: '#1E293B', display: 'block', marginBottom: '10px' }}>
+            🚗 Vehicle &amp; Identity Verification Dossier
+          </strong>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px' }}>
+            <div style={{ background: '#FFFFFF', padding: '8px 10px', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
+              <div style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600 }}>DRIVING LICENSE (DL)</div>
+              <div style={{ fontSize: '0.82rem', fontWeight: 800, color: '#0F172A' }}>
+                {phlebo.dlNumber || 'Pending Submission'}
+              </div>
+              {phlebo.dlDocumentUrl && (
+                <a href={phlebo.dlDocumentUrl} target="_blank" rel="noreferrer" style={{ fontSize: '0.7rem', color: '#0D9488', fontWeight: 700, display: 'inline-block', marginTop: '2px' }}>
+                  View DL Document ↗
+                </a>
+              )}
+            </div>
+
+            <div style={{ background: '#FFFFFF', padding: '8px 10px', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
+              <div style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600 }}>VEHICLE REGISTRATION (RC)</div>
+              <div style={{ fontSize: '0.82rem', fontWeight: 800, color: '#0F172A' }}>
+                {phlebo.vehicleNumber || 'Pending'} {phlebo.vehicleType ? `(${phlebo.vehicleType})` : ''}
+              </div>
+              {phlebo.rcDocumentUrl && (
+                <a href={phlebo.rcDocumentUrl} target="_blank" rel="noreferrer" style={{ fontSize: '0.7rem', color: '#0D9488', fontWeight: 700, display: 'inline-block', marginTop: '2px' }}>
+                  View Vehicle RC ↗
+                </a>
+              )}
+            </div>
+
+            <div style={{ background: '#FFFFFF', padding: '8px 10px', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
+              <div style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600 }}>AADHAAR NUMBER</div>
+              <div style={{ fontSize: '0.82rem', fontWeight: 800, color: '#0F172A' }}>
+                {phlebo.aadhaarNumber ? `•••• •••• ${phlebo.aadhaarNumber.slice(-4)}` : 'Pending'}
+              </div>
+              {phlebo.aadhaarDocumentUrl && (
+                <a href={phlebo.aadhaarDocumentUrl} target="_blank" rel="noreferrer" style={{ fontSize: '0.7rem', color: '#0D9488', fontWeight: 700, display: 'inline-block', marginTop: '2px' }}>
+                  View Aadhaar Scan ↗
+                </a>
+              )}
+            </div>
+
+            <div style={{ background: '#FFFFFF', padding: '8px 10px', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
+              <div style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600 }}>PAN CARD NUMBER</div>
+              <div style={{ fontSize: '0.82rem', fontWeight: 800, color: '#0F172A' }}>
+                {phlebo.panNumber || 'Pending'}
+              </div>
+              {phlebo.panDocumentUrl && (
+                <a href={phlebo.panDocumentUrl} target="_blank" rel="noreferrer" style={{ fontSize: '0.7rem', color: '#0D9488', fontWeight: 700, display: 'inline-block', marginTop: '2px' }}>
+                  View PAN Document ↗
+                </a>
+              )}
+            </div>
+
+            <div style={{ background: '#FFFFFF', padding: '8px 10px', borderRadius: '8px', border: '1px solid #E2E8F0', gridColumn: 'span 2' }}>
+              <div style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600 }}>MASTER SERVICE AGREEMENT (v2.1)</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '2px' }}>
+                <span style={{ fontSize: '0.78rem', fontWeight: 700, color: phlebo.signedAgreementUrl ? '#047857' : '#B45309' }}>
+                  {phlebo.signedAgreementUrl ? `✓ Signed by ${phlebo.signerName || phlebo.name}` : '⚠️ Signature Agreement Pending'}
+                </span>
+                {phlebo.signedAgreementUrl && (
+                  <a href={phlebo.signedAgreementUrl} target="_blank" rel="noreferrer" style={{ fontSize: '0.72rem', color: '#0D9488', fontWeight: 700 }}>
+                    Download Signed Agreement ↗
+                  </a>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* KYC Documents Section */}
         <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '10px', padding: '14px' }}>
           <strong style={{ fontSize: '0.85rem', color: '#1E293B', display: 'block', marginBottom: '8px' }}>

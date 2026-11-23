@@ -457,8 +457,18 @@ service cloud.firestore {
     // 12. PLATFORM GLOBAL SETTINGS (`settings/{settingId}`)
     // =========================================================================
     match /settings/{settingId} {
-      allow read: if isAuthenticated() && isAccountActive();
+      allow read: if settingId in ['support', 'features', 'commission'] || (isAuthenticated() && isAccountActive());
       allow write: if isAdmin();
+    }
+
+    match /agreements/{agreementId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /area_expansion_requests/{requestId} {
+      allow read, create, update: if isAuthenticated();
+      allow delete: if isAdmin();
     }
 
     // =========================================================================
