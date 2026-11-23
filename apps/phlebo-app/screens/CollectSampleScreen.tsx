@@ -36,6 +36,7 @@ export interface CollectSampleScreenProps {
   onConfirmCollection: (order: PickupOrder) => void;
   onMarkDirectPayment?: (order: PickupOrder, method: 'DIRECT_TO_LAB' | 'CASH' | 'UPI_PHLEBO') => void;
   onCollectBookingPayment?: (order: PickupOrder) => void;
+  onOpenOrderChat?: (order: PickupOrder) => void;
   enableBarcodeScanner?: boolean;
 }
 
@@ -59,6 +60,7 @@ export function CollectSampleScreen({
   onConfirmCollection,
   onMarkDirectPayment,
   onCollectBookingPayment,
+  onOpenOrderChat,
   enableBarcodeScanner = false,
 }: CollectSampleScreenProps) {
   const specimens = order.specimens || [];
@@ -203,6 +205,40 @@ export function CollectSampleScreen({
                   numberOfLines={1}
                 >
                   Call Lab Desk
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+
+            {onOpenOrderChat ? (
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: rs(8),
+                  backgroundColor: '#F0FDFA',
+                  borderWidth: 1.2,
+                  borderColor: '#99F6E4',
+                  borderRadius: rs(10),
+                  paddingVertical: rs(10),
+                  paddingHorizontal: rs(10),
+                  minHeight: rs(44),
+                }}
+                onPress={() => onOpenOrderChat(order)}
+              >
+                <Ionicons name="chatbubbles" size={16} color="#0D9488" />
+                <Text
+                  maxFontSizeMultiplier={MAX_TEXT_SCALE}
+                  style={{
+                    fontSize: rf(13),
+                    lineHeight: lh(rf(13)),
+                    fontFamily: FONTS.bold,
+                    color: '#0F766E',
+                  }}
+                  numberOfLines={1}
+                >
+                  Chat Lab
                 </Text>
               </TouchableOpacity>
             ) : null}

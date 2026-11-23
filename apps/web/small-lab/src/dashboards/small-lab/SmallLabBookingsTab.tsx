@@ -26,6 +26,7 @@ export interface SmallLabBookingsTabProps {
   onRetryBroadcast?: (orderId: string, hikeInr: number) => Promise<void>;
   onPrintBarcodes?: (order: PickupOrder) => void;
   onViewPaymentSlip?: (order: PickupOrder) => void;
+  onOpenOrderChat?: (order: PickupOrder) => void;
 }
 
 export function SmallLabBookingsTab({
@@ -46,6 +47,7 @@ export function SmallLabBookingsTab({
   onRetryBroadcast,
   onPrintBarcodes,
   onViewPaymentSlip,
+  onOpenOrderChat,
 }: SmallLabBookingsTabProps) {
   const [nowTick, setNowTick] = useState(Date.now());
   const [previewPhotoOrder, setPreviewPhotoOrder] = useState<PickupOrder | null>(null);
@@ -313,6 +315,25 @@ export function SmallLabBookingsTab({
                           <button type="button" className="btn-secondary" onClick={() => onTrackCustody(o)}>
                             {o.phleboLiveLocation ? '📍 Live / Custody' : 'Track Custody'}
                           </button>
+                          {o.phlebotomistId && onOpenOrderChat && (
+                            <button
+                              type="button"
+                              className="btn-primary"
+                              style={{
+                                fontSize: '0.74rem',
+                                padding: '4px 9px',
+                                background: '#2563EB',
+                                borderColor: '#2563EB',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                cursor: 'pointer',
+                              }}
+                              onClick={() => onOpenOrderChat(o)}
+                            >
+                              💬 Chat Phlebo
+                            </button>
+                          )}
                           {o.specimens && o.specimens.length > 0 && (
                             <button
                               type="button"

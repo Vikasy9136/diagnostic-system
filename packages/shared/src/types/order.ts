@@ -103,7 +103,9 @@ export interface PickupOrder {
   serviceZoneId?: string;
   serviceZoneName?: string;
   sampleCollectionPhotoUrl?: string;
+  samplePhotoUrl?: string;
   phleboSelfieUrl?: string;
+  selfiePhotoUrl?: string;
   phleboLiveLocation?: LiveGeoCoordinate;
   paymentStatus?: 'UNPAID' | 'PAID' | 'FAILED' | 'REFUNDED' | 'PAID_TO_LAB';
   razorpayOrderId?: string;
@@ -113,6 +115,8 @@ export interface PickupOrder {
   paymentMethod?: string;
   collectedByRole?: 'SMALL_LAB' | 'PHLEBOTOMIST' | 'ADMIN' | 'PATIENT_DIRECT_LAB';
   completedAt?: string;
+  deliveredAt?: string;
+  actualDropAt?: string;
   payoutDueAt?: string;
   payoutWindowMinutes?: number;
   instantPayoutEligible?: boolean;

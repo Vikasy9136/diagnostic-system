@@ -40,7 +40,13 @@ import {
   resolveSmallLabTab,
 } from '@diagnostic/shared';
 import { type VerifiedPortalSession } from '../components/LoginPage';
-import { DashboardShell, OrderLiveTrackingModal, PaymentSlipModal } from '../components/shared';
+import {
+  DashboardShell,
+  OrderLiveTrackingModal,
+  PaymentSlipModal,
+  SmallLabOrderChatModal,
+} from '../components/shared';
+import { cleanupCompletedOrderChats, purgeExpiredOrderMedia } from '../services/orderChatService';
 import { useDashboardPageRouter } from './useDashboardPageRouter';
 import {
   cancelSmallLabOrder,
@@ -128,6 +134,7 @@ export function SmallLabDashboard({
   // Booking filters, Custody & Report Modals
   const [orderFilter, setOrderFilter] = useState<string>('ALL');
   const [custodyModalOrder, setCustodyModalOrder] = useState<PickupOrder | null>(null);
+  const [chatOrder, setChatOrder] = useState<PickupOrder | null>(null);
   const [printingReport, setPrintingReport] = useState<DiagnosticReportRecord | null>(null);
   const [barcodeOrderToPrint, setBarcodeOrderToPrint] = useState<PickupOrder | null>(null);
 
@@ -283,6 +290,19 @@ export function SmallLabDashboard({
     });
     return set;
   }, [orders, phlebotomists]);
+
+  // Periodic background storage retention:
+  // 1. Purge guidance chat messages 1.5h after delivery
+  // 2. Purge sample collection & selfie proof photos 7 days after pickup
+  useEffect(() => {
+    if (!orders.length) return;
+    orders.forEach((o) => {
+      if (isOrderCompleted(o.status)) {
+        void cleanupCompletedOrderChats(o).catch(() => {});
+      }
+      void purgeExpiredOrderMedia(o).catch(() => {});
+    });
+  }, [orders]);
 
   const onlinePhlebos = useMemo(
     () => phlebotomists.filter((p) => p.status === 'ONLINE'),
@@ -1208,6 +1228,7 @@ export function SmallLabDashboard({
             onToggleTrendDays={() => setTrendDays((d) => (d === 30 ? 7 : 30))}
             onSelectTab={setActiveTab}
             onOpenAddPatient={() => setShowAddPatientModal(true)}
+            onOpenOrderChat={setChatOrder}
             metrics={metrics}
             orders={orders}
             reports={reports}
@@ -1356,6 +1377,7 @@ export function SmallLabDashboard({
             payingSettlementId={payingSettlementId}
             onCreateNewBooking={() => setActiveTab('new-booking')}
             onTrackCustody={setCustodyModalOrder}
+            onOpenOrderChat={setChatOrder}
             onRetryBroadcast={handleRetryBroadcast}
             onPaySettlement={handlePaySettlement}
             onMarkPaidByLab={handleMarkPaidByLab}
@@ -1451,6 +1473,14 @@ export function SmallLabDashboard({
         custodyTimeline={liveCustodyOrder ? liveCustodyOrder.custodyHistory || [] : undefined}
         formatLabel={formatDashboardLabel}
         onRetryBroadcast={handleRetryBroadcast}
+        onOpenChat={setChatOrder}
+      />
+
+      <SmallLabOrderChatModal
+        open={Boolean(chatOrder)}
+        order={chatOrder}
+        labName={myLabFacility.name}
+        onClose={() => setChatOrder(null)}
       />
 
       <SmallLabSelfQcModal

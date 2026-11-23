@@ -21,6 +21,7 @@ export interface SmallLabOverviewTabProps {
   onToggleTrendDays: () => void;
   onSelectTab: (tab: SmallLabTab) => void;
   onOpenAddPatient: () => void;
+  onOpenOrderChat?: (order: PickupOrder) => void;
   metrics: SmallLabMetrics;
   orders: PickupOrder[];
   reports: DiagnosticReportRecord[];
@@ -36,6 +37,7 @@ export function SmallLabOverviewTab({
   onToggleTrendDays,
   onSelectTab,
   onOpenAddPatient,
+  onOpenOrderChat,
   metrics,
   orders,
   reports,
@@ -176,6 +178,7 @@ export function SmallLabOverviewTab({
                     <th>Tests</th>
                     <th>OTP</th>
                     <th>Status</th>
+                    <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -192,6 +195,34 @@ export function SmallLabOverviewTab({
                       </td>
                       <td>
                         <span className="status-pill-blue">{formatOrderStatus(o.status)}</span>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                          {o.phlebotomistId && onOpenOrderChat && (
+                            <button
+                              type="button"
+                              className="btn-primary"
+                              style={{
+                                fontSize: '0.72rem',
+                                padding: '3px 8px',
+                                background: '#2563EB',
+                                borderColor: '#2563EB',
+                                cursor: 'pointer',
+                              }}
+                              onClick={() => onOpenOrderChat(o)}
+                            >
+                              💬 Chat
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ fontSize: '0.72rem', padding: '3px 8px' }}
+                            onClick={() => onSelectTab('bookings')}
+                          >
+                            Details &rarr;
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -252,4 +283,3 @@ export function SmallLabOverviewTab({
     </>
   );
 }
-

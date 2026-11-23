@@ -29,6 +29,7 @@ export interface TodayCollectionsScreenProps {
   onViewOrderDetails: (order: PickupOrder) => void;
   onOpenOrderWorkflow: (order: PickupOrder) => void;
   onCollectBookingPayment: (order: PickupOrder) => void;
+  onOpenOrderChat?: (order: PickupOrder) => void;
 }
 
 function formatSlotWindow(iso?: string): string {
@@ -57,6 +58,7 @@ export function TodayCollectionsScreen({
   onViewOrderDetails,
   onOpenOrderWorkflow,
   onCollectBookingPayment,
+  onOpenOrderChat,
 }: TodayCollectionsScreenProps) {
   const [filter, setFilter] = useState<TodayCollectionFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -510,6 +512,43 @@ export function TodayCollectionsScreen({
                           numberOfLines={1}
                         >
                           Call Lab Desk
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {onOpenOrderChat && (
+                      <TouchableOpacity
+                        style={{
+                          flex: 1,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: rs(8),
+                          backgroundColor: '#F0FDFA',
+                          borderWidth: 1.2,
+                          borderColor: '#99F6E4',
+                          borderRadius: rs(10),
+                          paddingVertical: rs(10),
+                          paddingHorizontal: rs(10),
+                          minHeight: rs(44),
+                        }}
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          onOpenOrderChat(order);
+                        }}
+                      >
+                        <Ionicons name="chatbubbles" size={16} color="#0D9488" />
+                        <Text
+                          maxFontSizeMultiplier={MAX_TEXT_SCALE}
+                          style={{
+                            fontSize: rf(13),
+                            lineHeight: lh(rf(13)),
+                            fontFamily: FONTS.bold,
+                            color: '#0F766E',
+                          }}
+                          numberOfLines={1}
+                        >
+                          Chat Lab
                         </Text>
                       </TouchableOpacity>
                     )}

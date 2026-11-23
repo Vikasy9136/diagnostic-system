@@ -173,6 +173,7 @@ export interface OrderLiveTrackingModalProps {
   custodyTimeline?: CustodyEvent[];
   formatLabel: FormatLabelFn;
   onRetryBroadcast?: (orderId: string, hikeInr: number) => Promise<void>;
+  onOpenChat?: (order: PickupOrder) => void;
 }
 
 export function OrderLiveTrackingModal({
@@ -191,6 +192,7 @@ export function OrderLiveTrackingModal({
   custodyTimeline,
   formatLabel,
   onRetryBroadcast,
+  onOpenChat,
 }: OrderLiveTrackingModalProps) {
   if (!order) return null;
 
@@ -298,17 +300,39 @@ export function OrderLiveTrackingModal({
                 </div>
               )}
             </div>
-            {order.phleboLiveLocation && (
-              <a
-                className="btn-primary"
-                style={{ textDecoration: 'none', fontSize: '0.78rem' }}
-                href={`https://www.google.com/maps/dir/?api=1&origin=${order.phleboLiveLocation.latitude},${order.phleboLiveLocation.longitude}&destination=${destLat},${destLng}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                🗺️ Open Live Route Map
-              </a>
-            )}
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              {order.phlebotomistId && onOpenChat && (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  style={{
+                    textDecoration: 'none',
+                    fontSize: '0.78rem',
+                    background: '#2563EB',
+                    borderColor: '#2563EB',
+                    padding: '6px 12px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => onOpenChat(order)}
+                >
+                  💬 Chat Courier
+                </button>
+              )}
+              {order.phleboLiveLocation && (
+                <a
+                  className="btn-primary"
+                  style={{ textDecoration: 'none', fontSize: '0.78rem' }}
+                  href={`https://www.google.com/maps/dir/?api=1&origin=${order.phleboLiveLocation.latitude},${order.phleboLiveLocation.longitude}&destination=${destLat},${destLng}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  🗺️ Open Live Route Map
+                </a>
+              )}
+            </div>
           </div>
         </div>
       )}

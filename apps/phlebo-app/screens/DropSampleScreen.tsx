@@ -21,6 +21,7 @@ export interface DropSampleScreenProps {
   onUpdateOtpDigit: (index: number, value: string) => void;
   onChangeDropTemp: (val: string) => void;
   onConfirmDropOtp: (order: PickupOrder) => void;
+  onOpenOrderChat?: (order: PickupOrder) => void;
 }
 
 export function DropSampleScreen({
@@ -36,6 +37,7 @@ export function DropSampleScreen({
   onUpdateOtpDigit,
   onChangeDropTemp,
   onConfirmDropOtp,
+  onOpenOrderChat,
 }: DropSampleScreenProps) {
   const { width: winWidth } = useResponsive();
   const [receivedByStaff, setReceivedByStaff] = useState('');
@@ -158,6 +160,27 @@ export function DropSampleScreen({
                 <Text style={styles.navMapButtonText}>
                   Call Drop Desk
                 </Text>
+              </TouchableOpacity>
+            ) : null}
+
+            {onOpenOrderChat ? (
+              <TouchableOpacity
+                style={[
+                  styles.navMapButton,
+                  {
+                    marginTop: 0,
+                    paddingHorizontal: rs(14),
+                    backgroundColor: '#2563EB',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                  },
+                ]}
+                onPress={() => onOpenOrderChat(order)}
+              >
+                <Ionicons name="chatbubble-ellipses" size={15} color="#FFFFFF" />
+                <Text style={styles.navMapButtonText}>Chat Lab</Text>
               </TouchableOpacity>
             ) : null}
           </View>

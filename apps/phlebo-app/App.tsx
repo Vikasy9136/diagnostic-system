@@ -35,6 +35,8 @@ import {
   type AppUpdateCheckResult,
 } from './services/appUpdateService';
 import { AppUpdateModal } from './components/AppUpdateModal';
+import { OrderChatModal } from './components/OrderChatModal';
+import { purgeExpiredOrderMedia, cleanupCompletedOrderChats } from './services/orderChatService';
 import * as TaskManager from 'expo-task-manager';
 import {
   calculateHaversineDistanceKm,
@@ -396,6 +398,7 @@ function PhleboAppContent() {
   const [zonesLoaded, setZonesLoaded] = useState(false);
   const [commissionConfig, setCommissionConfig] = useState<CommissionConfig>(DEFAULT_COMMISSION_CONFIG);
   const [myPhleboProfile, setMyPhleboProfile] = useState<PhlebotomistProfile | null>(null);
+  const [activeChatOrder, setActiveChatOrder] = useState<PickupOrder | null>(null);
   const [kitAllocations, setKitAllocations] = useState<KitAllocationRecord[]>([]);
   const [showMySuppliesModal, setShowMySuppliesModal] = useState(false);
   const [notifications, setNotifications] = useState<PlatformNotification[]>([]);
@@ -470,6 +473,7 @@ function PhleboAppContent() {
   const seenUpdatedMapRef = useRef<Map<string, number>>(new Map());
   const lastBarcodeToastRef = useRef<Record<string, string>>({});
   const seenNotificationDocIdsRef = useRef<Set<string>>(new Set());
+  const myAssignedOrderIdsRef = useRef<Set<string>>(new Set());
   const initialNotifLoadRef = useRef(true);
 
   // History filter state
@@ -859,7 +863,12 @@ function PhleboAppContent() {
           }));
           const filtered = all
             .filter((n) => {
-              // 1. Direct notification targeted to this phlebotomist
+              // 1. If notification is tied to an order, ONLY show if this phlebo has accepted/is assigned to that order
+              if (n.orderId) {
+                return myAssignedOrderIdsRef.current.has(n.orderId);
+              }
+
+              // 2. Direct notification targeted to this phlebotomist (e.g. from Admin / Support / Staff)
               if (
                 n.recipientUid &&
                 (n.recipientUid === session?.firebaseUser?.uid ||
@@ -869,8 +878,17 @@ function PhleboAppContent() {
                 return true;
               }
 
-              // 2. Announcements & alerts for all phlebotomists (including broadcasts, surges, retries, payout releases)
-              if (n.recipientRole === UserRole.PHLEBOTOMIST || n.recipientRole === 'ALL') {
+              // 3. Official Admin staff broadcasts or platform alerts (system notices, payouts, emergencies)
+              const isAdminOrSystemAlert =
+                n.category === NotificationCategory.SYSTEM_ALERT ||
+                n.category === NotificationCategory.PAYOUT_SETTLED ||
+                n.category === NotificationCategory.LAB_VERIFICATION ||
+                Boolean(n.title && n.title.toLowerCase().includes('admin'));
+
+              if (
+                isAdminOrSystemAlert &&
+                (n.recipientRole === UserRole.PHLEBOTOMIST || n.recipientRole === 'ALL')
+              ) {
                 return true;
               }
 
@@ -1196,7 +1214,19 @@ function PhleboAppContent() {
 
   useEffect(() => {
     activeAssignedOrdersRef.current = activeAssignedOrders.length;
-  }, [activeAssignedOrders.length]);
+    myAssignedOrderIdsRef.current = new Set(myAssignedOrders.map((o) => o.id));
+  }, [activeAssignedOrders.length, myAssignedOrders]);
+
+  // Periodic background cleanup of expired order chats (>1.5h) and sample media proof (>7 days)
+  useEffect(() => {
+    if (!orders.length) return;
+    orders.forEach((o) => {
+      if (isOrderCompleted(o.status)) {
+        void cleanupCompletedOrderChats(o).catch(() => {});
+      }
+      void purgeExpiredOrderMedia(o).catch(() => {});
+    });
+  }, [orders]);
 
   const completedAssignedOrders = useMemo(
     () =>
@@ -4258,6 +4288,7 @@ function PhleboAppContent() {
                 collectingOrderId={collectingOrderId}
                 onBack={handleNavigateBackHome}
                 onOpenLocationModal={() => setShowLocationPickerModal(true)}
+                onOpenOrderChat={(order) => setActiveChatOrder(order)}
                 onViewOrderDetails={(order) => {
                   setDetailsReturnScreen('TODAYS_COLLECTIONS');
                   setSelectedOrderId(order.id);
@@ -4276,6 +4307,7 @@ function PhleboAppContent() {
                 onBack={() => setCurrentScreen(detailsReturnScreen)}
                 onShowAlert={showDynamicAlert}
                 onOpenDirectionsMap={openDirectionsMap}
+                onOpenOrderChat={(order) => setActiveChatOrder(order)}
                 onCollectBookingPayment={(order) => void handleCollectBookingPayment(order)}
                 onMarkDirectPayment={(order, method) => handleMarkDirectPayment(order, method)}
                 onProceedToCollect={() => setCurrentScreen('COLLECT_SAMPLE')}
@@ -4291,6 +4323,7 @@ function PhleboAppContent() {
                 uploadingPhoto={uploadingPhoto}
                 uploadingSelfie={uploadingSelfie}
                 submittingAction={submittingAction}
+                onOpenOrderChat={(order) => setActiveChatOrder(order)}
                 onBack={() => setCurrentScreen('BOOKING_DETAILS')}
                 onUpdateSpecimenDraft={updateSpecimenDraft}
                 onOpenCameraModal={(modal) => {
@@ -4319,6 +4352,7 @@ function PhleboAppContent() {
                 otpValue={otpValue}
                 dropTempInput={dropTempInput}
                 submittingAction={submittingAction}
+                onOpenOrderChat={(order) => setActiveChatOrder(order)}
                 onBack={() => setCurrentScreen('BOOKING_REQUESTS')}
                 onOpenDirectionsMap={openDirectionsMap}
                 onCollectBookingPayment={(order) => void handleCollectBookingPayment(order)}
@@ -4772,6 +4806,14 @@ function PhleboAppContent() {
             await applyAppUpdate(pendingAppUpdate, onProgress);
           }
         }}
+      />
+
+      <OrderChatModal
+        visible={Boolean(activeChatOrder)}
+        order={activeChatOrder}
+        phleboId={effectivePhleboId}
+        phleboName={profileName || phleboName || 'Phlebotomist'}
+        onClose={() => setActiveChatOrder(null)}
       />
     </SafeAreaView>
   );

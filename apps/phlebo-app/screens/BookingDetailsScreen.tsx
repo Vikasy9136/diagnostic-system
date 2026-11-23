@@ -34,6 +34,7 @@ export interface BookingDetailsScreenProps {
   onMarkDirectPayment?: (order: PickupOrder, method: 'DIRECT_TO_LAB' | 'CASH' | 'UPI_PHLEBO') => void;
   onProceedToCollect: () => void;
   onProceedToDrop?: () => void;
+  onOpenOrderChat?: (order: PickupOrder) => void;
 }
 
 export function BookingDetailsScreen({
@@ -47,6 +48,7 @@ export function BookingDetailsScreen({
   onMarkDirectPayment,
   onProceedToCollect,
   onProceedToDrop,
+  onOpenOrderChat,
 }: BookingDetailsScreenProps) {
   const specimens = order.specimens || [];
   const stUpper = String(order.status || '').toUpperCase();
@@ -210,9 +212,9 @@ export function BookingDetailsScreen({
             ) : null}
           </View>
 
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+          <View style={{ flexDirection: 'row', gap: rs(10), marginTop: rs(14) }}>
             <TouchableOpacity
-              style={styles.navMapButton}
+              style={[styles.navMapButton, { flex: 1.2 }]}
               onPress={() =>
                 onOpenDirectionsMap(
                   order.pickupLocation?.latitude,
@@ -222,9 +224,23 @@ export function BookingDetailsScreen({
               }
             >
               <Text style={styles.navMapButtonText}>
-                Navigate to Pickup Lab (Google Maps)
+                Navigate (Google Maps)
               </Text>
             </TouchableOpacity>
+
+            {onOpenOrderChat ? (
+              <TouchableOpacity
+                style={[
+                  styles.navMapButton,
+                  { flex: 1, backgroundColor: '#F0FDFA', borderColor: '#99F6E4' },
+                ]}
+                onPress={() => onOpenOrderChat(order)}
+              >
+                <Text style={[styles.navMapButtonText, { color: '#0F766E' }]}>
+                  💬 Chat Lab
+                </Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         </View>
 
