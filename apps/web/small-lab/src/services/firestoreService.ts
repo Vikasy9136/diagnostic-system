@@ -2267,6 +2267,30 @@ export async function assignPhlebotomistToOrder(params: {
   operatorName: string;
   operatorRole: UserRole;
 }): Promise<void> {
+  // Strict single-task exclusivity: verify phlebotomist does not have an active ongoing task
+  try {
+    const busySnap = await getDocs(
+      query(
+        collection(db, 'orders'),
+        where('phlebotomistId', '==', params.phlebo.id),
+        where('status', 'in', [
+          OrderStatus.ASSIGNED_TO_PHLEBO,
+          OrderStatus.PICKED_UP,
+          OrderStatus.IN_TRANSIT,
+        ])
+      )
+    );
+    if (!busySnap.empty && busySnap.docs.some((d) => d.id !== params.order.id)) {
+      throw new Error(
+        `Phlebotomist ${params.phlebo.name} is currently in transit on another delivery. They must complete and drop their current sample before accepting a new assignment.`
+      );
+    }
+  } catch (err: any) {
+    if (err?.message?.includes('currently in transit')) {
+      throw err;
+    }
+  }
+
   const now = new Date().toISOString();
   const evt: CustodyEvent = {
     id: `EVT-${Date.now()}`,

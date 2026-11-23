@@ -371,7 +371,7 @@ export function BookingRequestsScreen({
               Assigned Tasks
             </Text>
             <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.quickTileSub}>
-              {formatInr(metrics.todayEarnings)} today
+              {pendingCount} active
             </Text>
           </TouchableOpacity>
 
@@ -676,6 +676,32 @@ export function BookingRequestsScreen({
           </TouchableOpacity>
         </View>
 
+        {requestTab === 'new' && activeAssignedOrders.length > 0 && (
+          <View
+            style={{
+              backgroundColor: '#EFF6FF',
+              borderColor: '#BFDBFE',
+              borderWidth: 1.5,
+              borderRadius: 14,
+              padding: rs(12),
+              marginBottom: rs(12),
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: rs(10),
+            }}
+          >
+            <Ionicons name="information-circle" size={24} color="#1D4ED8" />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={{ fontFamily: FONTS.bold, fontSize: rf(13), color: '#1E40AF' }}>
+                Active Task in Progress ({activeAssignedOrders[0].orderNumber})
+              </Text>
+              <Text style={{ fontFamily: FONTS.regular, fontSize: rf(11.5), color: '#3B82F6', marginTop: 2 }}>
+                Complete and drop your current sample at {activeAssignedOrders[0].targetLabName} to receive and accept new pickups.
+              </Text>
+            </View>
+          </View>
+        )}
+
         {displayedEntries.length === 0 ? (
           <View style={styles.emptyBox}>
             <Ionicons name="clipboard-outline" size={32} color={BRAND_COLORS.tealPrimary} />
@@ -862,11 +888,19 @@ export function BookingRequestsScreen({
                 {isOpenPool ? (
                   <View style={styles.actionsRow}>
                     <TouchableOpacity
-                      style={[styles.btnPrimary, submittingAction && { opacity: 0.65 }]}
-                      disabled={submittingAction}
+                      style={[
+                        styles.btnPrimary,
+                        (submittingAction || activeAssignedOrders.length > 0) && { opacity: 0.65 },
+                        activeAssignedOrders.length > 0 && { backgroundColor: '#64748B' },
+                      ]}
+                      disabled={submittingAction || activeAssignedOrders.length > 0}
                       onPress={() => onAcceptPoolOrder(order)}
                     >
-                      <Text style={styles.btnPrimaryText}>Accept &amp; Claim Pickup →</Text>
+                      <Text style={styles.btnPrimaryText}>
+                        {activeAssignedOrders.length > 0
+                          ? 'Complete Current Delivery First'
+                          : 'Accept & Claim Pickup →'}
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 ) : requestTab === 'active' && !isDone ? (

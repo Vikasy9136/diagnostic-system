@@ -11,6 +11,8 @@ import {
 import Svg, { Circle } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
 import { type AppUpdateCheckResult } from '../services/appUpdateService';
+import { BRAND_COLORS, BRAND_FONTS } from './LabSetuBrand';
+import { COMPACT_TEXT_SCALE, lh, MAX_TEXT_SCALE, rf, rs } from '../utils/responsive';
 
 interface AppUpdateModalProps {
   visible: boolean;
@@ -94,7 +96,7 @@ export function AppUpdateModal({
               hitSlop={12}
               accessibilityLabel="Close"
             >
-              <Text style={styles.closeBtnText}>✕</Text>
+              <Text maxFontSizeMultiplier={COMPACT_TEXT_SCALE} style={styles.closeBtnText}>✕</Text>
             </TouchableOpacity>
           )}
 
@@ -151,14 +153,14 @@ export function AppUpdateModal({
 
                   {/* Center Content */}
                   <View style={styles.centerLabelContainer}>
-                    <Text style={styles.percentText}>{Math.round(downloadPercent)}%</Text>
-                    <Text style={styles.centerSubLabel}>
+                    <Text maxFontSizeMultiplier={COMPACT_TEXT_SCALE} style={styles.percentText}>{Math.round(downloadPercent)}%</Text>
+                    <Text maxFontSizeMultiplier={COMPACT_TEXT_SCALE} style={styles.centerSubLabel}>
                       {downloadPercent >= 100 ? 'Finalizing' : 'Downloading'}
                     </Text>
                   </View>
                 </View>
 
-                <Text style={styles.downloadTitle}>
+                <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.downloadTitle}>
                   {downloadPercent >= 100 ? 'Restarting App...' : 'Downloading Update...'}
                 </Text>
 
@@ -168,12 +170,12 @@ export function AppUpdateModal({
                     size={16}
                     color={downloadPercent >= 100 ? '#16A34A' : '#0D9488'}
                   />
-                  <Text style={styles.stepText} numberOfLines={2}>
+                  <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.stepText} numberOfLines={2}>
                     {downloadStepText}
                   </Text>
                 </View>
 
-                <Text style={styles.restartHint}>
+                <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.restartHint}>
                   The app will automatically restart once finished. Please keep this screen open.
                 </Text>
               </View>
@@ -187,21 +189,21 @@ export function AppUpdateModal({
                   <Ionicons name="sparkles" size={26} color="#0D9488" />
                 </View>
 
-                <Text style={styles.title}>App Update Available</Text>
+                <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.title}>App Update Available</Text>
 
                 <View style={styles.versionPill}>
-                  <Text style={styles.versionPillText}>
+                  <Text maxFontSizeMultiplier={COMPACT_TEXT_SCALE} style={styles.versionPillText}>
                     New Version v{updateData.latestVersion}
                   </Text>
                 </View>
 
-                <Text style={styles.message}>
+                <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.message}>
                   A fresh update is ready to install with improvements and bug fixes for a smoother experience.
                 </Text>
 
                 <View style={styles.whatsNewBox}>
-                  <Text style={styles.whatsNewHeading}>What&apos;s New:</Text>
-                  <Text style={styles.whatsNewContent}>
+                  <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.whatsNewHeading}>What&apos;s New:</Text>
+                  <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.whatsNewContent}>
                     {updateData.releaseNotes ||
                       '• Faster pickup alerts & smooth navigation\n• Live GPS & performance improvements\n• Bug fixes and stability enhancements'}
                   </Text>
@@ -210,7 +212,7 @@ export function AppUpdateModal({
                 {errorMsg && (
                   <View style={styles.errorBox}>
                     <Ionicons name="alert-circle" size={16} color="#DC2626" />
-                    <Text style={styles.errorText}>{errorMsg}</Text>
+                    <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.errorText}>{errorMsg}</Text>
                   </View>
                 )}
 
@@ -221,7 +223,7 @@ export function AppUpdateModal({
                       onPress={onClose}
                       activeOpacity={0.7}
                     >
-                      <Text style={styles.btnSecondaryText}>Later</Text>
+                      <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.btnSecondaryText}>Later</Text>
                     </TouchableOpacity>
                   )}
                   <TouchableOpacity
@@ -230,7 +232,7 @@ export function AppUpdateModal({
                     activeOpacity={0.85}
                   >
                     <Ionicons name="download-outline" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
-                    <Text style={styles.btnPrimaryText}>Update Now</Text>
+                    <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.btnPrimaryText}>Update Now</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -248,13 +250,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(6, 29, 66, 0.72)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: rs(20),
   },
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 24,
+    borderRadius: rs(24),
     width: '100%',
-    maxWidth: 360,
+    maxWidth: rs(360),
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 10 },
@@ -264,95 +266,101 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   topAccentStrip: {
-    height: 4,
+    height: rs(4),
     backgroundColor: '#0D9488',
     width: '100%',
   },
   closeBtn: {
     position: 'absolute',
-    top: 14,
-    right: 14,
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    top: rs(14),
+    right: rs(14),
+    width: rs(30),
+    height: rs(30),
+    borderRadius: rs(15),
     backgroundColor: '#F1F5F9',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
   },
   closeBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontFamily: BRAND_FONTS.bold,
+    fontSize: rf(14),
+    lineHeight: lh(rf(14)),
     color: '#64748B',
   },
   body: {
-    paddingHorizontal: 22,
-    paddingTop: 24,
-    paddingBottom: 22,
+    paddingHorizontal: rs(22),
+    paddingTop: rs(24),
+    paddingBottom: rs(22),
   },
   overviewSection: {
     alignItems: 'center',
   },
   iconBadge: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
+    width: rs(58),
+    height: rs(58),
+    borderRadius: rs(29),
     backgroundColor: '#CCFBF1',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 14,
+    marginBottom: rs(14),
   },
   title: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#0F172A',
+    fontFamily: BRAND_FONTS.extraBold,
+    fontSize: rf(18),
+    lineHeight: lh(rf(18)),
+    color: BRAND_COLORS.navyPrimary,
     textAlign: 'center',
-    marginBottom: 6,
+    marginBottom: rs(6),
   },
   versionPill: {
     backgroundColor: '#F0FDFA',
     borderWidth: 1,
     borderColor: '#99F6E4',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 20,
-    marginBottom: 12,
+    paddingHorizontal: rs(12),
+    paddingVertical: rs(4),
+    borderRadius: rs(20),
+    marginBottom: rs(12),
   },
   versionPillText: {
-    fontSize: 12,
-    fontWeight: '700',
+    fontFamily: BRAND_FONTS.bold,
+    fontSize: rf(12),
+    lineHeight: lh(rf(12)),
     color: '#0D9488',
   },
   message: {
-    fontSize: 13,
+    fontFamily: BRAND_FONTS.regular,
+    fontSize: rf(13),
     color: '#475569',
     textAlign: 'center',
-    lineHeight: 19,
-    marginBottom: 16,
+    lineHeight: lh(rf(13), 1.45),
+    marginBottom: rs(16),
   },
   whatsNewBox: {
     width: '100%',
     backgroundColor: '#F8FAFC',
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 18,
+    borderRadius: rs(14),
+    padding: rs(12),
+    marginBottom: rs(18),
   },
   whatsNewHeading: {
-    fontSize: 12,
-    fontWeight: '700',
+    fontFamily: BRAND_FONTS.bold,
+    fontSize: rf(12),
+    lineHeight: lh(rf(12)),
     color: '#334155',
-    marginBottom: 5,
+    marginBottom: rs(5),
   },
   whatsNewContent: {
-    fontSize: 12,
+    fontFamily: BRAND_FONTS.medium,
+    fontSize: rf(12),
     color: '#64748B',
-    lineHeight: 18,
+    lineHeight: lh(rf(12), 1.45),
   },
   downloadSection: {
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingVertical: rs(12),
   },
   circleContainer: {
     width: 124,
@@ -360,7 +368,7 @@ const styles = StyleSheet.create({
     position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 18,
+    marginBottom: rs(18),
   },
   spinnerWrapper: {
     position: 'absolute',
@@ -379,74 +387,81 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   percentText: {
-    fontSize: 24,
-    fontWeight: '900',
-    color: '#0F172A',
+    fontFamily: BRAND_FONTS.extraBold,
+    fontSize: rf(24),
+    lineHeight: lh(rf(24)),
+    color: BRAND_COLORS.navyPrimary,
   },
   centerSubLabel: {
-    fontSize: 9.5,
-    fontWeight: '700',
+    fontFamily: BRAND_FONTS.bold,
+    fontSize: rf(9.5),
+    lineHeight: lh(rf(9.5)),
     color: '#0D9488',
     textTransform: 'uppercase',
-    marginTop: 2,
+    marginTop: rs(2),
   },
   downloadTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#0F172A',
-    marginBottom: 12,
+    fontFamily: BRAND_FONTS.extraBold,
+    fontSize: rf(16),
+    lineHeight: lh(rf(16)),
+    color: BRAND_COLORS.navyPrimary,
+    marginBottom: rs(12),
   },
   stepBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: rs(8),
     backgroundColor: '#F0FDFA',
     borderWidth: 1,
     borderColor: '#99F6E4',
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 10,
+    paddingHorizontal: rs(12),
+    paddingVertical: rs(9),
+    borderRadius: rs(10),
     width: '100%',
-    marginBottom: 12,
+    marginBottom: rs(12),
   },
   stepText: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontFamily: BRAND_FONTS.semiBold,
+    fontSize: rf(12),
+    lineHeight: lh(rf(12)),
     color: '#0F766E',
     flex: 1,
   },
   restartHint: {
-    fontSize: 11.5,
+    fontFamily: BRAND_FONTS.regular,
+    fontSize: rf(11.5),
     color: '#64748B',
     textAlign: 'center',
-    lineHeight: 16,
+    lineHeight: lh(rf(11.5), 1.4),
   },
   errorBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: rs(8),
     backgroundColor: '#FEF2F2',
     borderWidth: 1,
     borderColor: '#FECACA',
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 14,
+    borderRadius: rs(10),
+    padding: rs(10),
+    marginBottom: rs(14),
     width: '100%',
   },
   errorText: {
-    fontSize: 12,
+    fontFamily: BRAND_FONTS.medium,
+    fontSize: rf(12),
+    lineHeight: lh(rf(12)),
     color: '#DC2626',
     flex: 1,
   },
   actionRow: {
     flexDirection: 'row',
-    gap: 10,
+    gap: rs(10),
     width: '100%',
   },
   btnSecondary: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
+    paddingVertical: rs(12),
+    borderRadius: rs(12),
     borderWidth: 1,
     borderColor: '#CBD5E1',
     alignItems: 'center',
@@ -454,14 +469,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
   },
   btnSecondaryText: {
-    fontSize: 13.5,
-    fontWeight: '700',
+    fontFamily: BRAND_FONTS.bold,
+    fontSize: rf(13.5),
+    lineHeight: lh(rf(13.5)),
     color: '#475569',
   },
   btnPrimary: {
     flexDirection: 'row',
-    paddingVertical: 12,
-    borderRadius: 12,
+    paddingVertical: rs(12),
+    borderRadius: rs(12),
     backgroundColor: '#0D9488',
     alignItems: 'center',
     justifyContent: 'center',
@@ -472,8 +488,9 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   btnPrimaryText: {
-    fontSize: 13.5,
-    fontWeight: '700',
+    fontFamily: BRAND_FONTS.bold,
+    fontSize: rf(13.5),
+    lineHeight: lh(rf(13.5)),
     color: '#FFFFFF',
   },
 });

@@ -249,9 +249,30 @@ export function SmallLabDashboard({
     [labs]
   );
 
+  // Phlebotomists currently busy on an ongoing pickup or delivery task
+  const busyPhleboIdSet = useMemo(() => {
+    const set = new Set<string>();
+    orders.forEach((o) => {
+      if (
+        o.phlebotomistId &&
+        (o.status === OrderStatus.ASSIGNED_TO_PHLEBO ||
+          o.status === OrderStatus.PICKED_UP ||
+          o.status === OrderStatus.IN_TRANSIT)
+      ) {
+        set.add(o.phlebotomistId);
+      }
+    });
+    return set;
+  }, [orders]);
+
   const onlinePhlebos = useMemo(
     () => phlebotomists.filter((p) => p.status === 'ONLINE'),
     [phlebotomists]
+  );
+
+  const availableOnlinePhlebos = useMemo(
+    () => onlinePhlebos.filter((p) => !busyPhleboIdSet.has(p.id)),
+    [onlinePhlebos, busyPhleboIdSet]
   );
 
   const isSuspendedForUnsettledFees = useMemo(() => {
@@ -679,6 +700,15 @@ export function SmallLabDashboard({
         title: 'Flexible Fleet Radar Dispatch',
         message: `Pincode ${pickupPincode || 'entered'} is in expansion mode. Request will be broadcast to all nearby online phlebotomists within ${broadcastRadiusKm} km!`,
       });
+    }
+
+    if (selectedPhleboId && busyPhleboIdSet.has(selectedPhleboId)) {
+      onShowAlert({
+        variant: 'warning',
+        title: 'Phlebotomist Currently Busy',
+        message: 'This phlebotomist has an active delivery in progress. They will be available as soon as their current sample drop is confirmed.',
+      });
+      return;
     }
 
     const chosenPhlebo = phlebotomists.find((p) => p.id === selectedPhleboId) || null;
@@ -1166,7 +1196,7 @@ export function SmallLabDashboard({
           <SmallLabNewBookingTab
             myLabFacility={myLabFacility}
             patients={myLabPatients}
-            phlebotomists={onlinePhlebos}
+            phlebotomists={availableOnlinePhlebos}
             commConfig={commConfig}
             selectableCatalogEntries={selectableCatalogEntries}
             expandedRequestedCodes={expandedRequestedCodes}

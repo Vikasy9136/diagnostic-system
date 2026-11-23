@@ -1779,6 +1779,20 @@ function PhleboAppContent() {
 
     if (!session || !isOnline) return;
 
+    // Strict Single-Task Exclusivity:
+    // If the phlebotomist already has an active ongoing task (assigned, picked up, or in transit),
+    // they MUST NOT receive any incoming booking alerts, sound chimes, notifications, or overlays!
+    // As soon as drop/delivery is confirmed in the system, activeAssignedOrders becomes 0 and alerts resume immediately.
+    if (activeAssignedOrders.length > 0) {
+      if (activeRingingOrderIdRef.current) {
+        activeRingingOrderIdRef.current = null;
+        stopContinuousPickupAlert();
+        void dismissIncomingPickupOverlay();
+        setBroadcastForceOpen(false);
+      }
+      return;
+    }
+
     const nearby = openPoolWithDistance.filter((x) => x.inBroadcastRadius);
 
     // Also include direct assigned orders awaiting acceptance
@@ -2134,7 +2148,8 @@ function PhleboAppContent() {
       Boolean(cameraModal) ||
       Boolean(activePaymentLink) ||
       showLocationPickerModal ||
-      alertState.isOpen
+      alertState.isOpen ||
+      activeAssignedOrders.length > 0 // Strict Single-Task Exclusivity: never show broadcast modal if courier has an active delivery
     ) {
       return null;
     }
@@ -2927,6 +2942,17 @@ function PhleboAppContent() {
         variant: 'warning',
         title: 'Courier Profile Needed',
         message: `Ask Platform Admin (${ADMIN_LOGIN_EMAIL}) to assign a Courier ID to ${phleboEmail} under Team & Partner Accounts.`,
+      });
+      return;
+    }
+
+    // Strict Single-Task Exclusivity Guard
+    if (activeAssignedOrders.length > 0) {
+      showDynamicAlert({
+        variant: 'warning',
+        title: 'Active Task in Progress',
+        message:
+          'You already have an active collection/delivery task. Please complete and drop your current sample before accepting a new pickup.',
       });
       return;
     }
