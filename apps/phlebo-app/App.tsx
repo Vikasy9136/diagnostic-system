@@ -3078,47 +3078,58 @@ function PhleboAppContent() {
     if (!session?.firebaseUser) return;
     const numericTemp = Number.parseFloat(pickupTempInput);
 
-    const siblingList = order.specimens.map((s) => {
-      const draft = specimenDrafts[s.id];
-      return {
-        ...s,
-        scannedBarcode: draft?.barcode?.trim() || '',
-        scannedTubeType: draft?.usedTube || s.tubeType,
-      };
-    });
+    let verifiedSpecimens: SpecimenItem[] = [];
 
-    const verifiedSpecimens: SpecimenItem[] = [];
-    for (const s of order.specimens) {
-      const draft = specimenDrafts[s.id] || {
-        barcode: s.scannedBarcode || '',
-        usedTube: s.tubeType,
-      };
-      const check = validateTubeBarcodeScan({
-        scannedBarcode: draft.barcode,
-        expectedSpecimen: s,
-        selectedTubeUsed: draft.usedTube,
-        siblingSpecimens: siblingList,
+    if (platformFeatures.enableBarcodeScanner) {
+      const siblingList = order.specimens.map((s) => {
+        const draft = specimenDrafts[s.id];
+        return {
+          ...s,
+          scannedBarcode: draft?.barcode?.trim() || '',
+          scannedTubeType: draft?.usedTube || s.tubeType,
+        };
       });
 
-      if (!check.valid) {
-        showDynamicAlert({
-          variant: check.status === 'MISMATCH' ? 'error' : 'warning',
-          title:
-            check.status === 'MISMATCH'
-              ? `Wrong Tube / Barcode for ${s.testCode}`
-              : `Scan Barcode for ${s.testCode}`,
-          message: check.message,
+      for (const s of order.specimens) {
+        const draft = specimenDrafts[s.id] || {
+          barcode: s.scannedBarcode || '',
+          usedTube: s.tubeType,
+        };
+        const check = validateTubeBarcodeScan({
+          scannedBarcode: draft.barcode,
+          expectedSpecimen: s,
+          selectedTubeUsed: draft.usedTube,
+          siblingSpecimens: siblingList,
         });
-        return;
-      }
 
-      verifiedSpecimens.push({
+        if (!check.valid) {
+          showDynamicAlert({
+            variant: check.status === 'MISMATCH' ? 'error' : 'warning',
+            title:
+              check.status === 'MISMATCH'
+                ? `Wrong Tube / Barcode for ${s.testCode}`
+                : `Scan Barcode for ${s.testCode}`,
+            message: check.message,
+          });
+          return;
+        }
+
+        verifiedSpecimens.push({
+          ...s,
+          scannedBarcode: draft.barcode.trim(),
+          scannedTubeType: check.detectedTube,
+          validationStatus: 'VERIFIED',
+          collectedAt: new Date().toISOString(),
+        });
+      }
+    } else {
+      verifiedSpecimens = order.specimens.map((s) => ({
         ...s,
-        scannedBarcode: draft.barcode.trim(),
-        scannedTubeType: check.detectedTube,
+        scannedBarcode: s.scannedBarcode || '',
+        scannedTubeType: s.tubeType || TubeType.SERUM_RED_GOLD,
         validationStatus: 'VERIFIED',
         collectedAt: new Date().toISOString(),
-      });
+      }));
     }
 
     const finalPhoto = selfiePhotoUrl.trim() || samplePhotoUrl.trim();
@@ -3155,7 +3166,9 @@ function PhleboAppContent() {
         operatorName: phleboName,
         operatorRole: UserRole.PHLEBOTOMIST,
         temperatureCelsius: numericTemp,
-        notes: `All ${verifiedSpecimens.length} tubes barcode-verified (${barcodeSummary}) + phlebo photo proof verified at ${numericTemp}°C by ${phleboName}`,
+        notes: platformFeatures.enableBarcodeScanner
+          ? `All ${verifiedSpecimens.length} tubes barcode-verified (${barcodeSummary}) + phlebo photo proof verified at ${numericTemp}°C by ${phleboName}`
+          : `Collected ${verifiedSpecimens.length} specimen tubes + phlebo photo proof at ${numericTemp}°C by ${phleboName}`,
       };
 
       await updateDoc(doc(db, 'orders', order.id), {

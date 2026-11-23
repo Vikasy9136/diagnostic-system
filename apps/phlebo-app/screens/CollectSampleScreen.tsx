@@ -10,7 +10,7 @@ import {
 import { BRAND_COLORS, SampleVialHeroIllustration } from '../components/LabSetuBrand';
 import { COLORS, FONTS, styles } from '../styles/phleboStyles';
 import { type CameraModalState, type SpecimenDraftMap } from '../types/phleboTypes';
-import { lh, MAX_TEXT_SCALE, rf } from '../utils/responsive';
+import { COMPACT_TEXT_SCALE, lh, MAX_TEXT_SCALE, rf, rs } from '../utils/responsive';
 import { formatFullProperAddress } from '../utils/addressUtils';
 
 export interface CollectSampleScreenProps {
@@ -111,7 +111,7 @@ export function CollectSampleScreen({
         <View style={{ flex: 1, minWidth: 0, alignItems: 'center' }}>
           <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.navBarTitle}>Sample Collection</Text>
           <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.navBarSubtitle}>
-            {order.orderNumber} • {verifiedCount}/{specimens.length} Tubes Verified
+            {order.orderNumber} • {enableBarcodeScanner ? `${verifiedCount}/${specimens.length} Tubes Verified` : `${specimens.length} ${specimens.length === 1 ? 'Specimen' : 'Specimens'}`}
           </Text>
         </View>
         <View style={{ width: 24 }} />
@@ -590,59 +590,108 @@ export function CollectSampleScreen({
         })}
           </>
         ) : (
-          <View style={[styles.verifyHintCard, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0', marginBottom: 14 }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <Ionicons name="flask-outline" size={22} color={BRAND_COLORS.tealPrimary} />
-              <Text style={[styles.verifyHintTitle, { color: '#166534', fontSize: 15 }]}>
-                Specimens to Collect ({specimens.length} Total)
-              </Text>
+          <View style={styles.photoProofCard}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: rs(6) }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: rs(8), flex: 1, minWidth: 0 }}>
+                <Ionicons name="flask-outline" size={20} color={BRAND_COLORS.tealPrimary} />
+                <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.specimenCardTitle}>
+                  Specimens to Collect ({specimens.length} Total)
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.pickupTimeBadge,
+                  {
+                    marginBottom: 0,
+                    backgroundColor: '#F0FDFA',
+                    borderColor: '#99F6E4',
+                    borderWidth: 1,
+                  },
+                ]}
+              >
+                <Text
+                  maxFontSizeMultiplier={COMPACT_TEXT_SCALE}
+                  style={[styles.pickupTimeText, { color: BRAND_COLORS.tealPrimary, fontFamily: FONTS.bold }]}
+                >
+                  {specimens.length} {specimens.length === 1 ? 'Tube' : 'Tubes'} Required
+                </Text>
+              </View>
             </View>
-            <Text style={[styles.verifyHintText, { color: '#14532D', marginBottom: 12 }]}>
-              Verify patient identity, collect diagnostic samples into required vacutainer tubes, and store safely in the chilled carrier box.
+
+            <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={[styles.specimenCardSub, { marginBottom: rs(12) }]}>
+              Collect required diagnostic samples into designated vacutainer tubes and store safely in chilled carrier.
             </Text>
+
             {specimens.map((spec, idx) => {
               const meta = TUBE_METADATA[spec.tubeType || TubeType.SERUM_RED_GOLD] || TUBE_METADATA[TubeType.SERUM_RED_GOLD];
               return (
                 <View
                   key={spec.id}
                   style={{
-                    backgroundColor: '#FFFFFF',
-                    borderRadius: 12,
-                    borderWidth: 1.5,
-                    borderColor: '#DCFCE7',
-                    padding: 12,
-                    marginBottom: 8,
+                    backgroundColor: '#F8FAFC',
+                    borderRadius: rs(12),
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    padding: rs(12),
+                    marginBottom: rs(8),
                     flexDirection: 'row',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    elevation: 1,
                   }}
                 >
-                  <View style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
-                    <Text style={{ fontSize: 13.5, fontWeight: '800', color: BRAND_COLORS.navyPrimary }}>
+                  <View style={{ flex: 1, minWidth: 0, paddingRight: rs(8) }}>
+                    <Text
+                      maxFontSizeMultiplier={MAX_TEXT_SCALE}
+                      style={{
+                        fontSize: rf(13.5),
+                        lineHeight: lh(rf(13.5)),
+                        fontFamily: FONTS.bold,
+                        color: BRAND_COLORS.navyPrimary,
+                      }}
+                      numberOfLines={1}
+                    >
                       #{idx + 1} {spec.testCode} — {spec.testName}
                     </Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: meta.colorHex }} />
-                      <Text style={{ fontSize: 12, color: '#475569', fontWeight: '700' }}>
-                        {meta.label} ({meta.capColorName})
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: rs(6), marginTop: rs(4) }}>
+                      <View style={{ width: rs(10), height: rs(10), borderRadius: rs(5), backgroundColor: meta.colorHex }} />
+                      <Text
+                        maxFontSizeMultiplier={MAX_TEXT_SCALE}
+                        style={{
+                          fontSize: rf(12),
+                          lineHeight: lh(rf(12)),
+                          fontFamily: FONTS.medium,
+                          color: '#475569',
+                        }}
+                      >
+                        {meta.label}
                       </Text>
                     </View>
                   </View>
+
                   <View
                     style={{
-                      backgroundColor: '#DCFCE7',
-                      paddingHorizontal: 10,
-                      paddingVertical: 5,
-                      borderRadius: 8,
+                      backgroundColor: meta.bgHex || '#F1F5F9',
+                      borderColor: meta.colorHex,
+                      borderWidth: 1,
+                      paddingHorizontal: rs(9),
+                      paddingVertical: rs(4),
+                      borderRadius: rs(8),
                       flexDirection: 'row',
                       alignItems: 'center',
-                      gap: 5,
+                      gap: rs(4),
                     }}
                   >
-                    <Ionicons name="checkmark-circle" size={16} color="#15803D" />
-                    <Text style={{ fontSize: 12, fontWeight: '800', color: '#15803D' }}>
-                      Verified
+                    <Ionicons name="color-filter-outline" size={13} color={meta.colorHex} />
+                    <Text
+                      maxFontSizeMultiplier={COMPACT_TEXT_SCALE}
+                      style={{
+                        fontSize: rf(11),
+                        lineHeight: lh(rf(11)),
+                        fontFamily: FONTS.bold,
+                        color: meta.colorHex,
+                      }}
+                    >
+                      {meta.shortTag}
                     </Text>
                   </View>
                 </View>
@@ -871,14 +920,16 @@ export function CollectSampleScreen({
         </View>
 
         <TouchableOpacity
-          style={[styles.ctaButton, (submittingAction || uploadingPhoto || uploadingSelfie) && { opacity: 0.65 }]}
-          disabled={submittingAction || uploadingPhoto || uploadingSelfie}
+          style={[styles.ctaButton, (submittingAction || isUploading) && { opacity: 0.65 }]}
+          disabled={submittingAction || isUploading}
           onPress={() => onConfirmCollection(order)}
         >
           <Text style={styles.ctaButtonText}>
             {submittingAction
-              ? 'Saving Verified Specimens...'
-              : `Save & Confirm Pickup (${verifiedCount}/${specimens.length}) →`}
+              ? 'Saving Sample Pickup...'
+              : enableBarcodeScanner
+                ? `Save & Confirm Pickup (${verifiedCount}/${specimens.length}) →`
+                : 'Save & Confirm Pickup →'}
           </Text>
         </TouchableOpacity>
       </View>
