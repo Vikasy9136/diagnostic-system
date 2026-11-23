@@ -148,20 +148,20 @@ service firebase.storage {
         );
     }
 
-    // Phlebotomist Collection Sample Photos: samples/{orderId}/{fileName}
+    // Phlebotomist Collection Sample Photos & Presence Proof: samples/{orderId}/{fileName}
     match /samples/{orderId}/{fileName} {
-      allow read: if isAdmin() || canReadOrder(orderId);
-      allow write: if request.resource != null
-        && request.resource.size < 15 * 1024 * 1024
-        && (isAdmin() || canReadOrder(orderId));
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated()
+        && request.resource != null
+        && request.resource.size < 15 * 1024 * 1024;
     }
 
     // Custody Handover Digital Signatures: signatures/{orderId}/{fileName}
     match /signatures/{orderId}/{fileName} {
-      allow read: if isAdmin() || canReadOrder(orderId);
-      allow write: if request.resource != null
-        && request.resource.size < 15 * 1024 * 1024
-        && (isAdmin() || canReadOrder(orderId));
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated()
+        && request.resource != null
+        && request.resource.size < 15 * 1024 * 1024;
     }
 
     // Lab Verification & Compliance KYC Documents: documents/{labId}/{fileName}

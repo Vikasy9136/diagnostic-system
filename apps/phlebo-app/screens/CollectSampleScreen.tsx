@@ -90,7 +90,9 @@ export function CollectSampleScreen({
   const allTubesVerified = enableBarcodeScanner
     ? (specimens.length > 0 && verifiedCount === specimens.length)
     : true;
-  const infoStepDone = allTubesVerified && Boolean(samplePhotoUrl) && Boolean(selfiePhotoUrl);
+  const phleboPhoto = selfiePhotoUrl || samplePhotoUrl;
+  const isUploading = Boolean(uploadingSelfie || uploadingPhoto);
+  const infoStepDone = allTubesVerified && Boolean(phleboPhoto);
 
   const formattedNow = new Date().toLocaleString('en-IN', {
     day: '2-digit',
@@ -714,157 +716,7 @@ export function CollectSampleScreen({
           />
         </View>
 
-        <View style={styles.photoProofCard}>
-          <View
-            style={{
-              flexDirection: 'row',
-              flexWrap: 'wrap',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: 8,
-            }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-              <MaterialCommunityIcons name="camera-outline" size={19} color={BRAND_COLORS.navyPrimary} />
-              <Text style={styles.specimenCardTitle}>Collected Sample Photo Proof</Text>
-            </View>
-            <View
-              style={[
-                styles.pickupTimeBadge,
-                {
-                  marginBottom: 0,
-                  flexShrink: 0,
-                  backgroundColor: samplePhotoUrl ? '#DCFCE7' : '#FFEDD5',
-                },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.pickupTimeText,
-                  { color: samplePhotoUrl ? '#15803D' : '#C2410C' },
-                ]}
-              >
-                {samplePhotoUrl ? 'Uploaded' : 'Mandatory'}
-              </Text>
-            </View>
-          </View>
-          <Text style={[styles.specimenCardSub, { marginTop: 4, marginBottom: 12 }]}>
-            Take or upload a clear photo of all labeled tubes collected at {order.smallLabName}.
-          </Text>
-
-          {samplePhotoUrl ? (
-            <View style={{ marginBottom: 12 }}>
-              <Image
-                source={{ uri: samplePhotoUrl }}
-                style={styles.samplePhotoPreview}
-                resizeMode="cover"
-              />
-              <TouchableOpacity
-                style={{ marginTop: 6, alignSelf: 'flex-end' }}
-                onPress={onClearSamplePhoto}
-              >
-                <Text style={{ color: COLORS.errorRed, fontSize: 12, fontFamily: FONTS.semiBold }}>
-                  Remove Photo
-                </Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-
-          <View style={styles.actionsRow}>
-            {Platform.OS === 'web' && typeof document !== 'undefined' ? (
-              <View style={{ flex: 1, position: 'relative' }}>
-                <TouchableOpacity
-                  style={[styles.scanCamButton, { width: '100%' }, uploadingPhoto && { opacity: 0.65 }]}
-                  disabled={uploadingPhoto}
-                >
-                  <Ionicons name="camera-outline" size={17} color="#FFFFFF" />
-                  <Text style={styles.scanCamButtonText}>
-                    {uploadingPhoto ? 'Uploading Proof...' : 'Camera Photo'}
-                  </Text>
-                </TouchableOpacity>
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  disabled={uploadingPhoto}
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    height: '100%',
-                    opacity: 0,
-                    cursor: 'pointer',
-                    zIndex: 10,
-                  }}
-                  onChange={(e) => {
-                    const file = (e.target as HTMLInputElement).files?.[0];
-                    if (!file) return;
-                    onUploadPhotoFile(order.id, file);
-                  }}
-                />
-              </View>
-            ) : (
-              <TouchableOpacity
-                style={[styles.scanCamButton, { flex: 1 }, uploadingPhoto && { opacity: 0.65 }]}
-                disabled={uploadingPhoto}
-                onPress={() => {
-                  if (onTakePhotoWithCamera) {
-                    onTakePhotoWithCamera(order.id);
-                  } else {
-                    onUploadPhotoFile(order.id);
-                  }
-                }}
-              >
-                <Ionicons name="camera-outline" size={17} color="#FFFFFF" />
-                <Text style={styles.scanCamButtonText}>
-                  {uploadingPhoto ? 'Opening Camera...' : 'Camera Photo'}
-                </Text>
-              </TouchableOpacity>
-            )}
-
-            {Platform.OS === 'web' && typeof document !== 'undefined' ? (
-              <View style={{ position: 'relative' }}>
-                <TouchableOpacity
-                  style={[styles.btnSecondary, uploadingPhoto && { opacity: 0.65 }]}
-                  disabled={uploadingPhoto}
-                >
-                  <Text style={styles.btnSecondaryText}>Upload Photo File</Text>
-                </TouchableOpacity>
-                <input
-                  type="file"
-                  accept="image/*"
-                  disabled={uploadingPhoto}
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    height: '100%',
-                    opacity: 0,
-                    cursor: 'pointer',
-                    zIndex: 10,
-                  }}
-                  onChange={(e) => {
-                    const file = (e.target as HTMLInputElement).files?.[0];
-                    if (!file) return;
-                    onUploadPhotoFile(order.id, file);
-                  }}
-                />
-              </View>
-            ) : (
-              <TouchableOpacity
-                style={[styles.btnSecondary, uploadingPhoto && { opacity: 0.65 }]}
-                disabled={uploadingPhoto}
-                onPress={() => onUploadPhotoFile(order.id)}
-              >
-                <Text style={styles.btnSecondaryText}>Upload Photo File</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-
-        {/* PHOTO 2: PHLEBOTOMIST SELFIE AT PATIENT SITE */}
+        {/* SINGLE UNIFIED PHOTO CARD: PHLEBOTOMIST PHOTO PROOF */}
         <View style={styles.photoProofCard}>
           <View
             style={{
@@ -877,7 +729,7 @@ export function CollectSampleScreen({
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
               <MaterialCommunityIcons name="camera-account" size={20} color={BRAND_COLORS.tealPrimary} />
-              <Text style={styles.specimenCardTitle}>Phlebotomist Selfie Photo Proof</Text>
+              <Text style={styles.specimenCardTitle}>Phlebotomist Photo Proof</Text>
             </View>
             <View
               style={[
@@ -885,37 +737,40 @@ export function CollectSampleScreen({
                 {
                   marginBottom: 0,
                   flexShrink: 0,
-                  backgroundColor: selfiePhotoUrl ? '#DCFCE7' : '#FFEDD5',
+                  backgroundColor: phleboPhoto ? '#DCFCE7' : '#FFEDD5',
                 },
               ]}
             >
               <Text
                 style={[
                   styles.pickupTimeText,
-                  { color: selfiePhotoUrl ? '#15803D' : '#C2410C' },
+                  { color: phleboPhoto ? '#15803D' : '#C2410C' },
                 ]}
               >
-                {selfiePhotoUrl ? '✓ Selfie Captured' : 'Mandatory'}
+                {phleboPhoto ? '✓ Photo Uploaded' : 'Mandatory'}
               </Text>
             </View>
           </View>
           <Text style={[styles.specimenCardSub, { marginTop: 4, marginBottom: 12 }]}>
-            Capture a selfie at the patient collection site as physical presence and identity verification.
+            Capture a clear selfie or photo of the phlebotomist at {order.smallLabName} as attendance and custody verification.
           </Text>
 
-          {selfiePhotoUrl ? (
+          {phleboPhoto ? (
             <View style={{ marginBottom: 12 }}>
               <Image
-                source={{ uri: selfiePhotoUrl }}
+                source={{ uri: phleboPhoto }}
                 style={styles.samplePhotoPreview}
                 resizeMode="cover"
               />
               <TouchableOpacity
                 style={{ marginTop: 6, alignSelf: 'flex-end' }}
-                onPress={onClearSelfiePhoto}
+                onPress={() => {
+                  if (onClearSelfiePhoto) onClearSelfiePhoto();
+                  onClearSamplePhoto();
+                }}
               >
                 <Text style={{ color: COLORS.errorRed, fontSize: 12, fontFamily: FONTS.semiBold }}>
-                  Retake / Remove Selfie
+                  Retake / Remove Photo
                 </Text>
               </TouchableOpacity>
             </View>
@@ -925,19 +780,19 @@ export function CollectSampleScreen({
             {Platform.OS === 'web' && typeof document !== 'undefined' ? (
               <View style={{ flex: 1, position: 'relative' }}>
                 <TouchableOpacity
-                  style={[styles.scanCamButton, { width: '100%', backgroundColor: '#0D9488' }, uploadingSelfie && { opacity: 0.65 }]}
-                  disabled={uploadingSelfie}
+                  style={[styles.scanCamButton, { width: '100%', backgroundColor: '#0D9488' }, isUploading && { opacity: 0.65 }]}
+                  disabled={isUploading}
                 >
                   <Ionicons name="camera-outline" size={17} color="#FFFFFF" />
                   <Text style={styles.scanCamButtonText}>
-                    {uploadingSelfie ? 'Uploading Selfie...' : '🤳 Take Front Selfie'}
+                    {isUploading ? 'Uploading Photo...' : '🤳 Take Phlebo Photo'}
                   </Text>
                 </TouchableOpacity>
                 <input
                   type="file"
                   accept="image/*"
                   capture="user"
-                  disabled={uploadingSelfie}
+                  disabled={isUploading}
                   style={{
                     position: 'absolute',
                     top: 0,
@@ -957,8 +812,8 @@ export function CollectSampleScreen({
               </View>
             ) : (
               <TouchableOpacity
-                style={[styles.scanCamButton, { flex: 1, backgroundColor: '#0D9488' }, uploadingSelfie && { opacity: 0.65 }]}
-                disabled={uploadingSelfie}
+                style={[styles.scanCamButton, { flex: 1, backgroundColor: '#0D9488' }, isUploading && { opacity: 0.65 }]}
+                disabled={isUploading}
                 onPress={() => {
                   if (onTakePhotoWithCamera) {
                     onTakePhotoWithCamera(order.id, 'SELFIE');
@@ -969,7 +824,7 @@ export function CollectSampleScreen({
               >
                 <Ionicons name="camera-outline" size={17} color="#FFFFFF" />
                 <Text style={styles.scanCamButtonText}>
-                  {uploadingSelfie ? 'Opening Camera...' : '🤳 Take Front Selfie'}
+                  {isUploading ? 'Opening Camera...' : '🤳 Take Phlebo Photo'}
                 </Text>
               </TouchableOpacity>
             )}
@@ -977,15 +832,15 @@ export function CollectSampleScreen({
             {Platform.OS === 'web' && typeof document !== 'undefined' ? (
               <View style={{ position: 'relative' }}>
                 <TouchableOpacity
-                  style={[styles.btnSecondary, uploadingSelfie && { opacity: 0.65 }]}
-                  disabled={uploadingSelfie}
+                  style={[styles.btnSecondary, isUploading && { opacity: 0.65 }]}
+                  disabled={isUploading}
                 >
                   <Text style={styles.btnSecondaryText}>Upload File</Text>
                 </TouchableOpacity>
                 <input
                   type="file"
                   accept="image/*"
-                  disabled={uploadingSelfie}
+                  disabled={isUploading}
                   style={{
                     position: 'absolute',
                     top: 0,
@@ -1005,8 +860,8 @@ export function CollectSampleScreen({
               </View>
             ) : (
               <TouchableOpacity
-                style={[styles.btnSecondary, uploadingSelfie && { opacity: 0.65 }]}
-                disabled={uploadingSelfie}
+                style={[styles.btnSecondary, isUploading && { opacity: 0.65 }]}
+                disabled={isUploading}
                 onPress={() => onUploadPhotoFile(order.id, undefined, 'SELFIE')}
               >
                 <Text style={styles.btnSecondaryText}>Upload File</Text>

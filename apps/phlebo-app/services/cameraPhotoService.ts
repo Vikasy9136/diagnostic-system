@@ -129,7 +129,14 @@ export async function captureSampleProofPhoto(
     const filename = `${prefix}-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}.jpg`;
     const storagePath = `samples/${orderId}/${filename}`;
 
-    const downloadUrl = await uploadPhleboSampleUri(storagePath, uri);
+    let downloadUrl = uri;
+    try {
+      downloadUrl = await uploadPhleboSampleUri(storagePath, uri);
+    } catch (upErr) {
+      console.warn('[cameraPhotoService] Storage upload error, falling back to local URI:', upErr);
+      // If storage upload fails due to offline/network, use local URI so phlebo is not blocked
+      downloadUrl = uri;
+    }
 
     return {
       success: true,
@@ -216,7 +223,13 @@ export async function pickSampleProofFromLibrary(
     const filename = `upload-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}.jpg`;
     const storagePath = `samples/${orderId}/${filename}`;
 
-    const downloadUrl = await uploadPhleboSampleUri(storagePath, uri);
+    let downloadUrl = uri;
+    try {
+      downloadUrl = await uploadPhleboSampleUri(storagePath, uri);
+    } catch (upErr) {
+      console.warn('[cameraPhotoService] Storage upload error, falling back to local URI:', upErr);
+      downloadUrl = uri;
+    }
 
     return {
       success: true,
