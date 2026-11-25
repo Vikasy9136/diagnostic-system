@@ -1081,6 +1081,21 @@ function PhleboAppContent() {
     [effectivePhleboId, showToast]
   );
 
+  const handleDismissBroadcast = useCallback(
+    (orderId: string, isExplicitDecline = false) => {
+      if (isExplicitDecline) {
+        void handleDeclineOrder(orderId);
+      } else {
+        setDismissedBroadcastIds((prev) => (prev.includes(orderId) ? prev : [...prev, orderId]));
+        activeRingingOrderIdRef.current = null;
+        stopContinuousPickupAlert();
+        void dismissIncomingPickupOverlay();
+        setBroadcastForceOpen(false);
+      }
+    },
+    [handleDeclineOrder]
+  );
+
   // Keep live ticker: 1-second cadence when unassigned orders exist or alert is active, 15-second cadence otherwise
   useEffect(() => {
     if (!session) return;
@@ -2093,7 +2108,7 @@ function PhleboAppContent() {
       void dismissIncomingPickupOverlay();
       if (data?.orderId) {
         const target = orders.find((o) => o.id === data.orderId);
-        const isExpired = target ? isOrderBroadcastExpired(target) : false;
+        const isExpired = !target || isOrderBroadcastExpired(target);
         if (isExpired) {
           stopContinuousPickupAlert();
           void dismissIncomingPickupOverlay();
@@ -2132,9 +2147,9 @@ function PhleboAppContent() {
     return () => {
       sub.remove();
     };
-  }, [openPoolWithDistance]);
+  }, [openPoolWithDistance, orders]);
 
-  // Listen to Outside-App Floating Modal Actions (ACCEPT / DECLINE)
+  // Listen to Outside-App Floating Modal Actions (ACCEPT / DECLINE / EXPIRED)
   useEffect(() => {
     if (Platform.OS !== 'android') return;
 
@@ -2156,6 +2171,8 @@ function PhleboAppContent() {
           }
         } else if (event?.action === 'DECLINE' && event.orderId) {
           void handleDeclineOrder(event.orderId);
+        } else if (event?.action === 'EXPIRED' && event.orderId) {
+          handleDismissBroadcast(event.orderId, false);
         }
       }
     );
@@ -2176,13 +2193,15 @@ function PhleboAppContent() {
         }
       } else if (pending?.action === 'DECLINE' && pending.orderId) {
         void handleDeclineOrder(pending.orderId);
+      } else if (pending?.action === 'EXPIRED' && pending.orderId) {
+        handleDismissBroadcast(pending.orderId, false);
       }
     });
 
     return () => {
       sub.remove();
     };
-  }, [openPoolWithDistance, orders, handleDeclineOrder]);
+  }, [openPoolWithDistance, orders, handleDeclineOrder, handleDismissBroadcast]);
 
   // Listen to Outside-App Floating Quick Action Menu Duty Status Toggles
   useEffect(() => {
@@ -2284,6 +2303,7 @@ function PhleboAppContent() {
         openPoolWithDistance.find((x) => {
           if (!x.inBroadcastRadius) return false;
           if (isOrderBroadcastExpired(x.order)) return false;
+          if (dismissedBroadcastIds.includes(x.order.id)) return false;
           const isRetriedOrHiked =
             (x.order.searchRetryCount ?? 0) > 0 || (x.order.surgeIncentiveInr ?? 0) > 0;
           if (!isRetriedOrHiked) {
@@ -2311,7 +2331,15 @@ function PhleboAppContent() {
     openPoolWithDistance,
     dismissedBroadcastIds,
     declinedOrderIds,
+    nowTick,
   ]);
+
+  // Auto-dismiss broadcast if active broadcast order expires
+  useEffect(() => {
+    if (activeBroadcastMatch && isOrderBroadcastExpired(activeBroadcastMatch.order)) {
+      handleDismissBroadcast(activeBroadcastMatch.order.id, false);
+    }
+  }, [activeBroadcastMatch, handleDismissBroadcast, nowTick]);
 
   // Merge live settlements & payouts with handled orders for accurate earnings computation
   const earningRows = useMemo<EarningRow[]>(() => {
@@ -4371,17 +4399,7 @@ function PhleboAppContent() {
         activeBroadcastMatch={activeBroadcastMatch}
         riderLocation={riderLocation}
         submittingAction={submittingAction}
-        onDismissBroadcast={(orderId, isExplicitDecline) => {
-          if (isExplicitDecline) {
-            void handleDeclineOrder(orderId);
-          } else {
-            setDismissedBroadcastIds((prev) => [...prev, orderId]);
-            activeRingingOrderIdRef.current = null;
-            stopContinuousPickupAlert();
-            void dismissIncomingPickupOverlay();
-            setBroadcastForceOpen(false);
-          }
-        }}
+        onDismissBroadcast={handleDismissBroadcast}
         onAcceptPoolOrder={(order) => void handleAcceptPoolOrder(order)}
         onOpenDirectionsMap={openDirectionsMap}
       />

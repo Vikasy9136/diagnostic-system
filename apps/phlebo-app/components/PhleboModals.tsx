@@ -43,7 +43,7 @@ import {
   type OpenPoolEntry,
   type SpecimenDraftMap,
 } from '../types/phleboTypes';
-import { formatLabel, isOrderBroadcastExpired } from '../utils/phleboHelpers';
+import { formatLabel, isOrderBroadcastExpired, parseDateToMillis } from '../utils/phleboHelpers';
 
 export interface PaymentLinkModalProps {
   activePaymentLink: ActivePaymentLinkState | null;
@@ -451,56 +451,51 @@ export function BroadcastDispatchModal({
 }: BroadcastDispatchModalProps) {
   const insets = useSafeAreaInsets();
   const [remSeconds, setRemSeconds] = useState(45);
+  const onDismissRef = useRef(onDismissBroadcast);
+  onDismissRef.current = onDismissBroadcast;
 
   useEffect(() => {
     if (!activeBroadcastMatch) return;
+    const currentOrderId = activeBroadcastMatch.order.id;
 
-    // Check if dispatch window has expired
-    if (isOrderBroadcastExpired(activeBroadcastMatch.order)) {
-      onDismissBroadcast(activeBroadcastMatch.order.id, false);
+    // Helper to calculate seconds remaining strictly based on wall-clock time
+    const calcRemaining = () => {
+      let endMs = parseDateToMillis(activeBroadcastMatch.order.broadcastExpiresAt);
+      if (Number.isNaN(endMs) || endMs <= 0) {
+        const refMs = parseDateToMillis(
+          activeBroadcastMatch.order.updatedAt || activeBroadcastMatch.order.createdAt
+        );
+        endMs = !Number.isNaN(refMs) && refMs > 0 ? refMs + 45000 : 0;
+      }
+      if (!endMs) {
+        return 45;
+      }
+      return Math.max(0, Math.ceil((endMs - Date.now()) / 1000));
+    };
+
+    const initialRem = calcRemaining();
+    if (initialRem <= 0) {
+      onDismissRef.current(currentOrderId, false);
       return;
     }
 
-    let sec = 45;
-    if (activeBroadcastMatch.order.broadcastExpiresAt) {
-      const diff = Math.ceil(
-        (new Date(activeBroadcastMatch.order.broadcastExpiresAt).getTime() - Date.now()) / 1000
-      );
-      if (diff <= 0) {
-        onDismissBroadcast(activeBroadcastMatch.order.id, false);
-        return;
-      }
-      sec = Math.min(60, diff);
-    } else {
-      const refTimeStr = activeBroadcastMatch.order.updatedAt || activeBroadcastMatch.order.createdAt;
-      if (refTimeStr) {
-        const elapsed = Math.floor((Date.now() - new Date(refTimeStr).getTime()) / 1000);
-        const rem = 45 - elapsed;
-        if (rem <= 0) {
-          onDismissBroadcast(activeBroadcastMatch.order.id, false);
-          return;
-        }
-        sec = rem;
-      }
-    }
-    setRemSeconds(sec);
+    setRemSeconds(initialRem);
 
     const timer = setInterval(() => {
-      setRemSeconds((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          onDismissBroadcast(activeBroadcastMatch.order.id, false);
-          return 0;
-        }
-        return prev - 1;
-      });
+      const rem = calcRemaining();
+      setRemSeconds(rem);
+      if (rem <= 0) {
+        clearInterval(timer);
+        onDismissRef.current(currentOrderId, false);
+      }
     }, 1000);
+
     return () => clearInterval(timer);
   }, [
     activeBroadcastMatch?.order.id,
     activeBroadcastMatch?.order.searchRetryCount,
     activeBroadcastMatch?.order.surgeIncentiveInr,
-    onDismissBroadcast,
+    activeBroadcastMatch?.order.broadcastExpiresAt,
   ]);
 
   return (

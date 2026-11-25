@@ -695,6 +695,9 @@ class FloatingDispatchOverlayService : Service() {
       override fun onFinish() {
         stopAlertSound()
         detachIncomingModal()
+        pendingActionType = "EXPIRED"
+        pendingActionOrderId = orderId
+        actionListener?.invoke("EXPIRED", orderId)
       }
     }.start()
   }

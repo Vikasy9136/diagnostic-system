@@ -29,7 +29,7 @@ interface NativeFloatingDispatchOverlayModule {
   stopOverlay: () => Promise<boolean>;
   triggerIncomingPickupModal: (orderData: IncomingOrderOverlayPayload) => Promise<boolean>;
   dismissIncomingPickupModal: () => Promise<boolean>;
-  getPendingOrderAction: () => Promise<{ action: 'ACCEPT' | 'DECLINE'; orderId: string } | null>;
+  getPendingOrderAction: () => Promise<{ action: 'ACCEPT' | 'DECLINE' | 'EXPIRED'; orderId: string } | null>;
   playBookingRingtone?: () => Promise<boolean>;
   stopBookingRingtone?: () => Promise<boolean>;
   playNotificationChime?: () => Promise<boolean>;
@@ -232,7 +232,7 @@ export async function dismissIncomingPickupOverlay(): Promise<boolean> {
  * Check if phlebo tapped ACCEPT or DECLINE on the outside-app floating card
  */
 export async function getPendingIncomingOrderAction(): Promise<{
-  action: 'ACCEPT' | 'DECLINE';
+  action: 'ACCEPT' | 'DECLINE' | 'EXPIRED';
   orderId: string;
 } | null> {
   if (Platform.OS === 'android' && NativeOverlay?.getPendingOrderAction) {

@@ -41,21 +41,49 @@ function playAudioViaExpo(assetRequire: any, isLoop = false): any {
   return null;
 }
 
+export function parseDateToMillis(val: any): number {
+  if (!val) return NaN;
+  if (typeof val === 'number') return val;
+  if (typeof val === 'string') {
+    const ms = new Date(val).getTime();
+    return Number.isNaN(ms) ? NaN : ms;
+  }
+  if (typeof val === 'object') {
+    if (typeof val.toMillis === 'function') {
+      try {
+        return val.toMillis();
+      } catch {}
+    }
+    if (typeof val.toDate === 'function') {
+      try {
+        return val.toDate().getTime();
+      } catch {}
+    }
+    if (typeof val.seconds === 'number') {
+      return (
+        val.seconds * 1000 +
+        (typeof val.nanoseconds === 'number' ? Math.floor(val.nanoseconds / 1000000) : 0)
+      );
+    }
+  }
+  return NaN;
+}
+
 export function isOrderBroadcastExpired(order: PickupOrder | null | undefined): boolean {
   if (!order) return true;
   if (order.status !== OrderStatus.READY_FOR_PICKUP) return true;
   if (order.phlebotomistId) return true;
 
   if (order.broadcastExpiresAt) {
-    const expTime = new Date(order.broadcastExpiresAt).getTime();
+    const expTime = parseDateToMillis(order.broadcastExpiresAt);
     if (!Number.isNaN(expTime)) {
       return Date.now() >= expTime;
     }
   }
 
-  const refTimeStr = order.updatedAt || order.createdAt;
-  if (refTimeStr) {
-    const refTime = new Date(refTimeStr).getTime();
+  const refTimeVal = order.updatedAt || order.createdAt;
+  if (refTimeVal) {
+    const refTime = parseDateToMillis(refTimeVal);
     if (!Number.isNaN(refTime)) {
       return Date.now() - refTime >= 45000;
     }
