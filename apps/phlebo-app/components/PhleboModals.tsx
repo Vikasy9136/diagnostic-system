@@ -261,7 +261,7 @@ export function PaymentLinkModal({
                   marginBottom: 8,
                 }}
               >
-                Show this QR Code to patient to scan with any UPI App (GPay, PhonePe, Paytm, BHIM).
+                Show this QR Code to patient to scan with any UPI App (GPay, PhonePe, Paytm, BHIM), or tap below to open in-app online checkout.
               </Text>
 
               {/* Dynamic QR Code Render */}
@@ -325,7 +325,7 @@ export function PaymentLinkModal({
                     style={[styles.btnSecondary, { flex: 0, paddingVertical: 10 }]}
                     onPress={() => onReopenLink(activePaymentLink.shortUrl)}
                   >
-                    <Text style={styles.btnSecondaryText}>Open Checkout Link / UPI App ↗</Text>
+                    <Text style={styles.btnSecondaryText}>Pay Online via In-App UPI / Card ↗</Text>
                   </TouchableOpacity>
                 )}
               </View>

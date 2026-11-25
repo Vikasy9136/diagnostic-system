@@ -28,6 +28,7 @@ import * as Notifications from 'expo-notifications';
 import * as Updates from 'expo-updates';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
+import * as WebBrowser from 'expo-web-browser';
 import {
   checkAppUpdateAvailability,
   applyAppUpdate,
@@ -1197,19 +1198,34 @@ function PhleboAppContent() {
     });
   }, [orders, effectivePhleboId, myPhleboProfile?.id, myPhleboProfile?.userCode, session?.firebaseUser?.uid, myPhleboId]);
 
+  const isOrderActivePending = useCallback((o: PickupOrder): boolean => {
+    if (!o) return false;
+    const stUpper = String(o.status || '').toUpperCase();
+    if (
+      stUpper.includes('DELIVER') ||
+      stUpper.includes('ANALYS') ||
+      stUpper.includes('REPORT') ||
+      stUpper.includes('COMPLET') ||
+      stUpper.includes('CANCEL') ||
+      stUpper.includes('REJECT') ||
+      Boolean(o.actualDeliveredAt) ||
+      Boolean(o.deliveredAt) ||
+      Boolean(o.actualDropAt) ||
+      Boolean(o.arrivalTemperatureCelsius) ||
+      isOrderCompleted(o.status)
+    ) {
+      return false;
+    }
+    return (
+      o.status === OrderStatus.ASSIGNED_TO_PHLEBO ||
+      o.status === OrderStatus.PICKED_UP ||
+      o.status === OrderStatus.IN_TRANSIT
+    );
+  }, []);
+
   const activeAssignedOrders = useMemo(
-    () =>
-      myAssignedOrders.filter(
-        (o) =>
-          o.status !== OrderStatus.DELIVERED_TO_LAB &&
-          o.status !== OrderStatus.UNDER_ANALYSIS &&
-          o.status !== OrderStatus.REPORT_UPLOADED &&
-          o.status !== OrderStatus.COMPLETED &&
-          o.status !== OrderStatus.CANCELLED &&
-          o.status !== OrderStatus.REJECTED &&
-          !isOrderCompleted(o.status)
-      ),
-    [myAssignedOrders]
+    () => myAssignedOrders.filter(isOrderActivePending),
+    [myAssignedOrders, isOrderActivePending]
   );
 
   useEffect(() => {
@@ -1896,12 +1912,16 @@ function PhleboAppContent() {
       }
     }
 
-    const newlyArrived = allCandidates.filter(
-      (x) =>
-        !alertedBroadcastIdsRef.current.has(x.order.id) &&
-        !declinedOrderIds.includes(x.order.id) &&
-        (!effectivePhleboId || !x.order.declinedPhleboIds?.includes(effectivePhleboId))
-    );
+    const newlyArrived = allCandidates.filter((x) => {
+      if (alertedBroadcastIdsRef.current.has(x.order.id)) return false;
+      const isRetriedOrHiked =
+        (x.order.searchRetryCount ?? 0) > 0 || (x.order.surgeIncentiveInr ?? 0) > 0;
+      if (!isRetriedOrHiked) {
+        if (declinedOrderIds.includes(x.order.id)) return false;
+        if (effectivePhleboId && x.order.declinedPhleboIds?.includes(effectivePhleboId)) return false;
+      }
+      return true;
+    });
     if (newlyArrived.length === 0) return;
 
     newlyArrived.forEach((x) => {
@@ -2205,23 +2225,31 @@ function PhleboAppContent() {
       return null;
     }
 
-    const undismissed = openPoolWithDistance.find(
-      (x) =>
-        x.inBroadcastRadius &&
-        !dismissedBroadcastIds.includes(x.order.id) &&
-        !declinedOrderIds.includes(x.order.id) &&
-        !x.order.declinedPhleboIds?.includes(effectivePhleboId)
-    );
+    const undismissed = openPoolWithDistance.find((x) => {
+      if (!x.inBroadcastRadius) return false;
+      if (dismissedBroadcastIds.includes(x.order.id)) return false;
+      const isRetriedOrHiked =
+        (x.order.searchRetryCount ?? 0) > 0 || (x.order.surgeIncentiveInr ?? 0) > 0;
+      if (!isRetriedOrHiked) {
+        if (declinedOrderIds.includes(x.order.id)) return false;
+        if (effectivePhleboId && x.order.declinedPhleboIds?.includes(effectivePhleboId)) return false;
+      }
+      return true;
+    });
     if (undismissed) return undismissed;
 
     if (broadcastForceOpen) {
       return (
-        openPoolWithDistance.find(
-          (x) =>
-            x.inBroadcastRadius &&
-            !declinedOrderIds.includes(x.order.id) &&
-            !x.order.declinedPhleboIds?.includes(effectivePhleboId)
-        ) || null
+        openPoolWithDistance.find((x) => {
+          if (!x.inBroadcastRadius) return false;
+          const isRetriedOrHiked =
+            (x.order.searchRetryCount ?? 0) > 0 || (x.order.surgeIncentiveInr ?? 0) > 0;
+          if (!isRetriedOrHiked) {
+            if (declinedOrderIds.includes(x.order.id)) return false;
+            if (effectivePhleboId && x.order.declinedPhleboIds?.includes(effectivePhleboId)) return false;
+          }
+          return true;
+        }) || null
       );
     }
 
@@ -2304,22 +2332,34 @@ function PhleboAppContent() {
   }, [myAssignedOrders, isSameLocalDay]);
 
   const todayPendingOrders = useMemo(
-    () =>
-      todayOrders.filter(
-        (o) =>
-          !o.actualDeliveredAt &&
-          (o.status === OrderStatus.ASSIGNED_TO_PHLEBO ||
-            o.status === OrderStatus.PICKED_UP ||
-            o.status === OrderStatus.IN_TRANSIT)
-      ),
-    [todayOrders]
+    () => todayOrders.filter(isOrderActivePending),
+    [todayOrders, isOrderActivePending]
   );
 
-  // Floating icon pending count strictly shows only active pending orders (assigned, collected, or in-transit tasks)
-  const floatingPendingCount = useMemo(
-    () => Math.max(activeAssignedOrders.length, todayPendingOrders.length),
-    [activeAssignedOrders.length, todayPendingOrders.length]
-  );
+  // Floating icon pending count strictly shows:
+  // 1. If courier is executing active assigned tasks: count of active ongoing tasks
+  // 2. If courier has no active task: count of new open pool broadcast requests waiting nearby
+  // 3. If neither: strictly 0 (no floating badge rendered)
+  const floatingPendingCount = useMemo(() => {
+    if (activeAssignedOrders.length > 0) {
+      return activeAssignedOrders.length;
+    }
+    const pendingNearby = openPoolWithDistance.filter(
+      (x) =>
+        x.inBroadcastRadius &&
+        x.order.status === OrderStatus.READY_FOR_PICKUP &&
+        !dismissedBroadcastIds.includes(x.order.id) &&
+        !declinedOrderIds.includes(x.order.id) &&
+        (!effectivePhleboId || !x.order.declinedPhleboIds?.includes(effectivePhleboId))
+    );
+    return pendingNearby.length;
+  }, [
+    activeAssignedOrders.length,
+    openPoolWithDistance,
+    dismissedBroadcastIds,
+    declinedOrderIds,
+    effectivePhleboId,
+  ]);
 
   useEffect(() => {
     void syncFloatingOverlayRuntime({
@@ -3817,6 +3857,64 @@ function PhleboAppContent() {
     }
   }
 
+  const handleOpenInAppCheckout = useCallback(
+    async (url: string) => {
+      if (!url) return;
+      try {
+        if (Platform.OS === 'web') {
+          if (activePaymentLink) {
+            try {
+              const res = await startPhleboWebCheckout({
+                amountInr: activePaymentLink.amountInr,
+                bookingId: activePaymentLink.orderId,
+                settlementId: activePaymentLink.settlementId,
+                description: `LabSetu Booking ${activePaymentLink.orderNumber}`,
+              });
+              if (res.status === 'PAID') {
+                setActivePaymentLink(null);
+                showToast({
+                  variant: 'SUCCESS',
+                  title: '✓ Payment Received',
+                  subtitle: `Online payment of ${formatInr(activePaymentLink.amountInr)} captured successfully.`,
+                });
+                return;
+              }
+            } catch {
+              if (typeof window !== 'undefined') {
+                window.open(url, '_blank');
+              }
+              return;
+            }
+          } else {
+            if (typeof window !== 'undefined') {
+              window.open(url, '_blank');
+            }
+            return;
+          }
+        } else {
+          // Native Android & iOS: Open Chrome Custom Tab / In-App Browser overlay
+          // The rider never leaves the app; LabSetu toolbar and X close button appear at top
+          await WebBrowser.openBrowserAsync(url, {
+            toolbarColor: '#0D9488',
+            secondaryToolbarColor: '#0A2A5E',
+            showTitle: true,
+            enableBarCollapsing: true,
+            presentationStyle: WebBrowser.WebBrowserPresentationStyle.OVER_FULL_SCREEN,
+            controlsColor: '#FFFFFF',
+          });
+          // Immediately after custom tab is closed/finished, poll for payment status
+          void handleVerifyActivePaymentLink();
+        }
+      } catch (err) {
+        console.warn('In-app checkout open error:', err);
+        try {
+          await Linking.openURL(url);
+        } catch {}
+      }
+    },
+    [activePaymentLink, handleVerifyActivePaymentLink, showToast]
+  );
+
   function handleMarkDirectPayment(
     order: PickupOrder,
     method: 'DIRECT_TO_LAB' | 'CASH' | 'UPI_PHLEBO'
@@ -4222,7 +4320,7 @@ function PhleboAppContent() {
         verifyingLinkPayment={verifyingLinkPayment}
         onClose={() => setActivePaymentLink(null)}
         onVerify={() => void handleVerifyActivePaymentLink()}
-        onReopenLink={(url) => void Linking.openURL(url)}
+        onReopenLink={(url) => void handleOpenInAppCheckout(url)}
         onConfirmCash={(orderId, amountInr) => void handleConfirmCashPayment(orderId, amountInr)}
       />
 
@@ -4527,17 +4625,25 @@ function PhleboAppContent() {
                 requestTab={requestTab}
                 radiusOnlyFilter={radiusOnlyFilter}
                 openPoolOrdersCount={
-                  openPoolOrders.filter(
-                    (o) =>
+                  openPoolOrders.filter((o) => {
+                    const isRetriedOrHiked =
+                      (o.searchRetryCount ?? 0) > 0 || (o.surgeIncentiveInr ?? 0) > 0;
+                    if (isRetriedOrHiked) return true;
+                    return (
                       !declinedOrderIds.includes(o.id) &&
                       !o.declinedPhleboIds?.includes(effectivePhleboId)
-                  ).length
+                    );
+                  }).length
                 }
-                openPoolWithDistance={openPoolWithDistance.filter(
-                  (x) =>
+                openPoolWithDistance={openPoolWithDistance.filter((x) => {
+                  const isRetriedOrHiked =
+                    (x.order.searchRetryCount ?? 0) > 0 || (x.order.surgeIncentiveInr ?? 0) > 0;
+                  if (isRetriedOrHiked) return true;
+                  return (
                     !declinedOrderIds.includes(x.order.id) &&
                     !x.order.declinedPhleboIds?.includes(effectivePhleboId)
-                )}
+                  );
+                })}
                 activeAssignedOrders={activeAssignedOrders}
                 completedAssignedOrders={completedAssignedOrders}
                 submittingAction={submittingAction}
@@ -4733,7 +4839,7 @@ function PhleboAppContent() {
         isOnline={isOnline}
         activeTab={bottomTab}
         currentScreen={currentScreen}
-        pendingCount={activeAssignedOrders.length + openPoolOrders.length}
+        pendingCount={activeAssignedOrders.length > 0 ? activeAssignedOrders.length : floatingPendingCount}
         todayPendingCount={todayPendingOrders.length}
         onClose={() => setDrawerVisible(false)}
         onNavigateTab={(tab, resetScreen) => {

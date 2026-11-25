@@ -2427,6 +2427,7 @@ export async function retryOrderBroadcast(
     status: OrderStatus.READY_FOR_PICKUP,
     phlebotomistId: '',
     phlebotomistName: undefined,
+    declinedPhleboIds: [],
     updatedAt: now.toISOString(),
     custodyHistory: [...(existing.custodyHistory || []), retryEvent],
   };
