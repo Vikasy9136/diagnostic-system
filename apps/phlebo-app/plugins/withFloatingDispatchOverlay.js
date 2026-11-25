@@ -361,7 +361,7 @@ class FloatingDispatchOverlayService : Service() {
     topRow.addView(spacerTop, spacerTopLp)
 
     val timerBadge = TextView(this).apply {
-      text = "⏱ ${timeoutSec}s"
+      text = "⏱ \${timeoutSec}s"
       setTextColor(Color.parseColor("#B45309"))
       textSize = 13.5f
       typeface = Typeface.DEFAULT_BOLD
@@ -399,7 +399,7 @@ class FloatingDispatchOverlayService : Service() {
         topMargin = dp(8)
       }
       val surgeText = TextView(this).apply {
-        text = "⚡ +₹${surgeIncentive} SURGE HIKE INCLUDED"
+        text = "⚡ +₹\${surgeIncentive} SURGE HIKE INCLUDED"
         setTextColor(Color.parseColor("#B45309"))
         textSize = 11.5f
         typeface = Typeface.DEFAULT_BOLD
