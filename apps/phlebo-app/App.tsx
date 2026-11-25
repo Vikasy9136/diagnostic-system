@@ -2334,16 +2334,19 @@ function PhleboAppContent() {
     nowTick,
   ]);
 
-  // Auto-dismiss broadcast if active broadcast order expires, and ensure native overlay stays hidden in foreground
+  // Auto-dismiss broadcast if active broadcast order expires
   useEffect(() => {
-    if (activeBroadcastMatch) {
-      if (isOrderBroadcastExpired(activeBroadcastMatch.order)) {
-        handleDismissBroadcast(activeBroadcastMatch.order.id, false);
-      } else if (AppState.currentState === 'active' || appState === 'active') {
-        void dismissIncomingPickupOverlay();
-      }
+    if (activeBroadcastMatch && isOrderBroadcastExpired(activeBroadcastMatch.order)) {
+      handleDismissBroadcast(activeBroadcastMatch.order.id, false);
     }
-  }, [activeBroadcastMatch, handleDismissBroadcast, nowTick, appState]);
+  }, [activeBroadcastMatch, handleDismissBroadcast, nowTick]);
+
+  // Ensure native overlay stays hidden when an in-app broadcast modal is active in foreground
+  useEffect(() => {
+    if (activeBroadcastMatch && (AppState.currentState === 'active' || appState === 'active')) {
+      void dismissIncomingPickupOverlay();
+    }
+  }, [activeBroadcastMatch?.order.id, appState]);
 
   // Merge live settlements & payouts with handled orders for accurate earnings computation
   const earningRows = useMemo<EarningRow[]>(() => {

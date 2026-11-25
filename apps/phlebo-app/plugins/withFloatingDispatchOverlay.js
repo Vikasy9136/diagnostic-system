@@ -43,7 +43,9 @@ import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.os.CountDownTimer
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -99,6 +101,7 @@ class FloatingDispatchOverlayService : Service() {
 
   override fun onCreate() {
     super.onCreate()
+    activeInstance = this
     windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
     vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
       val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
@@ -139,9 +142,21 @@ class FloatingDispatchOverlayService : Service() {
     }
   }
 
+  private fun ensureForegroundSafe() {
+    try {
+      val notification = buildForegroundNotification()
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+      } else {
+        startForeground(NOTIF_ID, notification)
+      }
+    } catch (_: Exception) {}
+  }
+
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     when (intent?.action) {
       ACTION_STOP -> {
+        ensureForegroundSafe()
         stopAlertSound()
         detachIncomingModal()
         stopForegroundCompat()
@@ -150,11 +165,13 @@ class FloatingDispatchOverlayService : Service() {
         return START_NOT_STICKY
       }
       ACTION_DISMISS_INCOMING -> {
+        ensureForegroundSafe()
         stopAlertSound()
         detachIncomingModal()
         return START_STICKY
       }
       ACTION_INCOMING_ORDER -> {
+        ensureForegroundSafe()
         val orderId = intent.getStringExtra(EXTRA_ORDER_ID) ?: ""
         val orderNum = intent.getStringExtra(EXTRA_ORDER_NUMBER) ?: orderId
         val pickupLab = intent.getStringExtra(EXTRA_PICKUP_LAB) ?: "Pickup Lab"
@@ -191,12 +208,7 @@ class FloatingDispatchOverlayService : Service() {
     currentNearbyCount = intent?.getIntExtra(EXTRA_NEARBY_COUNT, currentNearbyCount) ?: currentNearbyCount
     currentCourierId = intent?.getStringExtra(EXTRA_COURIER_ID) ?: currentCourierId
 
-    val notification = buildForegroundNotification()
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-      startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-    } else {
-      startForeground(NOTIF_ID, notification)
-    }
+    ensureForegroundSafe()
 
     if (canDrawOverlaysCompat(this)) {
       if (bubbleContainer == null) {
@@ -222,6 +234,9 @@ class FloatingDispatchOverlayService : Service() {
 
   override fun onDestroy() {
     super.onDestroy()
+    if (activeInstance === this) {
+      activeInstance = null
+    }
     stopAlertSound()
     detachIncomingModal()
     hideDismissTarget()
@@ -2133,10 +2148,20 @@ class FloatingDispatchOverlayService : Service() {
     const val EXTRA_TIMEOUT_SEC = "timeoutSec"
     const val EXTRA_SURGE_INCENTIVE = "surgeIncentive"
 
+    var activeInstance: FloatingDispatchOverlayService? = null
     var pendingActionType: String? = null
     var pendingActionOrderId: String? = null
     var actionListener: ((action: String, orderId: String) -> Unit)? = null
     var dutyChangeListener: ((newDuty: String) -> Unit)? = null
+
+    fun dismissActiveIncoming() {
+      Handler(Looper.getMainLooper()).post {
+        try {
+          activeInstance?.stopAlertSound()
+          activeInstance?.detachIncomingModal()
+        } catch (_: Exception) {}
+      }
+    }
 
     fun canDrawOverlaysCompat(context: Context): Boolean {
       return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -2334,14 +2359,7 @@ class FloatingDispatchOverlayModule(
   @ReactMethod
   fun dismissIncomingPickupModal(promise: Promise) {
     try {
-      val svcIntent = Intent(reactCtx, FloatingDispatchOverlayService::class.java).apply {
-        action = FloatingDispatchOverlayService.ACTION_DISMISS_INCOMING
-      }
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        reactCtx.startForegroundService(svcIntent)
-      } else {
-        reactCtx.startService(svcIntent)
-      }
+      FloatingDispatchOverlayService.dismissActiveIncoming()
       promise.resolve(true)
     } catch (e: Exception) {
       promise.resolve(false)
