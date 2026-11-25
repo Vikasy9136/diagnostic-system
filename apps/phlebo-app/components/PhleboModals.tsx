@@ -317,33 +317,33 @@ export function BroadcastDispatchModal({
               {/* Surge Incentive Banner */}
               {Boolean(
                 activeBroadcastMatch.order.surgeIncentiveInr &&
-                  activeBroadcastMatch.order.surgeIncentiveInr > 0
+                activeBroadcastMatch.order.surgeIncentiveInr > 0
               ) && (
-                <View
-                  style={{
-                    backgroundColor: '#FFFBEB',
-                    borderColor: '#F59E0B',
-                    borderWidth: 1,
-                    borderRadius: 8,
-                    paddingHorizontal: 12,
-                    paddingVertical: 6,
-                    marginTop: 8,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 6,
-                  }}
-                >
-                  <Text
+                  <View
                     style={{
-                      fontSize: 12,
-                      fontFamily: BRAND_FONTS.bold,
-                      color: '#B45309',
+                      backgroundColor: '#FFFBEB',
+                      borderColor: '#F59E0B',
+                      borderWidth: 1,
+                      borderRadius: 8,
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                      marginTop: 8,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 6,
                     }}
                   >
-                    ⚡ +₹{activeBroadcastMatch.order.surgeIncentiveInr} SURGE HIKE INCLUDED
-                  </Text>
-                </View>
-              )}
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        fontFamily: BRAND_FONTS.bold,
+                        color: '#B45309',
+                      }}
+                    >
+                      ⚡ +₹{activeBroadcastMatch.order.surgeIncentiveInr} SURGE HIKE INCLUDED
+                    </Text>
+                  </View>
+                )}
 
               {/* 2. Hero Payout Box */}
               <View
@@ -887,8 +887,8 @@ export function LocationPickerModal({
                 {riderCoverage.covered
                   ? `🟢 Live GPS inside Admin zone: ${riderCoverage.matchedZone?.name || riderCoverage.matchedZone?.zoneCode}`
                   : zonesLoaded
-                  ? `⚠ ${riderCoverage.message}`
-                  : 'Syncing live service zones from Admin...'}
+                    ? `⚠ ${riderCoverage.message}`
+                    : 'Syncing live service zones from Admin...'}
               </Text>
             </View>
 
@@ -1070,7 +1070,7 @@ export function CameraScannerModal({
           webVideoRef.current.srcObject = stream;
           webVideoRef.current.setAttribute('playsinline', 'true');
           webVideoRef.current.setAttribute('webkit-playsinline', 'true');
-          await webVideoRef.current.play().catch(() => {});
+          await webVideoRef.current.play().catch(() => { });
         }
 
         const BarcodeCtor = (
@@ -1190,18 +1190,18 @@ export function CameraScannerModal({
     scannedLock && lastScannedCode
       ? `✓ Scanned: ${lastScannedCode}`
       : Platform.OS !== 'web'
-      ? !cameraPermission?.granted
-        ? 'Camera permission required — tap Enable Camera below'
-        : cameraModal?.mode === 'PHOTO'
-        ? 'Center all specimen vials clearly and tap Capture'
-        : 'Point camera at specimen tube barcode'
-      : webCamError
-      ? webCamError
-      : webCamActive
-      ? 'Live camera active. Align barcode inside frame...'
-      : cameraStatusText && cameraStatusText !== 'Starting camera...'
-      ? cameraStatusText
-      : 'Initializing camera feed...';
+        ? !cameraPermission?.granted
+          ? 'Camera permission required — tap Enable Camera below'
+          : cameraModal?.mode === 'PHOTO'
+            ? 'Center all specimen vials clearly and tap Capture'
+            : 'Point camera at specimen tube barcode'
+        : webCamError
+          ? webCamError
+          : webCamActive
+            ? 'Live camera active. Align barcode inside frame...'
+            : cameraStatusText && cameraStatusText !== 'Starting camera...'
+              ? cameraStatusText
+              : 'Initializing camera feed...';
 
   return (
     <Modal visible={Boolean(cameraModal)} transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>
@@ -1307,19 +1307,19 @@ export function CameraScannerModal({
                   barcodeScannerSettings={
                     cameraModal.mode === 'BARCODE'
                       ? {
-                          barcodeTypes: [
-                            'code128',
-                            'code39',
-                            'code93',
-                            'codabar',
-                            'ean13',
-                            'ean8',
-                            'qr',
-                            'upc_a',
-                            'upc_e',
-                            'itf14',
-                          ],
-                        }
+                        barcodeTypes: [
+                          'code128',
+                          'code39',
+                          'code93',
+                          'codabar',
+                          'ean13',
+                          'ean8',
+                          'qr',
+                          'upc_a',
+                          'upc_e',
+                          'itf14',
+                        ],
+                      }
                       : undefined
                   }
                   onBarcodeScanned={
@@ -1474,8 +1474,8 @@ export function CameraScannerModal({
                   {scannedLock
                     ? `✓ Barcode Captured: ${lastScannedCode}`
                     : cameraModal.mode === 'PHOTO'
-                    ? 'Center All Specimen Tubes'
-                    : 'Point Camera at Tube Barcode'}
+                      ? 'Center All Specimen Tubes'
+                      : 'Point Camera at Tube Barcode'}
                 </Text>
               </View>
             </View>

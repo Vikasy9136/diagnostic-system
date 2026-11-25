@@ -10,10 +10,12 @@ import {
   addDoc,
   collection,
   deleteDoc,
+  doc,
   getDocs,
   onSnapshot,
   orderBy,
   query,
+  updateDoc,
 } from 'firebase/firestore';
 import { ModalFrame } from './ModalFrame';
 
@@ -113,6 +115,7 @@ export function SmallLabOrderChatModal({
     setSending(true);
 
     try {
+      const now = new Date().toISOString();
       const chatCol = collection(db, 'orders', order.id, 'chat_messages');
       await addDoc(chatCol, {
         orderId: order.id,
@@ -122,9 +125,19 @@ export function SmallLabOrderChatModal({
         senderRole: 'SMALL_LAB',
         message: raw,
         text: raw,
-        timestamp: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        timestamp: now,
+        createdAt: now,
       });
+
+      try {
+        await updateDoc(doc(db, 'orders', order.id), {
+          lastChatAt: now,
+          lastChatMessage: raw,
+          updatedAt: now,
+        });
+      } catch {
+        // Non-fatal
+      }
     } catch (err) {
       console.error('Failed to send message:', err);
     } finally {

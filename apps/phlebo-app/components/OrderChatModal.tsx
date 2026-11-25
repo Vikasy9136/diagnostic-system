@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -56,6 +57,19 @@ export function OrderChatModal({
     : false;
 
   useEffect(() => {
+    if (!visible) return;
+    const showSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => {
+        setTimeout(() => {
+          scrollRef.current?.scrollToEnd({ animated: true });
+        }, 120);
+      }
+    );
+    return () => showSub.remove();
+  }, [visible]);
+
+  useEffect(() => {
     if (!visible || !order?.id) {
       setMessages([]);
       return;
@@ -105,14 +119,15 @@ export function OrderChatModal({
     >
       <KeyboardAvoidingView
         style={styles.keyboardWrap}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
       >
         <View
           style={[
             styles.container,
             {
-              paddingTop: Math.max(16, insets.top),
-              paddingBottom: Math.max(16, insets.bottom),
+              paddingTop: Math.max(12, insets.top),
+              paddingBottom: Platform.OS === 'ios' ? Math.max(12, insets.bottom) : 10,
             },
           ]}
         >
@@ -162,6 +177,13 @@ export function OrderChatModal({
             style={styles.messageList}
             contentContainerStyle={styles.messageListContent}
             showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            onContentSizeChange={() => {
+              scrollRef.current?.scrollToEnd({ animated: true });
+            }}
+            onLayout={() => {
+              scrollRef.current?.scrollToEnd({ animated: false });
+            }}
           >
             {messages.length === 0 ? (
               <View style={styles.emptyWrap}>
@@ -236,7 +258,15 @@ export function OrderChatModal({
               <TextInput
                 style={[styles.input, { maxHeight: 90 }]}
                 value={inputText}
-                onChangeText={setInputText}
+                onChangeText={(val) => {
+                  setInputText(val);
+                  scrollRef.current?.scrollToEnd({ animated: false });
+                }}
+                onFocus={() => {
+                  setTimeout(() => {
+                    scrollRef.current?.scrollToEnd({ animated: true });
+                  }, 120);
+                }}
                 placeholder="Type guidance message for lab desk..."
                 placeholderTextColor="#94A3B8"
                 multiline
@@ -266,7 +296,8 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   container: {
-    height: '84%',
+    flex: 1,
+    maxHeight: '90%',
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: rs(24),
     borderTopRightRadius: rs(24),

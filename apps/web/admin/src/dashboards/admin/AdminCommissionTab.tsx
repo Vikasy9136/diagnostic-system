@@ -263,7 +263,7 @@ export function AdminCommissionTab({
       largeLabRateInr: item.largeLabRateInr,
       routeMaxKm: item.routeMaxKm,
       urgency: item.urgency,
-      status: item.status,
+      status: item.status === 'Paused' ? 'PAUSED' : 'ACTIVE',
       updatedAt: new Date().toISOString(),
     };
     const nextAgreements = {
@@ -301,7 +301,7 @@ export function AdminCommissionTab({
       largeLabRateInr: modalLargeRate,
       routeMaxKm: modalRouteMax,
       urgency: modalUrgency,
-      status: modalStatus,
+      status: modalStatus === 'Paused' ? 'PAUSED' : 'ACTIVE',
       updatedAt: new Date().toISOString(),
     };
     const nextAgreements = {
@@ -1251,14 +1251,14 @@ export function AdminCommissionTab({
                   row.urgency === 'Routine'
                     ? '#F0FDF4'
                     : row.urgency === 'Priority'
-                    ? '#FEF3C7'
-                    : '#FCE7F3';
+                      ? '#FEF3C7'
+                      : '#FCE7F3';
                 const urgencyColor =
                   row.urgency === 'Routine'
                     ? '#166534'
                     : row.urgency === 'Priority'
-                    ? '#92400E'
-                    : '#9D174D';
+                      ? '#92400E'
+                      : '#9D174D';
 
                 return (
                   <tr key={row.id}>

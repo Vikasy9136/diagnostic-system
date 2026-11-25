@@ -262,7 +262,7 @@ export function AdminCommissionTab({
       largeLabRateInr: item.largeLabRateInr,
       routeMaxKm: item.routeMaxKm,
       urgency: item.urgency,
-      status: item.status,
+      status: item.status === 'Paused' ? 'PAUSED' : 'ACTIVE',
       updatedAt: new Date().toISOString(),
     };
     const nextAgreements = {
@@ -300,7 +300,7 @@ export function AdminCommissionTab({
       largeLabRateInr: modalLargeRate,
       routeMaxKm: modalRouteMax,
       urgency: modalUrgency,
-      status: modalStatus,
+      status: modalStatus === 'Paused' ? 'PAUSED' : 'ACTIVE',
       updatedAt: new Date().toISOString(),
     };
     const nextAgreements = {
