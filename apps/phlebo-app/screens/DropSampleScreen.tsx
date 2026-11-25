@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Image, Linking, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { formatInr, type LiveGeoCoordinate, type PickupOrder, type SupportContactsConfig } from '@diagnostic/shared';
@@ -44,7 +44,38 @@ export function DropSampleScreen({
   const { width: winWidth } = useResponsive();
   const [receivedByStaff, setReceivedByStaff] = useState('');
   const [handoverRemarks, setHandoverRemarks] = useState('');
+  const otpInputRefs = useRef<Array<{ focus?: () => void; blur?: () => void } | null>>([]);
   const otpBoxSize = Math.max(40, Math.min(50, Math.floor((winWidth - rs(32) - rs(36)) / 5)));
+
+  function handleOtpChange(idx: number, rawVal: string) {
+    const cleaned = rawVal.replace(/[^0-9]/g, '');
+    if (!cleaned) {
+      onUpdateOtpDigit(idx, '');
+      return;
+    }
+
+    if (cleaned.length > 1) {
+      // Handle paste or rapid multi-digit entry seamlessly across boxes
+      const chars = cleaned.slice(0, otpValue.length - idx).split('');
+      chars.forEach((ch, offset) => {
+        onUpdateOtpDigit(idx + offset, ch);
+      });
+      const nextIdx = Math.min(otpValue.length - 1, idx + chars.length);
+      if (idx + chars.length < otpValue.length) {
+        otpInputRefs.current[nextIdx]?.focus();
+      } else {
+        otpInputRefs.current[otpValue.length - 1]?.blur();
+      }
+      return;
+    }
+
+    onUpdateOtpDigit(idx, cleaned);
+    if (idx < otpValue.length - 1) {
+      otpInputRefs.current[idx + 1]?.focus();
+    } else {
+      otpInputRefs.current[idx]?.blur();
+    }
+  }
 
   const verifiedSpecCount = (order.specimens || []).filter(
     (s) => s.validationStatus === 'VERIFIED'
@@ -353,12 +384,23 @@ export function DropSampleScreen({
               style={[styles.otpBox, { width: otpBoxSize, height: otpBoxSize }]}
             >
               <TextInput
+                ref={(el) => {
+                  otpInputRefs.current[idx] = el;
+                }}
                 style={styles.otpDigit}
                 value={digit}
-                maxLength={1}
-                keyboardType="numeric"
+                maxLength={otpValue.length}
+                keyboardType="number-pad"
                 textAlign="center"
-                onChangeText={(val) => onUpdateOtpDigit(idx, val)}
+                selectTextOnFocus
+                returnKeyType={idx === otpValue.length - 1 ? 'done' : 'next'}
+                onChangeText={(val) => handleOtpChange(idx, val)}
+                onKeyPress={({ nativeEvent }) => {
+                  if (nativeEvent.key === 'Backspace' && !digit && idx > 0) {
+                    onUpdateOtpDigit(idx - 1, '');
+                    otpInputRefs.current[idx - 1]?.focus();
+                  }
+                }}
               />
             </View>
           ))}
