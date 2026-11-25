@@ -1467,6 +1467,15 @@ export function SmallLabDashboard({
         order={liveCustodyOrder}
         onClose={() => setCustodyModalOrder(null)}
         titlePrefix="Live Tracking & Custody"
+        phleboCourier={
+          liveCustodyOrder?.phlebotomistId
+            ? phlebotomists.find(
+                (p) =>
+                  p.id === liveCustodyOrder.phlebotomistId ||
+                  p.userCode === liveCustodyOrder.phlebotomistId
+              ) || null
+            : null
+        }
         nearbyPhlebos={onlinePhlebos}
         fallbackDropLat={pickupLat}
         fallbackDropLng={pickupLng}

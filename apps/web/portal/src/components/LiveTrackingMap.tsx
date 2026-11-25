@@ -143,6 +143,7 @@ export function LiveTrackingMap({
   const mapRef = useRef<L.Map | null>(null);
   const markersGroupRef = useRef<L.LayerGroup | null>(null);
   const currentTileLayerRef = useRef<L.TileLayer | null>(null);
+  const lastFittedBoundsRef = useRef<string>('');
 
   const [mapLayer, setMapLayer] = useState<TrackingLayerType>('GOOGLE_ROADS');
 
@@ -158,7 +159,8 @@ export function LiveTrackingMap({
   const hasCourier = Boolean(
     phleboLocation &&
     Number.isFinite(phleboLocation.latitude) &&
-    Number.isFinite(phleboLocation.longitude)
+    Number.isFinite(phleboLocation.longitude) &&
+    Math.abs(phleboLocation.latitude) > 0.001
   );
   const cLat = hasCourier && phleboLocation ? phleboLocation.latitude : pLat;
   const cLng = hasCourier && phleboLocation ? phleboLocation.longitude : pLng;
@@ -171,6 +173,8 @@ export function LiveTrackingMap({
     hasCourier && hasDrop
       ? Math.round(calculateHaversineDistanceKm(cLat, cLng, dLat, dLng) * 10) / 10
       : null;
+
+  const onlineRidersCount = nearbyPhlebos ? nearbyPhlebos.filter((p) => p.status === 'ONLINE').length : 0;
 
   // 1. Initialize Leaflet map instance and base Google tile layer ONCE on mount
   useEffect(() => {
@@ -290,10 +294,17 @@ export function LiveTrackingMap({
         weight: 3.5,
         dashArray: '8, 8',
       }).addTo(markersGroup);
+    }
 
-      map.fitBounds(L.latLngBounds(points), { padding: [44, 44], maxZoom: 15 });
-    } else {
-      map.setView([pLat, pLng], 13);
+    // Auto-fit bounds on initial load or when destination/hasCourier changes without resetting manual user zoom
+    const boundsKey = `${pLat.toFixed(4)},${pLng.toFixed(4)},${dLat.toFixed(4)},${dLng.toFixed(4)},${hasCourier}`;
+    if (lastFittedBoundsRef.current !== boundsKey) {
+      if (points.length > 1) {
+        map.fitBounds(L.latLngBounds(points), { padding: [44, 44], maxZoom: 15 });
+      } else {
+        map.setView([pLat, pLng], 13);
+      }
+      lastFittedBoundsRef.current = boundsKey;
     }
   }, [
     pLat,
@@ -309,6 +320,10 @@ export function LiveTrackingMap({
     dropLocation?.label,
     dropLocation?.address,
     phleboLocation?.name,
+    phleboLocation?.latitude,
+    phleboLocation?.longitude,
+    phleboLocation?.updatedAt,
+    nearbyPhlebos,
   ]);
 
   // Switch Tile Layer smoothly when mapLayer changes
@@ -340,7 +355,11 @@ export function LiveTrackingMap({
           </div>
           <div style={{ fontSize: '0.73rem', color: '#64748B', marginTop: '2px' }}>
             <strong style={{ color: '#0D9488' }}>🏥 Pickup</strong> •{' '}
-            <strong style={{ color: '#0A2A5E' }}>🏍️ LabSetu Courier (Live)</strong> •{' '}
+            {hasCourier ? (
+              <strong style={{ color: '#0A2A5E' }}>🏍️ {phleboLocation?.name || 'LabSetu Courier'} (Live)</strong>
+            ) : (
+              <strong style={{ color: '#D97706' }}>📡 Searching Nearby Riders ({onlineRidersCount} online)</strong>
+            )} •{' '}
             <strong style={{ color: '#2563EB' }}>🔬 Delivery Lab</strong>
           </div>
         </div>

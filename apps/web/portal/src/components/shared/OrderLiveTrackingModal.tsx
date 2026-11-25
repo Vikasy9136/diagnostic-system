@@ -1,4 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../../firebase';
 import {
   type CustodyEvent,
   formatOrderStatus,
@@ -196,19 +198,79 @@ export function OrderLiveTrackingModal({
 }: OrderLiveTrackingModalProps) {
   if (!order) return null;
 
-  const isLookingForPhlebo =
-    order.status === 'READY_FOR_PICKUP' && !order.phlebotomistId;
+  // Real-time live order state backed by local Firestore listener
+  const [liveOrder, setLiveOrder] = useState<PickupOrder>(order);
+  const [liveCourier, setLiveCourier] = useState<PhlebotomistProfile | null>(phleboCourier || null);
 
-  const destLat = order.deliveryLocation?.latitude || fallbackDropLat;
-  const destLng = order.deliveryLocation?.longitude || fallbackDropLng;
+  useEffect(() => {
+    if (order) setLiveOrder(order);
+  }, [order]);
+
+  useEffect(() => {
+    if (phleboCourier) setLiveCourier(phleboCourier);
+  }, [phleboCourier]);
+
+  // 1. Direct real-time snapshot subscription to this specific order doc
+  useEffect(() => {
+    if (!order?.id) return;
+    const unsubOrder = onSnapshot(
+      doc(db, 'orders', order.id),
+      (snap) => {
+        if (snap.exists()) {
+          setLiveOrder({ id: snap.id, ...(snap.data() as Omit<PickupOrder, 'id'>) });
+        }
+      },
+      (err) => {
+        console.warn('[OrderLiveTrackingModal] Live order snapshot listener error:', err);
+      }
+    );
+    return () => unsubOrder();
+  }, [order?.id]);
+
+  const activeOrder = liveOrder || order;
+
+  // 2. Direct real-time snapshot subscription to assigned courier's telemetry profile
+  const assignedPhleboId = activeOrder.phlebotomistId;
+  useEffect(() => {
+    if (!assignedPhleboId) {
+      setLiveCourier(null);
+      return;
+    }
+    const unsubPhlebo = onSnapshot(
+      doc(db, 'phlebotomists', assignedPhleboId),
+      (snap) => {
+        if (snap.exists()) {
+          setLiveCourier({ id: snap.id, ...(snap.data() as Omit<PhlebotomistProfile, 'id'>) });
+        }
+      },
+      (err) => {
+        console.warn('[OrderLiveTrackingModal] Live courier snapshot listener error:', err);
+      }
+    );
+    return () => unsubPhlebo();
+  }, [assignedPhleboId]);
+
+  const isLookingForPhlebo =
+    activeOrder.status === 'READY_FOR_PICKUP' && !activeOrder.phlebotomistId;
+
+  const destLat = activeOrder.deliveryLocation?.latitude || fallbackDropLat;
+  const destLng = activeOrder.deliveryLocation?.longitude || fallbackDropLng;
 
   const livePhleboPos = useMemo(() => {
-    if (order.phleboLiveLocation?.latitude && order.phleboLiveLocation?.longitude) {
+    if (activeOrder.phleboLiveLocation?.latitude && activeOrder.phleboLiveLocation?.longitude) {
       return {
-        latitude: order.phleboLiveLocation.latitude,
-        longitude: order.phleboLiveLocation.longitude,
-        name: order.phlebotomistName || order.phlebotomistId || 'Field Phlebotomist',
-        updatedAt: order.phleboLiveLocation.updatedAt,
+        latitude: activeOrder.phleboLiveLocation.latitude,
+        longitude: activeOrder.phleboLiveLocation.longitude,
+        name: activeOrder.phlebotomistName || liveCourier?.name || activeOrder.phlebotomistId || 'Field Phlebotomist',
+        updatedAt: activeOrder.phleboLiveLocation.updatedAt,
+      };
+    }
+    if (liveCourier?.latitude && liveCourier?.longitude) {
+      return {
+        latitude: liveCourier.latitude,
+        longitude: liveCourier.longitude,
+        name: liveCourier.name || activeOrder.phlebotomistName || 'Field Phlebotomist',
+        updatedAt: liveCourier.updatedAt,
       };
     }
     if (phleboCourier?.latitude && phleboCourier?.longitude) {
@@ -221,11 +283,15 @@ export function OrderLiveTrackingModal({
     }
     return null;
   }, [
-    order.phleboLiveLocation?.latitude,
-    order.phleboLiveLocation?.longitude,
-    order.phleboLiveLocation?.updatedAt,
-    order.phlebotomistName,
-    order.phlebotomistId,
+    activeOrder.phleboLiveLocation?.latitude,
+    activeOrder.phleboLiveLocation?.longitude,
+    activeOrder.phleboLiveLocation?.updatedAt,
+    activeOrder.phlebotomistName,
+    activeOrder.phlebotomistId,
+    liveCourier?.latitude,
+    liveCourier?.longitude,
+    liveCourier?.name,
+    liveCourier?.updatedAt,
     phleboCourier?.latitude,
     phleboCourier?.longitude,
     phleboCourier?.name,
@@ -234,42 +300,42 @@ export function OrderLiveTrackingModal({
 
   const memoizedPickup = useMemo(
     () => ({
-      latitude: order.pickupLocation.latitude,
-      longitude: order.pickupLocation.longitude,
-      address: order.pickupLocation.address,
-      label: order.smallLabName,
+      latitude: activeOrder.pickupLocation.latitude,
+      longitude: activeOrder.pickupLocation.longitude,
+      address: activeOrder.pickupLocation.address,
+      label: activeOrder.smallLabName,
     }),
-    [order.pickupLocation.latitude, order.pickupLocation.longitude, order.pickupLocation.address, order.smallLabName]
+    [activeOrder.pickupLocation.latitude, activeOrder.pickupLocation.longitude, activeOrder.pickupLocation.address, activeOrder.smallLabName]
   );
 
   const memoizedDrop = useMemo(
     () => ({
       latitude: destLat,
       longitude: destLng,
-      address: order.deliveryLocation?.address || fallbackDropAddress,
-      label: order.targetLabName,
+      address: activeOrder.deliveryLocation?.address || fallbackDropAddress,
+      label: activeOrder.targetLabName,
     }),
-    [destLat, destLng, order.deliveryLocation?.address, fallbackDropAddress, order.targetLabName]
+    [destLat, destLng, activeOrder.deliveryLocation?.address, fallbackDropAddress, activeOrder.targetLabName]
   );
 
   return (
     <ModalFrame
       open={Boolean(order)}
       onClose={onClose}
-      title={`${titlePrefix} • ${order.orderNumber}`}
+      title={`${titlePrefix} • ${activeOrder.orderNumber}`}
       subtitle={headerBadges}
       maxWidth="740px"
     >
       {isLookingForPhlebo && (
         <OrderRadarHikeCountdownSection
-          order={order}
+          order={activeOrder}
           onRetryBroadcast={onRetryBroadcast}
         />
       )}
 
       <div style={{ marginBottom: '12px' }}>
         <LiveTrackingMap
-          orderNumber={order.orderNumber}
+          orderNumber={activeOrder.orderNumber}
           pickupLocation={memoizedPickup}
           dropLocation={memoizedDrop}
           phleboLocation={livePhleboPos}
@@ -278,30 +344,47 @@ export function OrderLiveTrackingModal({
         />
       </div>
 
-      {showLiveRouteCard && (
+      {/* Dynamic Courier Route Card: ONLY displayed when a courier is assigned */}
+      {showLiveRouteCard && Boolean(activeOrder.phlebotomistId) && (
         <div className="live-route-card" style={{ marginBottom: '12px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
             <div>
               <div style={{ fontSize: '0.88rem', fontWeight: 800, color: '#0F172A' }}>
-                🏍️ {order.phlebotomistName || 'Broadcasting in 1–5 km Pool'}
+                🏍️ Assigned Courier: {activeOrder.phlebotomistName || liveCourier?.name || 'Field Phlebotomist'}
               </div>
               <div style={{ fontSize: '0.78rem', color: '#475569' }}>
-                Status: <strong>{formatOrderStatus(order.status)}</strong> • Handover OTP: <code>{order.handoverOtp || 'Pending'}</code>
+                Status: <strong>{formatOrderStatus(activeOrder.status)}</strong> • Handover OTP: <code>{activeOrder.handoverOtp || 'Pending'}</code>
               </div>
               <div style={{ fontSize: '0.76rem', color: '#64748B', marginTop: '2px' }}>
-                Patient: <strong>{order.patient.pseudonym}</strong> &rarr; Drop: <strong>{order.targetLabName}</strong>
+                Patient: <strong>{activeOrder.patient.pseudonym}</strong> &rarr; Drop: <strong>{activeOrder.targetLabName}</strong>
               </div>
-              {order.phleboLiveLocation && (
+              {livePhleboPos && (
                 <div style={{ fontSize: '0.75rem', color: '#0F766E', marginTop: '4px' }}>
-                  📍 Live Location: {order.smallLabName ? `${order.smallLabName} Operational Route` : 'Active Route Area'}
-                  {order.phleboLiveLocation.updatedAt
-                    ? ` • Updated ${new Date(order.phleboLiveLocation.updatedAt).toLocaleTimeString('en-IN')}`
+                  📍 Live Location: {activeOrder.smallLabName ? `${activeOrder.smallLabName} Operational Route` : 'Active Route Area'}
+                  {livePhleboPos.updatedAt
+                    ? ` • Updated ${new Date(livePhleboPos.updatedAt).toLocaleTimeString('en-IN')}`
                     : ''}
                 </div>
               )}
             </div>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-              {order.phlebotomistId && onOpenChat && (
+              {liveCourier?.phone && (
+                <a
+                  href={`tel:${liveCourier.phone}`}
+                  className="btn-secondary"
+                  style={{
+                    textDecoration: 'none',
+                    fontSize: '0.78rem',
+                    padding: '6px 12px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  📞 Call Rider
+                </a>
+              )}
+              {activeOrder.phlebotomistId && onOpenChat && (
                 <button
                   type="button"
                   className="btn-primary"
@@ -316,16 +399,16 @@ export function OrderLiveTrackingModal({
                     gap: '4px',
                     cursor: 'pointer',
                   }}
-                  onClick={() => onOpenChat(order)}
+                  onClick={() => onOpenChat(activeOrder)}
                 >
                   💬 Chat Courier
                 </button>
               )}
-              {order.phleboLiveLocation && (
+              {livePhleboPos && (
                 <a
                   className="btn-primary"
                   style={{ textDecoration: 'none', fontSize: '0.78rem' }}
-                  href={`https://www.google.com/maps/dir/?api=1&origin=${order.phleboLiveLocation.latitude},${order.phleboLiveLocation.longitude}&destination=${destLat},${destLng}`}
+                  href={`https://www.google.com/maps/dir/?api=1&origin=${livePhleboPos.latitude},${livePhleboPos.longitude}&destination=${destLat},${destLng}`}
                   target="_blank"
                   rel="noreferrer"
                 >
@@ -352,33 +435,33 @@ export function OrderLiveTrackingModal({
           }}
         >
           <div>
-            <strong>Pickup Hub:</strong> {order.smallLabName}
-            <div style={{ color: '#64748B', fontSize: '0.76rem' }}>{order.pickupLocation.address}</div>
+            <strong>Pickup Hub:</strong> {activeOrder.smallLabName}
+            <div style={{ color: '#64748B', fontSize: '0.76rem' }}>{activeOrder.pickupLocation.address}</div>
           </div>
           <div>
-            <strong>Drop Hub:</strong> {order.targetLabName}
-            <div style={{ color: '#64748B', fontSize: '0.76rem' }}>{order.deliveryLocation.address}</div>
+            <strong>Drop Hub:</strong> {activeOrder.targetLabName}
+            <div style={{ color: '#64748B', fontSize: '0.76rem' }}>{activeOrder.deliveryLocation.address}</div>
           </div>
-          <div><strong>Assigned Courier:</strong> {order.phlebotomistName || 'Broadcast Open (1–5 km)'}</div>
-          <div><strong>Handover OTP:</strong> <code>{order.handoverOtp || 'Pending'}</code></div>
+          <div><strong>Assigned Courier:</strong> {activeOrder.phlebotomistName || 'Broadcast Open (1–5 km)'}</div>
+          <div><strong>Handover OTP:</strong> <code>{activeOrder.handoverOtp || 'Pending'}</code></div>
         </div>
       )}
 
-      {(order.sampleCollectionPhotoUrl || order.phleboSelfieUrl) && (
+      {(activeOrder.sampleCollectionPhotoUrl || activeOrder.phleboSelfieUrl) && (
         <div style={{ marginBottom: '16px' }}>
           <div style={{ fontSize: '0.84rem', fontWeight: 700, marginBottom: '8px', color: '#0F172A' }}>
             Verification Proof Photos (Sample &amp; Phlebotomist Attendance)
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: order.sampleCollectionPhotoUrl && order.phleboSelfieUrl ? '1fr 1fr' : '1fr', gap: '12px' }}>
-            {order.sampleCollectionPhotoUrl && (
+          <div style={{ display: 'grid', gridTemplateColumns: activeOrder.sampleCollectionPhotoUrl && activeOrder.phleboSelfieUrl ? '1fr 1fr' : '1fr', gap: '12px' }}>
+            {activeOrder.sampleCollectionPhotoUrl && (
               <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '10px', padding: '10px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                   <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#334155' }}>🧪 Specimen Tubes Proof</span>
                   <span style={{ fontSize: '0.7rem', color: '#15803D', background: '#DCFCE7', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>✓ Verified</span>
                 </div>
-                <a href={order.sampleCollectionPhotoUrl} target="_blank" rel="noreferrer" title="Click to enlarge specimen photo">
+                <a href={activeOrder.sampleCollectionPhotoUrl} target="_blank" rel="noreferrer" title="Click to enlarge specimen photo">
                   <img
-                    src={order.sampleCollectionPhotoUrl}
+                    src={activeOrder.sampleCollectionPhotoUrl}
                     alt="Collected sample proof"
                     className="sample-proof-thumb"
                     style={{ width: '100%', height: '140px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #CBD5E1' }}
@@ -386,15 +469,15 @@ export function OrderLiveTrackingModal({
                 </a>
               </div>
             )}
-            {order.phleboSelfieUrl && (
+            {activeOrder.phleboSelfieUrl && (
               <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '10px', padding: '10px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                   <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#334155' }}>🤳 Phlebotomist Site Selfie</span>
                   <span style={{ fontSize: '0.7rem', color: '#15803D', background: '#DCFCE7', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>✓ Present At Site</span>
                 </div>
-                <a href={order.phleboSelfieUrl} target="_blank" rel="noreferrer" title="Click to enlarge phlebo selfie">
+                <a href={activeOrder.phleboSelfieUrl} target="_blank" rel="noreferrer" title="Click to enlarge phlebo selfie">
                   <img
-                    src={order.phleboSelfieUrl}
+                    src={activeOrder.phleboSelfieUrl}
                     alt="Phlebotomist site selfie"
                     className="sample-proof-thumb"
                     style={{ width: '100%', height: '140px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #CBD5E1' }}
@@ -406,13 +489,13 @@ export function OrderLiveTrackingModal({
         </div>
       )}
 
-      {showSpecimensAudit && order.specimens.length > 0 && (
+      {showSpecimensAudit && activeOrder.specimens.length > 0 && (
         <div style={{ marginBottom: '14px' }}>
           <div style={{ fontSize: '0.82rem', fontWeight: 700, marginBottom: '8px' }}>
             Tube &amp; Barcode Validation
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            {order.specimens.map((s) => {
+            {activeOrder.specimens.map((s) => {
               const tm = TUBE_METADATA[s.tubeType] || TUBE_METADATA[TubeType.SERUM_RED_GOLD];
               return (
                 <div

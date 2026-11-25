@@ -1,7 +1,6 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import {
   type CommissionConfig,
-  formatInr,
   type LabFacility,
   type LargeLabB2bAgreement,
   type OrderPricingSplitResult,

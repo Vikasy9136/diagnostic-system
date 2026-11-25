@@ -6,6 +6,15 @@ interface LiveTrackingMapProps {
   pickupLocation: { latitude: number; longitude: number; address?: string; label?: string };
   dropLocation?: { latitude: number; longitude: number; address?: string; label?: string } | null;
   phleboLocation?: { latitude: number; longitude: number; name?: string; updatedAt?: string } | null;
+  nearbyPhlebos?: Array<{
+    id: string;
+    name: string;
+    latitude?: number;
+    longitude?: number;
+    status?: string;
+    phone?: string;
+    rating?: number;
+  }>;
   orderNumber?: string;
   heightPx?: number;
 }
@@ -42,11 +51,11 @@ const TRACKING_TILE_CONFIGS: Record<TrackingLayerType, { url: string; options: L
 /**
  * Custom Animated Bike Courier Rider Marker with LabSetu Brand Logo on the Bag.
  */
-function buildBikeCourierIcon(courierName?: string): L.DivIcon {
+function buildBikeCourierIcon(courierName?: string, isOnline: boolean = true): L.DivIcon {
   const name = courierName || 'Live Courier';
   const html = `
     <div class="labsetu-bike-marker-wrapper">
-      <div class="labsetu-bike-radar-ring"></div>
+      <div class="labsetu-bike-radar-ring ${isOnline ? '' : 'standby'}"></div>
       <svg width="58" height="58" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="filter: drop-shadow(0 4px 10px rgba(15,23,42,0.45));">
         <!-- Back Wheel -->
         <circle cx="16" cy="44" r="9" fill="#1E293B" stroke="#94A3B8" stroke-width="2.5"/>
@@ -126,6 +135,7 @@ export function LiveTrackingMap({
   pickupLocation,
   dropLocation,
   phleboLocation,
+  nearbyPhlebos,
   orderNumber,
   heightPx = 280,
 }: LiveTrackingMapProps) {
@@ -133,6 +143,7 @@ export function LiveTrackingMap({
   const mapRef = useRef<L.Map | null>(null);
   const markersGroupRef = useRef<L.LayerGroup | null>(null);
   const currentTileLayerRef = useRef<L.TileLayer | null>(null);
+  const lastFittedBoundsRef = useRef<string>('');
 
   const [mapLayer, setMapLayer] = useState<TrackingLayerType>('GOOGLE_ROADS');
 
@@ -147,8 +158,9 @@ export function LiveTrackingMap({
 
   const hasCourier = Boolean(
     phleboLocation &&
-      Number.isFinite(phleboLocation.latitude) &&
-      Number.isFinite(phleboLocation.longitude)
+    Number.isFinite(phleboLocation.latitude) &&
+    Number.isFinite(phleboLocation.longitude) &&
+    Math.abs(phleboLocation.latitude) > 0.001
   );
   const cLat = hasCourier && phleboLocation ? phleboLocation.latitude : pLat;
   const cLng = hasCourier && phleboLocation ? phleboLocation.longitude : pLng;
@@ -161,6 +173,8 @@ export function LiveTrackingMap({
     hasCourier && hasDrop
       ? Math.round(calculateHaversineDistanceKm(cLat, cLng, dLat, dLng) * 10) / 10
       : null;
+
+  const onlineRidersCount = nearbyPhlebos ? nearbyPhlebos.filter((p) => p.status === 'ONLINE').length : 0;
 
   // 1. Initialize Leaflet map instance and base Google tile layer ONCE on mount
   useEffect(() => {
@@ -219,7 +233,7 @@ export function LiveTrackingMap({
         </div>`
       );
 
-    // 2. Live Phlebotomist Courier Rider Marker
+    // 2. Live Phlebotomist Courier Rider Marker (if assigned)
     if (hasCourier && phleboLocation) {
       points.push([cLat, cLng]);
       L.marker([cLat, cLng], {
@@ -231,9 +245,32 @@ export function LiveTrackingMap({
           `<div style="font-family:sans-serif;font-size:12px;line-height:1.4;">
             <strong style="color:#0A2A5E;">🏍️ LabSetu On-Duty Phlebo Courier</strong><br/>
             <strong>Rider:</strong> ${phleboLocation.name || 'Courier'}<br/>
-            <span style="color:#64748B;">Live GPS: ${cLat.toFixed(4)}, ${cLng.toFixed(4)}</span>
+            <span style="color:#0F766E;">📍 Live Location Active</span>
           </div>`
         );
+    } else if (nearbyPhlebos && nearbyPhlebos.length > 0) {
+      // 2B. If broadcasting / looking for rider, render ONLY live online phlebotomists on map
+      nearbyPhlebos.forEach((p) => {
+        if (p.status !== 'ONLINE') return;
+        const rLat = Number(p.latitude);
+        const rLng = Number(p.longitude);
+        if (!Number.isFinite(rLat) || !Number.isFinite(rLng) || Math.abs(rLat) < 0.001) return;
+        const distKm = calculateHaversineDistanceKm(pLat, pLng, rLat, rLng);
+        if (distKm > 20) return;
+        const isOnline = p.status === 'ONLINE';
+        L.marker([rLat, rLng], {
+          icon: buildBikeCourierIcon(p.name, isOnline),
+          zIndexOffset: 800,
+        })
+          .addTo(markersGroup)
+          .bindPopup(
+            `<div style="font-family:sans-serif;font-size:12px;line-height:1.4;">
+              <strong style="color:#0A2A5E;">🛵 ${p.name}</strong> • <span style="color:${isOnline ? '#16A34A' : '#64748B'};font-weight:700;">${isOnline ? 'Online' : 'Standby'}</span><br/>
+              <strong>Distance:</strong> ${distKm.toFixed(1)} km away • ~${Math.max(3, Math.round(distKm * 2.8))} mins ETA<br/>
+              ${p.phone ? `<span style="color:#475569;">📞 ${p.phone}</span>` : ''}
+            </div>`
+          );
+      });
     }
 
     // 3. Drop Destination Pin
@@ -257,10 +294,17 @@ export function LiveTrackingMap({
         weight: 3.5,
         dashArray: '8, 8',
       }).addTo(markersGroup);
+    }
 
-      map.fitBounds(L.latLngBounds(points), { padding: [44, 44], maxZoom: 15 });
-    } else {
-      map.setView([pLat, pLng], 13);
+    // Auto-fit bounds on initial load or when destination/hasCourier changes without resetting manual user zoom
+    const boundsKey = `${pLat.toFixed(4)},${pLng.toFixed(4)},${dLat.toFixed(4)},${dLng.toFixed(4)},${hasCourier}`;
+    if (lastFittedBoundsRef.current !== boundsKey) {
+      if (points.length > 1) {
+        map.fitBounds(L.latLngBounds(points), { padding: [44, 44], maxZoom: 15 });
+      } else {
+        map.setView([pLat, pLng], 13);
+      }
+      lastFittedBoundsRef.current = boundsKey;
     }
   }, [
     pLat,
@@ -276,6 +320,10 @@ export function LiveTrackingMap({
     dropLocation?.label,
     dropLocation?.address,
     phleboLocation?.name,
+    phleboLocation?.latitude,
+    phleboLocation?.longitude,
+    phleboLocation?.updatedAt,
+    nearbyPhlebos,
   ]);
 
   // Switch Tile Layer smoothly when mapLayer changes
@@ -292,11 +340,10 @@ export function LiveTrackingMap({
   }, [mapLayer]);
 
   const googleDirectionsUrl = hasDrop
-    ? `https://www.google.com/maps/dir/?api=1&origin=${
-        hasCourier && phleboLocation
-          ? `${phleboLocation.latitude},${phleboLocation.longitude}`
-          : `${pLat},${pLng}`
-      }&destination=${dLat},${dLng}&travelmode=driving`
+    ? `https://www.google.com/maps/dir/?api=1&origin=${hasCourier && phleboLocation
+      ? `${phleboLocation.latitude},${phleboLocation.longitude}`
+      : `${pLat},${pLng}`
+    }&destination=${dLat},${dLng}&travelmode=driving`
     : `https://www.google.com/maps/search/?api=1&query=${pLat},${pLng}`;
 
   return (
@@ -308,7 +355,11 @@ export function LiveTrackingMap({
           </div>
           <div style={{ fontSize: '0.73rem', color: '#64748B', marginTop: '2px' }}>
             <strong style={{ color: '#0D9488' }}>🏥 Pickup</strong> •{' '}
-            <strong style={{ color: '#0A2A5E' }}>🏍️ LabSetu Courier (Live)</strong> •{' '}
+            {hasCourier ? (
+              <strong style={{ color: '#0A2A5E' }}>🏍️ {phleboLocation?.name || 'LabSetu Courier'} (Live)</strong>
+            ) : (
+              <strong style={{ color: '#D97706' }}>📡 Searching Nearby Riders ({onlineRidersCount} online)</strong>
+            )} •{' '}
             <strong style={{ color: '#2563EB' }}>🔬 Delivery Lab</strong>
           </div>
         </div>
@@ -348,12 +399,12 @@ export function LiveTrackingMap({
       {/* Status & Navigation Bar */}
       <div className="map-coords-bar">
         <span>
-          {hasDrop ? `Total Route: ${routeDistanceKm} km` : `Pickup GPS: ${pLat.toFixed(4)}, ${pLng.toFixed(4)}`}
+          {hasDrop ? `Total Route: ${routeDistanceKm} km` : 'Pickup Location Verified'}
           {courierToDropKm !== null
             ? ` • 🏍️ Courier ${courierToDropKm} km from lab destination (~${Math.max(5, Math.round(courierToDropKm * 3.5))} min ETA)`
             : hasCourier
-            ? ' • 🏍️ Courier is active on route'
-            : ' • Dispatch broadcasting to nearby riders'}
+              ? ' • 🏍️ Courier is active on route'
+              : ' • Dispatch broadcasting to nearby riders'}
         </span>
         <a
           href={googleDirectionsUrl}

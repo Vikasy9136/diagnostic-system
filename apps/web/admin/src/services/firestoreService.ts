@@ -15,7 +15,6 @@ import {
 } from 'firebase/firestore';
 import {
   type AdminTeamRole,
-  type AgreementRoleTarget,
   type AreaExpansionRequest,
   calculateHaversineDistanceKm,
   type CommissionConfig,
@@ -504,8 +503,12 @@ export async function approveAreaExpansionRequest(
   reviewerEmail: string
 ): Promise<ServiceZoneRecord> {
   const now = new Date().toISOString();
+  const zoneId = `zone-${Date.now()}`;
+  const zoneCode = `ZONE-${String(request.city || 'IND').slice(0, 3).toUpperCase()}-${Date.now().toString().slice(-4)}`;
   const zone = await saveServiceZone(
     {
+      id: zoneId,
+      zoneCode,
       name: request.proposedZoneName,
       city: request.city,
       state: request.state,
