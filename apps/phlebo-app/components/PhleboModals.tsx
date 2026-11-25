@@ -43,7 +43,7 @@ import {
   type OpenPoolEntry,
   type SpecimenDraftMap,
 } from '../types/phleboTypes';
-import { formatLabel } from '../utils/phleboHelpers';
+import { formatLabel, isOrderBroadcastExpired } from '../utils/phleboHelpers';
 
 export interface PaymentLinkModalProps {
   activePaymentLink: ActivePaymentLinkState | null;
@@ -454,13 +454,33 @@ export function BroadcastDispatchModal({
 
   useEffect(() => {
     if (!activeBroadcastMatch) return;
+
+    // Check if dispatch window has expired
+    if (isOrderBroadcastExpired(activeBroadcastMatch.order)) {
+      onDismissBroadcast(activeBroadcastMatch.order.id, false);
+      return;
+    }
+
     let sec = 45;
     if (activeBroadcastMatch.order.broadcastExpiresAt) {
       const diff = Math.ceil(
         (new Date(activeBroadcastMatch.order.broadcastExpiresAt).getTime() - Date.now()) / 1000
       );
-      if (diff > 5) {
-        sec = Math.min(60, diff);
+      if (diff <= 0) {
+        onDismissBroadcast(activeBroadcastMatch.order.id, false);
+        return;
+      }
+      sec = Math.min(60, diff);
+    } else {
+      const refTimeStr = activeBroadcastMatch.order.updatedAt || activeBroadcastMatch.order.createdAt;
+      if (refTimeStr) {
+        const elapsed = Math.floor((Date.now() - new Date(refTimeStr).getTime()) / 1000);
+        const rem = 45 - elapsed;
+        if (rem <= 0) {
+          onDismissBroadcast(activeBroadcastMatch.order.id, false);
+          return;
+        }
+        sec = rem;
       }
     }
     setRemSeconds(sec);

@@ -1,4 +1,5 @@
 import { Platform, Vibration } from 'react-native';
+import { type PickupOrder, OrderStatus } from '@diagnostic/shared';
 import {
   playNativeBookingRingtone,
   playNativeNotificationChime,
@@ -38,6 +39,29 @@ function playAudioViaExpo(assetRequire: any, isLoop = false): any {
     // Ignore expo-audio module loading errors if native module not ready
   }
   return null;
+}
+
+export function isOrderBroadcastExpired(order: PickupOrder | null | undefined): boolean {
+  if (!order) return true;
+  if (order.status !== OrderStatus.READY_FOR_PICKUP) return true;
+  if (order.phlebotomistId) return true;
+
+  if (order.broadcastExpiresAt) {
+    const expTime = new Date(order.broadcastExpiresAt).getTime();
+    if (!Number.isNaN(expTime)) {
+      return Date.now() >= expTime;
+    }
+  }
+
+  const refTimeStr = order.updatedAt || order.createdAt;
+  if (refTimeStr) {
+    const refTime = new Date(refTimeStr).getTime();
+    if (!Number.isNaN(refTime)) {
+      return Date.now() - refTime >= 45000;
+    }
+  }
+
+  return false;
 }
 
 export function playPickupAlertChime(): void {
@@ -172,7 +196,9 @@ export function stopContinuousPickupAlert(): void {
     try {
       activeExpoBookingPlayer.pause?.();
       activeExpoBookingPlayer.seekTo?.(0);
+      activeExpoBookingPlayer.stop?.();
     } catch {}
+    activeExpoBookingPlayer = null;
   }
 }
 

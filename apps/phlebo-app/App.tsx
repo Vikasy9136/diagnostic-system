@@ -186,6 +186,7 @@ import {
 const FLOATING_SETTINGS_STORAGE_KEY = '@labsetu_floating_icon_settings_v1';
 const DUTY_STATUS_STORAGE_KEY = '@labsetu_phlebo_duty_status_v1';
 import {
+  isOrderBroadcastExpired,
   playPickupAlertChime,
   startContinuousPickupAlert,
   stopContinuousPickupAlert,
@@ -366,15 +367,6 @@ function PhleboAppContent() {
     }
   }, []);
 
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (nextState) => {
-      setAppState(nextState);
-    });
-    return () => {
-      sub.remove();
-    };
-  }, []);
-
   const handleNavigateBackHome = useCallback(() => {
     setBottomTab('home');
     setCurrentScreen('BOOKING_REQUESTS');
@@ -409,6 +401,28 @@ function PhleboAppContent() {
   const [platformFaqs, setPlatformFaqs] = useState<PlatformFaqDocument[]>([]);
   const [platformFeatures, setPlatformFeatures] = useState<PlatformFeaturesConfig>(DEFAULT_PLATFORM_FEATURES);
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      setAppState(nextState);
+      if (nextState === 'active') {
+        // App brought to foreground: immediately dismiss any outside-app floating WindowManager modal
+        void dismissIncomingPickupOverlay();
+        // Check if currently ringing order expired while app was in background
+        if (activeRingingOrderIdRef.current) {
+          const currentOrder = orders.find((o) => o.id === activeRingingOrderIdRef.current);
+          if (!currentOrder || isOrderBroadcastExpired(currentOrder)) {
+            activeRingingOrderIdRef.current = null;
+            stopContinuousPickupAlert();
+            setBroadcastForceOpen(false);
+          }
+        }
+      }
+    });
+    return () => {
+      sub.remove();
+    };
+  }, [orders]);
 
   // Payment collection & partner payout profile states
   const [collectingOrderId, setCollectingOrderId] = useState<string | null>(null);
@@ -1913,6 +1927,8 @@ function PhleboAppContent() {
     }
 
     const newlyArrived = allCandidates.filter((x) => {
+      // 1. Never ring or modal-open for an order whose dispatch window has expired!
+      if (isOrderBroadcastExpired(x.order)) return false;
       if (alertedBroadcastIdsRef.current.has(x.order.id)) return false;
       const isRetriedOrHiked =
         (x.order.searchRetryCount ?? 0) > 0 || (x.order.surgeIncentiveInr ?? 0) > 0;
@@ -1936,8 +1952,6 @@ function PhleboAppContent() {
     const lead = newlyArrived[0];
     activeRingingOrderIdRef.current = lead.order.id;
 
-    // Continuous alert chime & device vibration (45-second window matching lab radar timeout)
-    startContinuousPickupAlert(45);
     setBroadcastForceOpen(true);
     setRequestTab('new');
 
@@ -1946,26 +1960,33 @@ function PhleboAppContent() {
       ? `Earn ${formatInr(lead.order.courierFeeInr || 100)} (${formatInr(basePay)} + ₹${lead.order.surgeIncentiveInr} Surge)`
       : `Earn ${formatInr(lead.order.courierFeeInr || 100)}`;
 
-    // Trigger outside-app floating pickup modal over other apps (Rapido style)
-    void triggerIncomingPickupOverlay({
-      orderId: lead.order.id,
-      orderNumber: lead.order.orderNumber || lead.order.id,
-      pickupLab: lead.order.smallLabName || 'Pickup Lab',
-      pickupAddress:
-        lead.order.pickupLocation?.address ||
-        lead.order.pickupLocation?.pincode ||
-        'Sample Collection Address',
-      targetLab: lead.order.targetLabName || 'Testing Lab',
-      targetAddress:
-        lead.order.deliveryLocation?.address ||
-        lead.order.targetLabName ||
-        'Testing Reference Lab',
-      distance: `${lead.distFromRiderKm} km away`,
-      payout: payoutLabel,
-      specimens: `${lead.order.specimens?.length || 1} Specimens • Sample Collection`,
-      timeoutSec: 45,
-      surgeIncentive: lead.order.surgeIncentiveInr || 0,
-    });
+    // Single Ringing Engine:
+    // If inside app in active foreground, play single in-app chime and ensure no outside-app overlay is open!
+    // If outside app in background, trigger native floating modal over other apps (which plays its own ringtone)
+    if (appState === 'active') {
+      startContinuousPickupAlert(45);
+      void dismissIncomingPickupOverlay();
+    } else {
+      void triggerIncomingPickupOverlay({
+        orderId: lead.order.id,
+        orderNumber: lead.order.orderNumber || lead.order.id,
+        pickupLab: lead.order.smallLabName || 'Pickup Lab',
+        pickupAddress:
+          lead.order.pickupLocation?.address ||
+          lead.order.pickupLocation?.pincode ||
+          'Sample Collection Address',
+        targetLab: lead.order.targetLabName || 'Testing Lab',
+        targetAddress:
+          lead.order.deliveryLocation?.address ||
+          lead.order.targetLabName ||
+          'Testing Reference Lab',
+        distance: `${lead.distFromRiderKm} km away`,
+        payout: payoutLabel,
+        specimens: `${lead.order.specimens?.length || 1} Specimens • Sample Collection`,
+        timeoutSec: 45,
+        surgeIncentive: lead.order.surgeIncentiveInr || 0,
+      });
+    }
 
     showToast({
       variant: 'ALERT',
@@ -2071,6 +2092,25 @@ function PhleboAppContent() {
       stopContinuousPickupAlert();
       void dismissIncomingPickupOverlay();
       if (data?.orderId) {
+        const target = orders.find((o) => o.id === data.orderId);
+        const isExpired = target ? isOrderBroadcastExpired(target) : false;
+        if (isExpired) {
+          stopContinuousPickupAlert();
+          void dismissIncomingPickupOverlay();
+          setBroadcastForceOpen(false);
+          activeRingingOrderIdRef.current = null;
+          showToast({
+            variant: 'INFO',
+            title: 'Dispatch Window Ended',
+            subtitle: `Pickup request ${data.orderId} dispatch window has ended.`,
+          });
+          setBottomTab('home');
+          setSelectedOrderId(null);
+          setCurrentScreen('BOOKING_REQUESTS');
+          setRequestTab('new');
+          return;
+        }
+
         // Tapping the notification in the Android system tray opens the app and displays the order modal for review
         setDismissedBroadcastIds((prev) => prev.filter((id) => id !== data.orderId));
         setBroadcastForceOpen(true);
@@ -2227,6 +2267,7 @@ function PhleboAppContent() {
 
     const undismissed = openPoolWithDistance.find((x) => {
       if (!x.inBroadcastRadius) return false;
+      if (isOrderBroadcastExpired(x.order)) return false;
       if (dismissedBroadcastIds.includes(x.order.id)) return false;
       const isRetriedOrHiked =
         (x.order.searchRetryCount ?? 0) > 0 || (x.order.surgeIncentiveInr ?? 0) > 0;
@@ -2242,6 +2283,7 @@ function PhleboAppContent() {
       return (
         openPoolWithDistance.find((x) => {
           if (!x.inBroadcastRadius) return false;
+          if (isOrderBroadcastExpired(x.order)) return false;
           const isRetriedOrHiked =
             (x.order.searchRetryCount ?? 0) > 0 || (x.order.surgeIncentiveInr ?? 0) > 0;
           if (!isRetriedOrHiked) {
@@ -2348,6 +2390,7 @@ function PhleboAppContent() {
       (x) =>
         x.inBroadcastRadius &&
         x.order.status === OrderStatus.READY_FOR_PICKUP &&
+        !isOrderBroadcastExpired(x.order) &&
         !dismissedBroadcastIds.includes(x.order.id) &&
         !declinedOrderIds.includes(x.order.id) &&
         (!effectivePhleboId || !x.order.declinedPhleboIds?.includes(effectivePhleboId))

@@ -684,7 +684,7 @@ class FloatingDispatchOverlayService : Service() {
     countdownTimer = object : CountDownTimer(durationMs, 1000L) {
       override fun onTick(millisUntilFinished: Long) {
         val remSec = (millisUntilFinished / 1000L).toInt()
-        timerBadge.text = "\${remSec}s"
+        timerBadge.text = "⏱ \${remSec}s"
         try {
           if (ringtone?.isPlaying == false) {
             ringtone?.play()
