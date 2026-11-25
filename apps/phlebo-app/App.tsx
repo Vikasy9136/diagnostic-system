@@ -361,7 +361,7 @@ function PhleboAppContent() {
   useEffect(() => {
     if (Platform.OS !== 'web') {
       void ensureDutyNotificationChannel();
-      void Notifications.requestPermissionsAsync().catch(() => {});
+      void Notifications.requestPermissionsAsync().catch(() => { });
     }
   }, []);
 
@@ -833,7 +833,7 @@ function PhleboAppContent() {
             setPlatformSops(list);
           }
         },
-        () => {}
+        () => { }
       )
     );
 
@@ -848,7 +848,7 @@ function PhleboAppContent() {
             setPlatformFaqs(list);
           }
         },
-        () => {}
+        () => { }
       )
     );
 
@@ -1024,7 +1024,7 @@ function PhleboAppContent() {
             setDeclinedOrderIds(list);
             list.forEach((id) => alertedBroadcastIdsRef.current.add(id));
           }
-        } catch {}
+        } catch { }
       }
     });
   }, [effectivePhleboId]);
@@ -1040,7 +1040,7 @@ function PhleboAppContent() {
           void AsyncStorage.setItem(
             `labsetu_declined_orders_${effectivePhleboId}`,
             JSON.stringify(next)
-          ).catch(() => {});
+          ).catch(() => { });
         }
         return next;
       });
@@ -1222,9 +1222,9 @@ function PhleboAppContent() {
     if (!orders.length) return;
     orders.forEach((o) => {
       if (isOrderCompleted(o.status)) {
-        void cleanupCompletedOrderChats(o).catch(() => {});
+        void cleanupCompletedOrderChats(o).catch(() => { });
       }
-      void purgeExpiredOrderMedia(o).catch(() => {});
+      void purgeExpiredOrderMedia(o).catch(() => { });
     });
   }, [orders]);
 
@@ -1750,11 +1750,11 @@ function PhleboAppContent() {
 
         const distFromRiderKm = hasOrderCoords
           ? calculateHaversineDistanceKm(
-              riderLocation.latitude,
-              riderLocation.longitude,
-              order.pickupLocation.latitude,
-              order.pickupLocation.longitude
-            )
+            riderLocation.latitude,
+            riderLocation.longitude,
+            order.pickupLocation.latitude,
+            order.pickupLocation.longitude
+          )
           : 0;
 
         const maxRadiusKm = Math.max(order.broadcastRadiusKm || 0, defaultBroadcastKm, 25);
@@ -2041,10 +2041,10 @@ function PhleboAppContent() {
     });
   }, [session, isOnline, effectivePhleboId, openPoolWithDistance, declinedOrderIds, showToast]);
 
-  // Sync outside-app floating overlay service / sticky duty notification when minimized or closed
-  const nearbyOpenCount = useMemo(
-    () => openPoolWithDistance.filter((x) => x.inBroadcastRadius).length,
-    [openPoolWithDistance]
+  // Floating icon pending count strictly shows only active pending orders (assigned, collected, or in-transit tasks)
+  const floatingPendingCount = useMemo(
+    () => Math.max(activeAssignedOrders.length, todayPendingOrders.length),
+    [activeAssignedOrders.length, todayPendingOrders.length]
   );
 
   useEffect(() => {
@@ -2052,11 +2052,11 @@ function PhleboAppContent() {
       signedIn: Boolean(session),
       settings: floatingSettings,
       isOnline,
-      nearbyCount: nearbyOpenCount,
+      nearbyCount: floatingPendingCount,
       courierId: displayCourierId,
       appState,
     });
-  }, [session, floatingSettings, isOnline, nearbyOpenCount, displayCourierId, appState]);
+  }, [session, floatingSettings, isOnline, floatingPendingCount, displayCourierId, appState]);
 
   // Handle tapping sticky duty notification or pickup alert to jump straight into Quick Radar
   useEffect(() => {
@@ -4763,32 +4763,40 @@ function PhleboAppContent() {
             (floatingSettings.visibilityMode === 'ALWAYS' || isOnline)
           )}
           isOnline={isOnline}
-          nearbyOpenCount={openPoolWithDistance.filter((x) => x.inBroadcastRadius).length}
+          nearbyOpenCount={floatingPendingCount}
           gpsLabel={gpsSourceLabel}
           settings={floatingSettings}
           resetNonce={floatingResetNonce}
           onOpenNearbyPool={() => {
-            setBottomTab('home');
-            setSelectedOrderId(null);
-            setCurrentScreen('BOOKING_REQUESTS');
-            setRequestTab('new');
-            const firstNearby = openPoolWithDistance.find((x) => x.inBroadcastRadius);
-            if (firstNearby) {
-              setDismissedBroadcastIds((prev) =>
-                prev.filter((id) => id !== firstNearby.order.id)
-              );
-              setBroadcastForceOpen(true);
+            if (floatingPendingCount > 0) {
+              handleOpenTodayCollections();
+            } else {
+              setBottomTab('home');
+              setSelectedOrderId(null);
+              setCurrentScreen('BOOKING_REQUESTS');
+              setRequestTab('new');
+              const firstNearby = openPoolWithDistance.find((x) => x.inBroadcastRadius);
+              if (firstNearby) {
+                setDismissedBroadcastIds((prev) =>
+                  prev.filter((id) => id !== firstNearby.order.id)
+                );
+                setBroadcastForceOpen(true);
+              }
             }
           }}
           onOpenTodayCollections={handleOpenTodayCollections}
           onOpenBroadcastPopup={() => {
-            const firstNearby = openPoolWithDistance.find((x) => x.inBroadcastRadius);
-            if (firstNearby) {
-              setDismissedBroadcastIds((prev) =>
-                prev.filter((id) => id !== firstNearby.order.id)
-              );
+            if (floatingPendingCount > 0) {
+              handleOpenTodayCollections();
+            } else {
+              const firstNearby = openPoolWithDistance.find((x) => x.inBroadcastRadius);
+              if (firstNearby) {
+                setDismissedBroadcastIds((prev) =>
+                  prev.filter((id) => id !== firstNearby.order.id)
+                );
+              }
+              setBroadcastForceOpen(true);
             }
-            setBroadcastForceOpen(true);
           }}
           onOpenLocationPicker={() => setShowLocationPickerModal(true)}
           onOpenFloatingSettings={() => setFloatingSettingsVisible(true)}

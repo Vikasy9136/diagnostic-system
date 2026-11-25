@@ -1703,7 +1703,7 @@ class FloatingDispatchOverlayService : Service() {
       typeface = Typeface.DEFAULT_BOLD
     }
     val radarSub = TextView(this).apply {
-      text = if (currentNearbyCount > 0) "$currentNearbyCount urgent orders waiting" else "1–5 km radar active nearby"
+      text = if (currentNearbyCount > 0) "$currentNearbyCount pending task\${if (currentNearbyCount > 1) \"s\" else \"\"}" else "1–5 km radar active nearby"
       setTextColor(Color.parseColor("#475569"))
       textSize = 10f
     }
@@ -1715,7 +1715,7 @@ class FloatingDispatchOverlayService : Service() {
     )
 
     val radarBadge = TextView(this).apply {
-      text = if (currentNearbyCount > 0) "$currentNearbyCount Urgent" else "Radar ➔"
+      text = if (currentNearbyCount > 0) "$currentNearbyCount Pending" else "Radar ➔"
       setTextColor(if (currentNearbyCount > 0) Color.WHITE else Color.parseColor("#D97706"))
       textSize = 10.5f
       typeface = Typeface.DEFAULT_BOLD

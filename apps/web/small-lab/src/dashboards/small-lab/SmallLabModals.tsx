@@ -388,6 +388,43 @@ export function SmallLabPrintBarcodesModal({
         </>
       }
     >
+      <style>{`
+        @media print {
+          body * {
+            visibility: hidden !important;
+          }
+          .printable-stickers-grid,
+          .printable-stickers-grid * {
+            visibility: visible !important;
+          }
+          .printable-stickers-grid {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 10px !important;
+            display: grid !important;
+            grid-template-columns: repeat(2, 1fr) !important;
+            gap: 12px !important;
+            background: #FFFFFF !important;
+            z-index: 999999 !important;
+          }
+          .barcode-sticker-card {
+            border: 1.5px solid #0F172A !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          .no-print,
+          .modal-header,
+          .modal-footer {
+            display: none !important;
+          }
+        }
+      `}</style>
+
       <div style={{ marginBottom: '14px', fontSize: '0.84rem', color: '#64748B' }} className="no-print">
         Standard 50mm × 25mm (2" × 1") thermal label layout. Paste each printed barcode sticker onto the corresponding vacutainer tube before phlebotomist custody handover.
       </div>

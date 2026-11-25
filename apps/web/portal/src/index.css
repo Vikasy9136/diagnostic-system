@@ -2218,6 +2218,15 @@ body {
   padding: 12px 14px;
 }
 
+.dispatch-booking-card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.dispatch-booking-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08), 0 8px 10px -6px rgba(15, 23, 42, 0.04) !important;
+}
+
 .printable-report-sheet {
   background: #FFFFFF;
   border: 1px solid #E2E8F0;
@@ -2231,10 +2240,21 @@ body {
     visibility: hidden !important;
   }
   .printable-report-sheet,
-  .printable-report-sheet * {
+  .printable-report-sheet *,
+  .printable-stickers-grid,
+  .printable-stickers-grid * {
     visibility: visible !important;
   }
-  .printable-report-sheet {
+  .dispatch-booking-card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.dispatch-booking-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08), 0 8px 10px -6px rgba(15, 23, 42, 0.04) !important;
+}
+
+.printable-report-sheet {
     position: fixed !important;
     inset: 0 !important;
     width: 100% !important;
@@ -2245,7 +2265,29 @@ body {
     background: #FFFFFF !important;
     z-index: 99999 !important;
   }
-  .no-print {
+  .printable-stickers-grid {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 10px !important;
+    display: grid !important;
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 12px !important;
+    background: #FFFFFF !important;
+    z-index: 99999 !important;
+  }
+  .barcode-sticker-card {
+    border: 1.5px solid #0F172A !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  .no-print,
+  .modal-header,
+  .modal-footer {
     display: none !important;
   }
 }

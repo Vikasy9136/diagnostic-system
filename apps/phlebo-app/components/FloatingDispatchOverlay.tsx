@@ -476,10 +476,10 @@ export function FloatingDispatchOverlay({
                 </View>
                 <View style={styles.menuTileCol}>
                   <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={[styles.menuTileTitle, { color: '#B45309' }]}>
-                    1–5 km Pickup Pool
+                    {hasRequests ? 'Pending Tasks' : '1–5 km Pickup Pool'}
                   </Text>
                   <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.menuTileSub}>
-                    {hasRequests ? `${nearbyOpenCount} urgent orders waiting` : 'Scan active sample requests nearby'}
+                    {hasRequests ? `${nearbyOpenCount} pending sample collection task${nearbyOpenCount > 1 ? 's' : ''}` : 'Scan active sample requests nearby'}
                   </Text>
                 </View>
                 <View
@@ -494,7 +494,7 @@ export function FloatingDispatchOverlay({
                       hasRequests ? { color: '#FFFFFF' } : { color: '#D97706' },
                     ]}
                   >
-                    {hasRequests ? `${nearbyOpenCount} Urgent` : 'Radar ➔'}
+                    {hasRequests ? `${nearbyOpenCount} Pending` : 'Radar ➔'}
                   </Text>
                 </View>
               </TouchableOpacity>
