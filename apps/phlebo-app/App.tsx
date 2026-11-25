@@ -2041,23 +2041,6 @@ function PhleboAppContent() {
     });
   }, [session, isOnline, effectivePhleboId, openPoolWithDistance, declinedOrderIds, showToast]);
 
-  // Floating icon pending count strictly shows only active pending orders (assigned, collected, or in-transit tasks)
-  const floatingPendingCount = useMemo(
-    () => Math.max(activeAssignedOrders.length, todayPendingOrders.length),
-    [activeAssignedOrders.length, todayPendingOrders.length]
-  );
-
-  useEffect(() => {
-    void syncFloatingOverlayRuntime({
-      signedIn: Boolean(session),
-      settings: floatingSettings,
-      isOnline,
-      nearbyCount: floatingPendingCount,
-      courierId: displayCourierId,
-      appState,
-    });
-  }, [session, floatingSettings, isOnline, floatingPendingCount, displayCourierId, appState]);
-
   // Handle tapping sticky duty notification or pickup alert to jump straight into Quick Radar
   useEffect(() => {
     if (Platform.OS === 'web') return;
@@ -2331,6 +2314,23 @@ function PhleboAppContent() {
       ),
     [todayOrders]
   );
+
+  // Floating icon pending count strictly shows only active pending orders (assigned, collected, or in-transit tasks)
+  const floatingPendingCount = useMemo(
+    () => Math.max(activeAssignedOrders.length, todayPendingOrders.length),
+    [activeAssignedOrders.length, todayPendingOrders.length]
+  );
+
+  useEffect(() => {
+    void syncFloatingOverlayRuntime({
+      signedIn: Boolean(session),
+      settings: floatingSettings,
+      isOnline,
+      nearbyCount: floatingPendingCount,
+      courierId: displayCourierId,
+      appState,
+    });
+  }, [session, floatingSettings, isOnline, floatingPendingCount, displayCourierId, appState]);
 
   const metrics = useMemo<PhleboMetrics>(() => {
     const now = new Date();

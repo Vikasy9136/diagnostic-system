@@ -8,6 +8,7 @@ export interface GoogleWebMapPreviewProps {
   address?: string;
   title?: string;
   height?: number;
+  showNavigationButton?: boolean;
   onOpenGoogleMaps?: () => void;
 }
 
@@ -21,6 +22,7 @@ export function GoogleWebMapPreview({
   address,
   title,
   height = 170,
+  showNavigationButton = false,
   onOpenGoogleMaps,
 }: GoogleWebMapPreviewProps) {
   const hostId = useMemo(
@@ -73,21 +75,25 @@ export function GoogleWebMapPreview({
       {Platform.OS === 'web' ? (
         <View nativeID={hostId} style={[styles.osmViewport, { height }]} />
       ) : (
-        <View style={[styles.osmNativeFallback, { height: Math.min(110, height) }]}>
+        <View style={[styles.osmNativeFallback, { height: showNavigationButton ? Math.min(110, height) : Math.min(80, height) }]}>
           <Text style={styles.osmNativeCoords} numberOfLines={2}>
             📍 {address ? address : 'Verified Destination Location'}
           </Text>
-          <Text style={styles.osmNativeHint}>
-            Tap below to launch live turn-by-turn navigation in Google Maps.
-          </Text>
+          {showNavigationButton && (
+            <Text style={styles.osmNativeHint}>
+              Tap below to launch live turn-by-turn navigation in Google Maps.
+            </Text>
+          )}
         </View>
       )}
 
-      <View style={styles.osmActionsRow}>
-        <TouchableOpacity style={styles.osmLinkBtnPrimary} onPress={openGoogleMapsExternal}>
-          <Text style={styles.osmLinkBtnPrimaryText}>Open in Google Maps ↗</Text>
-        </TouchableOpacity>
-      </View>
+      {showNavigationButton && (
+        <View style={styles.osmActionsRow}>
+          <TouchableOpacity style={styles.osmLinkBtnPrimary} onPress={openGoogleMapsExternal}>
+            <Text style={styles.osmLinkBtnPrimaryText}>Open in Google Maps ↗</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }

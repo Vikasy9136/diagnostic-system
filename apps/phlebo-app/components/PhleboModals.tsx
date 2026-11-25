@@ -565,13 +565,7 @@ export function BroadcastDispatchModal({
                   )}
                   title={`Pickup Point • ${activeBroadcastMatch.order.smallLabName}`}
                   height={110}
-                  onOpenGoogleMaps={() =>
-                    onOpenDirectionsMap(
-                      activeBroadcastMatch.order.pickupLocation?.latitude,
-                      activeBroadcastMatch.order.pickupLocation?.longitude,
-                      activeBroadcastMatch.order.pickupLocation?.address
-                    )
-                  }
+                  showNavigationButton={false}
                 />
               </View>
 
