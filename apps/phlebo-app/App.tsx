@@ -487,6 +487,7 @@ function PhleboAppContent() {
   const seenUpdatedMapRef = useRef<Map<string, number>>(new Map());
   const lastBarcodeToastRef = useRef<Record<string, string>>({});
   const seenNotificationDocIdsRef = useRef<Set<string>>(new Set());
+  const clearedNotifIdsRef = useRef<Set<string>>(new Set());
   const myAssignedOrderIdsRef = useRef<Set<string>>(new Set());
   const initialNotifLoadRef = useRef(true);
 
@@ -877,6 +878,14 @@ function PhleboAppContent() {
           }));
           const filtered = all
             .filter((n) => {
+              if (clearedNotifIdsRef.current.has(n.id)) return false;
+              if (Boolean((n as any).archivedByPhlebo)) return false;
+              if (
+                Array.isArray((n as any).clearedByUids) &&
+                (n as any).clearedByUids.includes(myPhleboId || session?.firebaseUser?.uid || '')
+              ) {
+                return false;
+              }
               // 1. If notification is tied to an order, ONLY show if this phlebo has accepted/is assigned to that order
               if (n.orderId) {
                 return myAssignedOrderIdsRef.current.has(n.orderId);
@@ -1016,20 +1025,71 @@ function PhleboAppContent() {
   const handleClearAllNotifications = async () => {
     try {
       if (notifications.length === 0) return;
-      const batch = writeBatch(db);
-      notifications.forEach((n) => {
-        batch.delete(doc(db, 'notifications', n.id));
-      });
-      await batch.commit();
+      const toClear = [...notifications];
+      const clearUid = effectivePhleboId || session?.firebaseUser?.uid || 'phlebo';
+
+      toClear.forEach((n) => clearedNotifIdsRef.current.add(n.id));
       setNotifications([]);
+
+      if (effectivePhleboId) {
+        const persisted = Array.from(clearedNotifIdsRef.current).slice(-300);
+        void AsyncStorage.setItem(
+          `@labsetu_cleared_notifs_${effectivePhleboId}`,
+          JSON.stringify(persisted)
+        ).catch(() => {});
+      }
+
+      if (Platform.OS !== 'web') {
+        void Notifications.dismissAllNotificationsAsync().catch(() => {});
+      }
+
+      // Firestore rules restrict delete to admins, so archive/mark cleared via update (permitted for active accounts)
+      const now = new Date().toISOString();
+      for (let i = 0; i < toClear.length; i += 400) {
+        const chunk = toClear.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach((n) => {
+          const isPersonal =
+            Boolean(n.recipientUid) &&
+            (n.recipientUid === session?.firebaseUser?.uid ||
+              n.recipientUid === effectivePhleboId ||
+              n.recipientUid === myPhleboProfile?.id);
+          batch.update(doc(db, 'notifications', n.id), {
+            read: true,
+            readAt: now,
+            clearedByUids: arrayUnion(clearUid),
+            ...(isPersonal ? { archivedByPhlebo: true } : {}),
+          });
+        });
+        await batch.commit().catch((err) => {
+          console.warn('Firestore notification clear batch warning:', err);
+        });
+      }
+
+      showToast({
+        variant: 'INFO',
+        title: 'Notifications Cleared',
+        subtitle: 'All notifications have been cleared.',
+      });
     } catch (err) {
       console.warn('Failed to clear notifications:', err);
     }
   };
 
-  // Load persisted declined/rejected bookings for this phlebotomist
+  // Load persisted declined/rejected bookings and cleared notifications for this phlebotomist
   useEffect(() => {
     if (!effectivePhleboId) return;
+    void AsyncStorage.getItem(`@labsetu_cleared_notifs_${effectivePhleboId}`).then((raw) => {
+      if (raw) {
+        try {
+          const list = JSON.parse(raw);
+          if (Array.isArray(list)) {
+            list.forEach((id) => clearedNotifIdsRef.current.add(String(id)));
+            setNotifications((prev) => prev.filter((n) => !clearedNotifIdsRef.current.has(n.id)));
+          }
+        } catch {}
+      }
+    });
     void AsyncStorage.getItem(`labsetu_declined_orders_${effectivePhleboId}`).then((raw) => {
       if (raw) {
         try {
@@ -2440,15 +2500,48 @@ function PhleboAppContent() {
   ]);
 
   useEffect(() => {
-    void syncFloatingOverlayRuntime({
-      signedIn: Boolean(session),
-      settings: floatingSettings,
-      isOnline,
-      nearbyCount: floatingPendingCount,
-      courierId: displayCourierId,
-      appState,
-    });
-  }, [session, floatingSettings, isOnline, floatingPendingCount, displayCourierId, appState]);
+    let cancelled = false;
+    const runSync = async () => {
+      let idToken = '';
+      try {
+        idToken = (await auth.currentUser?.getIdToken()) || '';
+      } catch {}
+      if (cancelled) return;
+      const firebaseOpts = auth.app?.options as { apiKey?: string; projectId?: string } | undefined;
+      void syncFloatingOverlayRuntime({
+        signedIn: Boolean(session),
+        settings: floatingSettings,
+        isOnline,
+        nearbyCount: floatingPendingCount,
+        courierId: displayCourierId,
+        appState,
+        phleboId: effectivePhleboId,
+        riderLat: riderLocation.latitude,
+        riderLng: riderLocation.longitude,
+        broadcastRadiusKm: commissionConfig.broadcastRadiusMaxKm || 5,
+        firebaseApiKey: firebaseOpts?.apiKey || '',
+        firebaseProjectId: firebaseOpts?.projectId || 'labsetu-diagnostics',
+        authToken: idToken,
+        refreshToken: auth.currentUser?.refreshToken || '',
+        appInForeground: appState === 'active',
+      });
+    };
+    void runSync();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    session,
+    floatingSettings,
+    isOnline,
+    floatingPendingCount,
+    displayCourierId,
+    appState,
+    effectivePhleboId,
+    riderLocation.latitude,
+    riderLocation.longitude,
+    commissionConfig.broadcastRadiusMaxKm,
+  ]);
 
   const metrics = useMemo<PhleboMetrics>(() => {
     const now = new Date();
@@ -3992,7 +4085,7 @@ function PhleboAppContent() {
         console.warn('In-app checkout open error:', err);
         try {
           await Linking.openURL(url);
-        } catch {}
+        } catch { }
       }
     },
     [activePaymentLink, handleVerifyActivePaymentLink, showToast]

@@ -62,8 +62,26 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlin.math.sqrt
+import org.json.JSONArray
+import org.json.JSONObject
 
 class FloatingDispatchOverlayService : Service() {
   private var windowManager: WindowManager? = null
@@ -83,6 +101,17 @@ class FloatingDispatchOverlayService : Service() {
   private var currentOnline = true
   private var currentNearbyCount = 0
   private var currentCourierId = "LabSetu"
+  private var currentPhleboId = ""
+  private var currentRiderLat = 0.0
+  private var currentRiderLng = 0.0
+  private var currentBroadcastRadiusKm = 5.0
+  private var currentFirebaseApiKey = ""
+  private var currentFirebaseProjectId = "labsetu-diagnostics"
+  private var currentAuthToken = ""
+  private var currentRefreshToken = ""
+  @Volatile private var appInForeground = false
+  private var pollerExecutor: ScheduledExecutorService? = null
+  private val pollerAlertedKeys = HashSet<String>()
 
   private var currentIncomingOrderId: String? = null
   private var currentIncomingOrderNumber: String? = null
@@ -110,7 +139,45 @@ class FloatingDispatchOverlayService : Service() {
       @Suppress("DEPRECATION")
       getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
     }
+    restorePollerConfig()
     createNotificationChannel()
+    if (currentOnline) {
+      startBackgroundPoller()
+    }
+  }
+
+  private fun savePollerConfig() {
+    try {
+      val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      prefs.edit()
+        .putBoolean("is_online", currentOnline)
+        .putString("courier_id", currentCourierId)
+        .putString("phlebo_id", currentPhleboId)
+        .putString("rider_lat", currentRiderLat.toString())
+        .putString("rider_lng", currentRiderLng.toString())
+        .putString("radius_km", currentBroadcastRadiusKm.toString())
+        .putString("fb_api_key", currentFirebaseApiKey)
+        .putString("fb_project_id", currentFirebaseProjectId)
+        .putString("auth_token", currentAuthToken)
+        .putString("refresh_token", currentRefreshToken)
+        .apply()
+    } catch (_: Exception) {}
+  }
+
+  private fun restorePollerConfig() {
+    try {
+      val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      currentOnline = prefs.getBoolean("is_online", true)
+      currentCourierId = prefs.getString("courier_id", "LabSetu") ?: "LabSetu"
+      currentPhleboId = prefs.getString("phlebo_id", "") ?: ""
+      currentRiderLat = prefs.getString("rider_lat", "0.0")?.toDoubleOrNull() ?: 0.0
+      currentRiderLng = prefs.getString("rider_lng", "0.0")?.toDoubleOrNull() ?: 0.0
+      currentBroadcastRadiusKm = prefs.getString("radius_km", "5.0")?.toDoubleOrNull() ?: 5.0
+      currentFirebaseApiKey = prefs.getString("fb_api_key", "") ?: ""
+      currentFirebaseProjectId = prefs.getString("fb_project_id", "labsetu-diagnostics") ?: "labsetu-diagnostics"
+      currentAuthToken = prefs.getString("auth_token", "") ?: ""
+      currentRefreshToken = prefs.getString("refresh_token", "") ?: ""
+    } catch (_: Exception) {}
   }
 
   private fun triggerHaptic(durationMs: Long = 35L) {
@@ -157,6 +224,10 @@ class FloatingDispatchOverlayService : Service() {
     when (intent?.action) {
       ACTION_STOP -> {
         ensureForegroundSafe()
+        currentOnline = false
+        appInForeground = false
+        savePollerConfig()
+        stopBackgroundPoller()
         stopAlertSound()
         detachIncomingModal()
         stopForegroundCompat()
@@ -207,8 +278,32 @@ class FloatingDispatchOverlayService : Service() {
     currentOnline = intent?.getBooleanExtra(EXTRA_IS_ONLINE, currentOnline) ?: currentOnline
     currentNearbyCount = intent?.getIntExtra(EXTRA_NEARBY_COUNT, currentNearbyCount) ?: currentNearbyCount
     currentCourierId = intent?.getStringExtra(EXTRA_COURIER_ID) ?: currentCourierId
+    intent?.getStringExtra(EXTRA_PHLEBO_ID)?.takeIf { it.isNotEmpty() }?.let { currentPhleboId = it }
+    if (intent?.hasExtra(EXTRA_RIDER_LAT) == true) {
+      currentRiderLat = intent.getDoubleExtra(EXTRA_RIDER_LAT, currentRiderLat)
+    }
+    if (intent?.hasExtra(EXTRA_RIDER_LNG) == true) {
+      currentRiderLng = intent.getDoubleExtra(EXTRA_RIDER_LNG, currentRiderLng)
+    }
+    if (intent?.hasExtra(EXTRA_RADIUS_KM) == true) {
+      currentBroadcastRadiusKm = intent.getDoubleExtra(EXTRA_RADIUS_KM, currentBroadcastRadiusKm)
+    }
+    intent?.getStringExtra(EXTRA_FB_API_KEY)?.takeIf { it.isNotEmpty() }?.let { currentFirebaseApiKey = it }
+    intent?.getStringExtra(EXTRA_FB_PROJECT_ID)?.takeIf { it.isNotEmpty() }?.let { currentFirebaseProjectId = it }
+    intent?.getStringExtra(EXTRA_AUTH_TOKEN)?.takeIf { it.isNotEmpty() }?.let { currentAuthToken = it }
+    intent?.getStringExtra(EXTRA_REFRESH_TOKEN)?.takeIf { it.isNotEmpty() }?.let { currentRefreshToken = it }
+    if (intent?.hasExtra(EXTRA_APP_FOREGROUND) == true) {
+      appInForeground = intent.getBooleanExtra(EXTRA_APP_FOREGROUND, appInForeground)
+    }
+    savePollerConfig()
 
     ensureForegroundSafe()
+
+    if (currentOnline) {
+      startBackgroundPoller()
+    } else {
+      stopBackgroundPoller()
+    }
 
     if (canDrawOverlaysCompat(this)) {
       if (bubbleContainer == null) {
@@ -223,12 +318,16 @@ class FloatingDispatchOverlayService : Service() {
 
   override fun onTaskRemoved(rootIntent: Intent?) {
     super.onTaskRemoved(rootIntent)
+    appInForeground = false
     if (!currentOnline) {
+      stopBackgroundPoller()
       stopAlertSound()
       detachIncomingModal()
       hideDismissTarget()
       detachFloatingBubble()
       stopSelf()
+    } else {
+      startBackgroundPoller()
     }
   }
 
@@ -237,6 +336,7 @@ class FloatingDispatchOverlayService : Service() {
     if (activeInstance === this) {
       activeInstance = null
     }
+    stopBackgroundPoller()
     stopAlertSound()
     detachIncomingModal()
     hideDismissTarget()
@@ -2117,6 +2217,250 @@ class FloatingDispatchOverlayService : Service() {
     }
   }
 
+  private fun startBackgroundPoller() {
+    if (pollerExecutor != null) return
+    val exec = Executors.newSingleThreadScheduledExecutor()
+    pollerExecutor = exec
+    exec.scheduleWithFixedDelay({
+      try {
+        pollOrdersInBackground()
+      } catch (_: Exception) {}
+    }, 3, 5, TimeUnit.SECONDS)
+  }
+
+  private fun stopBackgroundPoller() {
+    try {
+      pollerExecutor?.shutdownNow()
+    } catch (_: Exception) {}
+    pollerExecutor = null
+  }
+
+  private fun parseIsoToMillis(iso: String?): Long {
+    if (iso.isNullOrBlank()) return 0L
+    return try {
+      val clean = iso.replace("Z", "+0000")
+      val fmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US)
+      fmt.parse(clean)?.time ?: 0L
+    } catch (_: Exception) {
+      try {
+        val fmt2 = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.US)
+        fmt2.parse(iso.replace("Z", "+0000"))?.time ?: 0L
+      } catch (_: Exception) {
+        0L
+      }
+    }
+  }
+
+  private fun haversineKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+    val r = 6371.0
+    val dLat = Math.toRadians(lat2 - lat1)
+    val dLon = Math.toRadians(lon2 - lon1)
+    val a = sin(dLat / 2) * sin(dLat / 2) +
+      cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
+      sin(dLon / 2) * sin(dLon / 2)
+    return 2.0 * r * atan2(sqrt(a), sqrt(1.0 - a))
+  }
+
+  private fun fsString(fields: JSONObject?, key: String): String {
+    val obj = fields?.optJSONObject(key) ?: return ""
+    return obj.optString("stringValue", "")
+  }
+
+  private fun fsDouble(fields: JSONObject?, key: String): Double {
+    val obj = fields?.optJSONObject(key) ?: return 0.0
+    if (obj.has("doubleValue")) return obj.optDouble("doubleValue", 0.0)
+    if (obj.has("integerValue")) return obj.optString("integerValue", "0").toDoubleOrNull() ?: 0.0
+    return 0.0
+  }
+
+  private fun fsInt(fields: JSONObject?, key: String): Int {
+    val obj = fields?.optJSONObject(key) ?: return 0
+    if (obj.has("integerValue")) return obj.optString("integerValue", "0").toIntOrNull() ?: 0
+    if (obj.has("doubleValue")) return obj.optDouble("doubleValue", 0.0).roundToInt()
+    return 0
+  }
+
+  private fun refreshFirebaseIdToken(): Boolean {
+    if (currentRefreshToken.isBlank() || currentFirebaseApiKey.isBlank()) return false
+    var conn: HttpURLConnection? = null
+    return try {
+      val url = URL("https://securetoken.googleapis.com/v1/token?key=\${currentFirebaseApiKey}")
+      conn = (url.openConnection() as HttpURLConnection).apply {
+        requestMethod = "POST"
+        doOutput = true
+        connectTimeout = 7000
+        readTimeout = 7000
+        setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+      }
+      val body = "grant_type=refresh_token&refresh_token=\${currentRefreshToken}"
+      OutputStreamWriter(conn.outputStream).use { it.write(body) }
+      if (conn.responseCode in 200..299) {
+        val resp = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
+        val json = JSONObject(resp)
+        val newToken = json.optString("id_token", "")
+        val newRefresh = json.optString("refresh_token", "")
+        if (newToken.isNotBlank()) {
+          currentAuthToken = newToken
+          if (newRefresh.isNotBlank()) currentRefreshToken = newRefresh
+          savePollerConfig()
+          true
+        } else false
+      } else false
+    } catch (_: Exception) {
+      false
+    } finally {
+      conn?.disconnect()
+    }
+  }
+
+  private fun pollOrdersInBackground(retriedAuth: Boolean = false) {
+    if (!currentOnline || appInForeground || incomingModalView != null) return
+    if (!canDrawOverlaysCompat(this)) return
+    if (currentAuthToken.isBlank() || currentFirebaseProjectId.isBlank()) return
+
+    var conn: HttpURLConnection? = null
+    try {
+      val url = URL("https://firestore.googleapis.com/v1/projects/\${currentFirebaseProjectId}/databases/(default)/documents:runQuery")
+      conn = (url.openConnection() as HttpURLConnection).apply {
+        requestMethod = "POST"
+        doOutput = true
+        connectTimeout = 8000
+        readTimeout = 8000
+        setRequestProperty("Content-Type", "application/json")
+        setRequestProperty("Authorization", "Bearer \${currentAuthToken}")
+      }
+      val queryPayload = JSONObject().apply {
+        put("structuredQuery", JSONObject().apply {
+          put("from", JSONArray().put(JSONObject().put("collectionId", "orders")))
+          put("where", JSONObject().apply {
+            put("fieldFilter", JSONObject().apply {
+              put("field", JSONObject().put("fieldPath", "status"))
+              put("op", "EQUAL")
+              put("value", JSONObject().put("stringValue", "READY_FOR_PICKUP"))
+            })
+          })
+          put("limit", 15)
+        })
+      }
+      OutputStreamWriter(conn.outputStream).use { it.write(queryPayload.toString()) }
+
+      val code = conn.responseCode
+      if (code == 401 && !retriedAuth) {
+        conn.disconnect()
+        if (refreshFirebaseIdToken()) {
+          pollOrdersInBackground(true)
+        }
+        return
+      }
+      if (code !in 200..299) return
+
+      val resp = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
+      val arr = JSONArray(resp)
+      val nowMs = System.currentTimeMillis()
+      var nearbyReadyCount = 0
+
+      for (i in 0 until arr.length()) {
+        val row = arr.optJSONObject(i) ?: continue
+        val docObj = row.optJSONObject("document") ?: continue
+        val docName = docObj.optString("name", "")
+        val orderId = docName.substringAfterLast("/")
+        if (orderId.isBlank()) continue
+
+        val fields = docObj.optJSONObject("fields") ?: continue
+        val assignedPhlebo = fsString(fields, "phlebotomistId")
+        if (assignedPhlebo.isNotBlank()) continue
+
+        val expiresAtStr = fsString(fields, "broadcastExpiresAt")
+        val expiresMs = parseIsoToMillis(expiresAtStr)
+        val refMs = parseIsoToMillis(fsString(fields, "updatedAt").ifBlank { fsString(fields, "createdAt") })
+        val isExpired = if (expiresMs > 0L) {
+          nowMs >= expiresMs
+        } else if (refMs > 0L) {
+          nowMs - refMs >= 45000L
+        } else false
+        if (isExpired) continue
+
+        val retryCount = fsInt(fields, "searchRetryCount")
+        val surgeInr = fsInt(fields, "surgeIncentiveInr")
+        val isRetriedOrHiked = retryCount > 0 || surgeInr > 0
+
+        if (!isRetriedOrHiked && currentPhleboId.isNotBlank()) {
+          val declinedArr = fields.optJSONObject("declinedPhleboIds")?.optJSONObject("arrayValue")?.optJSONArray("values")
+          var declinedByMe = false
+          if (declinedArr != null) {
+            for (j in 0 until declinedArr.length()) {
+              if (declinedArr.optJSONObject(j)?.optString("stringValue", "") == currentPhleboId) {
+                declinedByMe = true
+                break
+              }
+            }
+          }
+          if (declinedByMe) continue
+        }
+
+        val pickupLoc = fields.optJSONObject("pickupLocation")?.optJSONObject("mapValue")?.optJSONObject("fields")
+        val pLat = fsDouble(pickupLoc, "latitude").let { if (it != 0.0) it else fsDouble(pickupLoc, "lat") }
+        val pLng = fsDouble(pickupLoc, "longitude").let { if (it != 0.0) it else fsDouble(pickupLoc, "lng") }
+        var distLabel = "Nearby"
+        if (currentRiderLat != 0.0 && currentRiderLng != 0.0 && pLat != 0.0 && pLng != 0.0) {
+          val distKm = haversineKm(currentRiderLat, currentRiderLng, pLat, pLng)
+          if (distKm > currentBroadcastRadiusKm) continue
+          val rounded = (distKm * 10.0).roundToInt() / 10.0
+          distLabel = "\${rounded} km away"
+        }
+
+        nearbyReadyCount++
+        val dedupKey = "\${orderId}_\${retryCount}_\${surgeInr}"
+        if (pollerAlertedKeys.contains(dedupKey)) continue
+        pollerAlertedKeys.add(dedupKey)
+
+        val orderNumber = fsString(fields, "orderNumber").ifBlank { orderId }
+        val pickupLab = fsString(fields, "smallLabName").ifBlank { "Pickup Lab" }
+        val pickupAddr = fsString(pickupLoc, "address").ifBlank { fsString(pickupLoc, "pincode").ifBlank { "Sample Collection Address" } }
+        val targetLab = fsString(fields, "targetLabName").ifBlank { "Testing Lab" }
+        val delLoc = fields.optJSONObject("deliveryLocation")?.optJSONObject("mapValue")?.optJSONObject("fields")
+        val targetAddr = fsString(delLoc, "address").ifBlank { targetLab }
+        val courierFee = fsInt(fields, "courierFeeInr").let { if (it > 0) it else 100 }
+        val basePay = fsInt(fields, "baseCourierFeeInr").let { if (it > 0) it else (courierFee - surgeInr).coerceAtLeast(50) }
+        val payoutLabel = if (surgeInr > 0) {
+          "Earn ₹\${courierFee} (₹\${basePay} + ₹\${surgeInr} Surge)"
+        } else {
+          "Earn ₹\${courierFee}"
+        }
+        val specArr = fields.optJSONObject("specimens")?.optJSONObject("arrayValue")?.optJSONArray("values")
+        val specCount = specArr?.length()?.coerceAtLeast(1) ?: 1
+        val specimensLabel = "\${specCount} Specimens • Sample Collection"
+        val remSec = if (expiresMs > 0L) ((expiresMs - nowMs) / 1000L).toInt().coerceIn(5, 45) else 45
+
+        Handler(Looper.getMainLooper()).post {
+          if (!appInForeground && incomingModalView == null && currentOnline) {
+            currentNearbyCount = nearbyReadyCount
+            refreshBubbleAppearance()
+            currentIncomingOrderId = orderId
+            currentIncomingOrderNumber = orderNumber
+            showIncomingOrderModal(
+              orderId = orderId,
+              orderNum = orderNumber,
+              pickupLab = pickupLab,
+              pickupAddr = pickupAddr,
+              targetLab = targetLab,
+              targetAddr = targetAddr,
+              distance = distLabel,
+              payout = payoutLabel,
+              specimens = specimensLabel,
+              timeoutSec = remSec,
+              surgeIncentive = surgeInr
+            )
+          }
+        }
+        break
+      }
+    } catch (_: Exception) {
+    } finally {
+      conn?.disconnect()
+    }
+  }
+
   companion object {
     const val PREFS_NAME = "labsetu_floating_dispatch_prefs"
     const val KEY_BUBBLE_X = "bubble_x"
@@ -2135,6 +2479,15 @@ class FloatingDispatchOverlayService : Service() {
     const val EXTRA_IS_ONLINE = "isOnline"
     const val EXTRA_NEARBY_COUNT = "nearbyCount"
     const val EXTRA_COURIER_ID = "courierId"
+    const val EXTRA_PHLEBO_ID = "phleboId"
+    const val EXTRA_RIDER_LAT = "riderLat"
+    const val EXTRA_RIDER_LNG = "riderLng"
+    const val EXTRA_RADIUS_KM = "broadcastRadiusKm"
+    const val EXTRA_FB_API_KEY = "firebaseApiKey"
+    const val EXTRA_FB_PROJECT_ID = "firebaseProjectId"
+    const val EXTRA_AUTH_TOKEN = "authToken"
+    const val EXTRA_REFRESH_TOKEN = "refreshToken"
+    const val EXTRA_APP_FOREGROUND = "appInForeground"
 
     const val EXTRA_ORDER_ID = "orderId"
     const val EXTRA_ORDER_NUMBER = "orderNumber"
@@ -2293,6 +2646,33 @@ class FloatingDispatchOverlayModule(
           FloatingDispatchOverlayService.EXTRA_COURIER_ID,
           if (options?.hasKey("courierId") == true) options.getString("courierId") else "LabSetu"
         )
+        if (options?.hasKey("phleboId") == true) {
+          putExtra(FloatingDispatchOverlayService.EXTRA_PHLEBO_ID, options.getString("phleboId") ?: "")
+        }
+        if (options?.hasKey("riderLat") == true) {
+          putExtra(FloatingDispatchOverlayService.EXTRA_RIDER_LAT, options.getDouble("riderLat"))
+        }
+        if (options?.hasKey("riderLng") == true) {
+          putExtra(FloatingDispatchOverlayService.EXTRA_RIDER_LNG, options.getDouble("riderLng"))
+        }
+        if (options?.hasKey("broadcastRadiusKm") == true) {
+          putExtra(FloatingDispatchOverlayService.EXTRA_RADIUS_KM, options.getDouble("broadcastRadiusKm"))
+        }
+        if (options?.hasKey("firebaseApiKey") == true) {
+          putExtra(FloatingDispatchOverlayService.EXTRA_FB_API_KEY, options.getString("firebaseApiKey") ?: "")
+        }
+        if (options?.hasKey("firebaseProjectId") == true) {
+          putExtra(FloatingDispatchOverlayService.EXTRA_FB_PROJECT_ID, options.getString("firebaseProjectId") ?: "labsetu-diagnostics")
+        }
+        if (options?.hasKey("authToken") == true) {
+          putExtra(FloatingDispatchOverlayService.EXTRA_AUTH_TOKEN, options.getString("authToken") ?: "")
+        }
+        if (options?.hasKey("refreshToken") == true) {
+          putExtra(FloatingDispatchOverlayService.EXTRA_REFRESH_TOKEN, options.getString("refreshToken") ?: "")
+        }
+        if (options?.hasKey("appInForeground") == true) {
+          putExtra(FloatingDispatchOverlayService.EXTRA_APP_FOREGROUND, options.getBoolean("appInForeground"))
+        }
       }
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         reactCtx.startForegroundService(svcIntent)

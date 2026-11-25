@@ -25,6 +25,15 @@ interface NativeFloatingDispatchOverlayModule {
     isOnline: boolean;
     nearbyCount: number;
     courierId: string;
+    phleboId?: string;
+    riderLat?: number;
+    riderLng?: number;
+    broadcastRadiusKm?: number;
+    firebaseApiKey?: string;
+    firebaseProjectId?: string;
+    authToken?: string;
+    refreshToken?: string;
+    appInForeground?: boolean;
   }) => Promise<boolean>;
   stopOverlay: () => Promise<boolean>;
   triggerIncomingPickupModal: (orderData: IncomingOrderOverlayPayload) => Promise<boolean>;
@@ -252,10 +261,34 @@ export async function syncFloatingOverlayRuntime(opts: {
   nearbyCount: number;
   courierId: string;
   appState?: AppStateStatus;
+  phleboId?: string;
+  riderLat?: number;
+  riderLng?: number;
+  broadcastRadiusKm?: number;
+  firebaseApiKey?: string;
+  firebaseProjectId?: string;
+  authToken?: string;
+  refreshToken?: string;
+  appInForeground?: boolean;
 }): Promise<void> {
   if (Platform.OS === 'web') return;
 
-  const { signedIn, settings, isOnline, nearbyCount, courierId } = opts;
+  const {
+    signedIn,
+    settings,
+    isOnline,
+    nearbyCount,
+    courierId,
+    phleboId,
+    riderLat,
+    riderLng,
+    broadcastRadiusKm,
+    firebaseApiKey,
+    firebaseProjectId,
+    authToken,
+    refreshToken,
+    appInForeground,
+  } = opts;
   const shouldBeActive =
     signedIn &&
     settings.enabled &&
@@ -271,6 +304,15 @@ export async function syncFloatingOverlayRuntime(opts: {
             isOnline,
             nearbyCount,
             courierId: courierId || 'LabSetu',
+            phleboId: phleboId || '',
+            riderLat: typeof riderLat === 'number' ? riderLat : 0,
+            riderLng: typeof riderLng === 'number' ? riderLng : 0,
+            broadcastRadiusKm: typeof broadcastRadiusKm === 'number' ? broadcastRadiusKm : 5,
+            firebaseApiKey: firebaseApiKey || '',
+            firebaseProjectId: firebaseProjectId || 'labsetu-diagnostics',
+            authToken: authToken || '',
+            refreshToken: refreshToken || '',
+            appInForeground: appInForeground !== false,
           });
         }
       } else {
