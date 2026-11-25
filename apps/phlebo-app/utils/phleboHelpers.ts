@@ -20,8 +20,20 @@ export function formatLabel(value?: string | null): string {
 let activeAlertTimeout: any = null;
 let activeWebBookingAudio: any = null;
 let activeWebNotifAudio: any = null;
+let activeWebNotifAudioSrc = '';
+let activeWebBookingAudioSrc = '';
 let activeExpoBookingPlayer: any = null;
 let activeExpoNotifPlayer: any = null;
+let customNotificationToneUrl = '';
+let customBookingRingtoneUrl = '';
+
+export function setDynamicAudioTones(opts: {
+  notificationToneUrl?: string;
+  bookingRingtoneUrl?: string;
+}): void {
+  customNotificationToneUrl = (opts.notificationToneUrl || '').trim();
+  customBookingRingtoneUrl = (opts.bookingRingtoneUrl || '').trim();
+}
 
 function playAudioViaExpo(assetRequire: any, isLoop = false): any {
   try {
@@ -98,11 +110,15 @@ export function playPickupAlertChime(): void {
     Vibration.vibrate(150);
   } catch {}
 
+  const targetNotifUri = customNotificationToneUrl;
+
   if (Platform.OS === 'web') {
     if (typeof window === 'undefined' || typeof Audio === 'undefined') return;
     try {
-      if (!activeWebNotifAudio) {
-        activeWebNotifAudio = new Audio('/sounds/notification_alert.wav');
+      const desiredSrc = targetNotifUri || '/sounds/notification_alert.wav';
+      if (!activeWebNotifAudio || activeWebNotifAudioSrc !== desiredSrc) {
+        activeWebNotifAudio = new Audio(desiredSrc);
+        activeWebNotifAudioSrc = desiredSrc;
       }
       activeWebNotifAudio.currentTime = 0;
       void activeWebNotifAudio.play().catch(() => {});
@@ -112,31 +128,30 @@ export function playPickupAlertChime(): void {
     return;
   }
 
-  // 1. Try native Kotlin overlay/chime module first
-  if (Platform.OS === 'android') {
-    void playNativeNotificationChime().then((handled) => {
-      if (!handled) {
-        // 2. Fallback to expo-audio bundled asset
-        try {
-          if (!activeExpoNotifPlayer) {
-            activeExpoNotifPlayer = playAudioViaExpo(
-              require('../assets/sounds/notification_alert.wav'),
-              false
-            );
-          } else {
-            activeExpoNotifPlayer.seekTo?.(0);
-            activeExpoNotifPlayer.play?.();
-          }
-        } catch {}
-      }
-    });
-    return;
+  // If Admin configured a custom Notification Tone URL, play it directly via expo-audio
+  if (targetNotifUri) {
+    const customPlayer = playAudioViaExpo({ uri: targetNotifUri }, false);
+    if (customPlayer) {
+      activeExpoNotifPlayer = customPlayer;
+      return;
+    }
   }
 
-  // iOS / Other platforms fallback
+  // Try expo-audio bundled notification chime first (reliable even if native overlay isn't active), with native fallback
   try {
-    playAudioViaExpo(require('../assets/sounds/notification_alert.wav'), false);
+    const bundledPlayer = playAudioViaExpo(
+      require('../assets/sounds/notification_alert.wav'),
+      false
+    );
+    if (bundledPlayer) {
+      activeExpoNotifPlayer = bundledPlayer;
+      return;
+    }
   } catch {}
+
+  if (Platform.OS === 'android') {
+    void playNativeNotificationChime();
+  }
 }
 
 /**
@@ -154,12 +169,16 @@ export function startContinuousPickupAlert(timeoutSeconds = 45): void {
     // Ignore vibration error
   }
 
+  const targetBookingUri = customBookingRingtoneUrl;
+
   // 2. Looping Audio Alarm
   if (Platform.OS === 'web') {
     if (typeof window !== 'undefined' && typeof Audio !== 'undefined') {
       try {
-        if (!activeWebBookingAudio) {
-          activeWebBookingAudio = new Audio('/sounds/booking_alert.wav');
+        const desiredSrc = targetBookingUri || '/sounds/booking_alert.wav';
+        if (!activeWebBookingAudio || activeWebBookingAudioSrc !== desiredSrc) {
+          activeWebBookingAudio = new Audio(desiredSrc);
+          activeWebBookingAudioSrc = desiredSrc;
         }
         activeWebBookingAudio.loop = true;
         activeWebBookingAudio.currentTime = 0;
@@ -167,6 +186,13 @@ export function startContinuousPickupAlert(timeoutSeconds = 45): void {
       } catch {
         // Audio autoplay might be suspended by browser
       }
+    }
+  } else if (targetBookingUri) {
+    const customLoop = playAudioViaExpo({ uri: targetBookingUri }, true);
+    if (customLoop) {
+      activeExpoBookingPlayer = customLoop;
+    } else if (Platform.OS === 'android') {
+      void playNativeBookingRingtone();
     }
   } else if (Platform.OS === 'android') {
     void playNativeBookingRingtone().then((handled) => {

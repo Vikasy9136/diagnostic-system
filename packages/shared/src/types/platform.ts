@@ -511,6 +511,10 @@ export interface PlatformFeaturesConfig {
   enableCashCollection: boolean; // default true
   enableDirectLabPayment: boolean; // default true
   enableInstantPayout: boolean; // default true
+  notificationToneUrl?: string;
+  notificationToneLabel?: string;
+  bookingRingtoneUrl?: string;
+  bookingRingtoneLabel?: string;
   updatedAt?: string;
   updatedBy?: string;
 }

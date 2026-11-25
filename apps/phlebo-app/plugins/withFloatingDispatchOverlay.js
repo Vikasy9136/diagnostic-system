@@ -109,9 +109,13 @@ class FloatingDispatchOverlayService : Service() {
   private var currentFirebaseProjectId = "labsetu-diagnostics"
   private var currentAuthToken = ""
   private var currentRefreshToken = ""
+  private var currentNotificationToneUrl = ""
+  private var currentBookingRingtoneUrl = ""
   @Volatile private var appInForeground = false
   private var pollerExecutor: ScheduledExecutorService? = null
   private val pollerAlertedKeys = HashSet<String>()
+  private val pollerChatNotifiedMap = HashMap<String, Int>()
+  private var chatTonePlayer: MediaPlayer? = null
 
   private var currentIncomingOrderId: String? = null
   private var currentIncomingOrderNumber: String? = null
@@ -160,6 +164,8 @@ class FloatingDispatchOverlayService : Service() {
         .putString("fb_project_id", currentFirebaseProjectId)
         .putString("auth_token", currentAuthToken)
         .putString("refresh_token", currentRefreshToken)
+        .putString("notif_tone_url", currentNotificationToneUrl)
+        .putString("booking_ringtone_url", currentBookingRingtoneUrl)
         .apply()
     } catch (_: Exception) {}
   }
@@ -177,6 +183,8 @@ class FloatingDispatchOverlayService : Service() {
       currentFirebaseProjectId = prefs.getString("fb_project_id", "labsetu-diagnostics") ?: "labsetu-diagnostics"
       currentAuthToken = prefs.getString("auth_token", "") ?: ""
       currentRefreshToken = prefs.getString("refresh_token", "") ?: ""
+      currentNotificationToneUrl = prefs.getString("notif_tone_url", "") ?: ""
+      currentBookingRingtoneUrl = prefs.getString("booking_ringtone_url", "") ?: ""
     } catch (_: Exception) {}
   }
 
@@ -292,6 +300,12 @@ class FloatingDispatchOverlayService : Service() {
     intent?.getStringExtra(EXTRA_FB_PROJECT_ID)?.takeIf { it.isNotEmpty() }?.let { currentFirebaseProjectId = it }
     intent?.getStringExtra(EXTRA_AUTH_TOKEN)?.takeIf { it.isNotEmpty() }?.let { currentAuthToken = it }
     intent?.getStringExtra(EXTRA_REFRESH_TOKEN)?.takeIf { it.isNotEmpty() }?.let { currentRefreshToken = it }
+    if (intent?.hasExtra(EXTRA_NOTIF_TONE_URL) == true) {
+      currentNotificationToneUrl = intent.getStringExtra(EXTRA_NOTIF_TONE_URL) ?: ""
+    }
+    if (intent?.hasExtra(EXTRA_BOOKING_RINGTONE_URL) == true) {
+      currentBookingRingtoneUrl = intent.getStringExtra(EXTRA_BOOKING_RINGTONE_URL) ?: ""
+    }
     if (intent?.hasExtra(EXTRA_APP_FOREGROUND) == true) {
       appInForeground = intent.getBooleanExtra(EXTRA_APP_FOREGROUND, appInForeground)
     }
@@ -874,6 +888,60 @@ class FloatingDispatchOverlayService : Service() {
   private fun startAlertSound() {
     try {
       stopAlertSound()
+      val customUrl = currentBookingRingtoneUrl.trim()
+      if (customUrl.startsWith("http://") || customUrl.startsWith("https://")) {
+        try {
+          val mp = MediaPlayer().apply {
+            isLooping = true
+            setAudioAttributes(
+              AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+            )
+            setDataSource(customUrl)
+            setOnPreparedListener { player ->
+              try {
+                player.start()
+              } catch (_: Exception) {
+                startDefaultAlertSound()
+              }
+            }
+            setOnErrorListener { _, _, _ ->
+              startDefaultAlertSound()
+              true
+            }
+            prepareAsync()
+          }
+          bookingPlayer = mp
+        } catch (_: Exception) {
+          startDefaultAlertSound()
+        }
+      } else {
+        startDefaultAlertSound()
+      }
+    } catch (_: Exception) {}
+
+    try {
+      vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+        vm?.defaultVibrator
+      } else {
+        @Suppress("DEPRECATION")
+        getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+      }
+      val pattern = longArrayOf(0, 800, 300, 800, 300, 1000)
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0))
+      } else {
+        @Suppress("DEPRECATION")
+        vibrator?.vibrate(pattern, 0)
+      }
+    } catch (_: Exception) {}
+  }
+
+  private fun startDefaultAlertSound() {
+    try {
       val resId = resources.getIdentifier("booking_alert", "raw", packageName)
       if (resId != 0) {
         bookingPlayer = MediaPlayer.create(applicationContext, resId)?.apply {
@@ -903,22 +971,47 @@ class FloatingDispatchOverlayService : Service() {
         }
       }
     } catch (_: Exception) {}
+  }
 
+  private fun playChatTone() {
     try {
-      vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
-        vm?.defaultVibrator
+      chatTonePlayer?.stop()
+      chatTonePlayer?.release()
+      chatTonePlayer = null
+      val customUrl = currentNotificationToneUrl.trim()
+      if (customUrl.startsWith("http://") || customUrl.startsWith("https://")) {
+        chatTonePlayer = MediaPlayer().apply {
+          isLooping = false
+          setAudioAttributes(
+            AudioAttributes.Builder()
+              .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+              .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+              .build()
+          )
+          setDataSource(customUrl)
+          setOnPreparedListener { it.start() }
+          setOnCompletionListener { player ->
+            try { player.release() } catch (_: Exception) {}
+            if (chatTonePlayer == player) chatTonePlayer = null
+          }
+          setOnErrorListener { _, _, _ ->
+            playDefaultChatTone()
+            true
+          }
+          prepareAsync()
+        }
       } else {
-        @Suppress("DEPRECATION")
-        getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        playDefaultChatTone()
       }
-      val pattern = longArrayOf(0, 800, 300, 800, 300, 1000)
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0))
-      } else {
-        @Suppress("DEPRECATION")
-        vibrator?.vibrate(pattern, 0)
-      }
+    } catch (_: Exception) {
+      playDefaultChatTone()
+    }
+  }
+
+  private fun playDefaultChatTone() {
+    try {
+      val notifUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+      RingtoneManager.getRingtone(applicationContext, notifUri)?.play()
     } catch (_: Exception) {}
   }
 
@@ -2172,6 +2265,19 @@ class FloatingDispatchOverlayService : Service() {
         lightColor = Color.parseColor("#10B981")
       }
       nm.createNotificationChannel(urgentChannel)
+
+      val chatChannel = NotificationChannel(
+        CHAT_CHANNEL_ID,
+        "LabSetu Order Chat",
+        NotificationManager.IMPORTANCE_HIGH
+      ).apply {
+        description = "Real-time order chat notifications from Admin and Labs."
+        setShowBadge(true)
+        enableVibration(true)
+        vibrationPattern = longArrayOf(0, 220, 120, 220)
+        lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+      }
+      nm.createNotificationChannel(chatChannel)
     }
   }
 
@@ -2459,6 +2565,98 @@ class FloatingDispatchOverlayService : Service() {
     } finally {
       conn?.disconnect()
     }
+    try {
+      pollAssignedChatUnread()
+    } catch (_: Exception) {}
+  }
+
+  private fun pollAssignedChatUnread() {
+    if (appInForeground || currentPhleboId.isBlank() || currentAuthToken.isBlank() || currentFirebaseProjectId.isBlank()) return
+    var conn: HttpURLConnection? = null
+    try {
+      val url = URL("https://firestore.googleapis.com/v1/projects/\${currentFirebaseProjectId}/databases/(default)/documents:runQuery")
+      conn = (url.openConnection() as HttpURLConnection).apply {
+        requestMethod = "POST"
+        doOutput = true
+        connectTimeout = 6000
+        readTimeout = 6000
+        setRequestProperty("Content-Type", "application/json")
+        setRequestProperty("Authorization", "Bearer \${currentAuthToken}")
+      }
+      val queryPayload = JSONObject().apply {
+        put("structuredQuery", JSONObject().apply {
+          put("from", JSONArray().put(JSONObject().put("collectionId", "orders")))
+          put("where", JSONObject().apply {
+            put("fieldFilter", JSONObject().apply {
+              put("field", JSONObject().put("fieldPath", "phlebotomistId"))
+              put("op", "EQUAL")
+              put("value", JSONObject().put("stringValue", currentPhleboId))
+            })
+          })
+          put("limit", 10)
+        })
+      }
+      OutputStreamWriter(conn.outputStream).use { it.write(queryPayload.toString()) }
+      if (conn.responseCode !in 200..299) return
+      val resp = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
+      val arr = JSONArray(resp)
+      for (i in 0 until arr.length()) {
+        val row = arr.optJSONObject(i) ?: continue
+        val docObj = row.optJSONObject("document") ?: continue
+        val orderId = docObj.optString("name", "").substringAfterLast("/")
+        if (orderId.isBlank()) continue
+        val fields = docObj.optJSONObject("fields") ?: continue
+        val unread = fsInt(fields, "chatUnreadByPhlebo")
+        val prevNotified = pollerChatNotifiedMap[orderId] ?: 0
+        if (unread <= 0) {
+          pollerChatNotifiedMap.remove(orderId)
+          continue
+        }
+        if (unread > prevNotified) {
+          pollerChatNotifiedMap[orderId] = unread
+          val orderNum = fsString(fields, "orderNumber").ifBlank { orderId }
+          val senderRole = fsString(fields, "lastChatSenderRole").ifBlank { "Lab / Admin" }
+          val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            putExtra("AUTO_OPEN_ORDER_ID", orderId)
+            putExtra("AUTO_OPEN_ORDER_NUMBER", orderNum)
+            putExtra("ACTION", "OPEN_ORDER_CHAT")
+          }
+          val pendingIntent = if (launchIntent != null) {
+            PendingIntent.getActivity(
+              this,
+              (CHAT_NOTIF_ID + orderId.hashCode()),
+              launchIntent,
+              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+              } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+              }
+            )
+          } else null
+          val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+          val iconRes = applicationInfo.icon.takeIf { it != 0 } ?: android.R.drawable.ic_dialog_email
+          val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHAT_CHANNEL_ID)
+          } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+          }
+          val notif = builder
+            .setContentTitle("💬 New Chat on \${orderNum}")
+            .setContentText("\${senderRole} sent a message (\${unread} unread). Tap to reply.")
+            .setSmallIcon(iconRes)
+            .setAutoCancel(true)
+            .apply { if (pendingIntent != null) setContentIntent(pendingIntent) }
+            .build()
+          nm?.notify(CHAT_NOTIF_ID + (orderId.hashCode() and 0x7FFF), notif)
+          playChatTone()
+        }
+      }
+    } catch (_: Exception) {
+    } finally {
+      conn?.disconnect()
+    }
   }
 
   companion object {
@@ -2468,7 +2666,9 @@ class FloatingDispatchOverlayService : Service() {
 
     const val CHANNEL_ID = "labsetu_dispatch_overlay_channel"
     const val URGENT_CHANNEL_ID = "labsetu-urgent-pickups"
+    const val CHAT_CHANNEL_ID = "labsetu-chat-alerts"
     const val NOTIF_ID = 918237
+    const val CHAT_NOTIF_ID = 918239
     const val URGENT_NOTIF_ID = 918238
 
     const val ACTION_START = "ACTION_START_OVERLAY"
@@ -2487,6 +2687,8 @@ class FloatingDispatchOverlayService : Service() {
     const val EXTRA_FB_PROJECT_ID = "firebaseProjectId"
     const val EXTRA_AUTH_TOKEN = "authToken"
     const val EXTRA_REFRESH_TOKEN = "refreshToken"
+    const val EXTRA_NOTIF_TONE_URL = "notificationToneUrl"
+    const val EXTRA_BOOKING_RINGTONE_URL = "bookingRingtoneUrl"
     const val EXTRA_APP_FOREGROUND = "appInForeground"
 
     const val EXTRA_ORDER_ID = "orderId"
@@ -2669,6 +2871,12 @@ class FloatingDispatchOverlayModule(
         }
         if (options?.hasKey("refreshToken") == true) {
           putExtra(FloatingDispatchOverlayService.EXTRA_REFRESH_TOKEN, options.getString("refreshToken") ?: "")
+        }
+        if (options?.hasKey("notificationToneUrl") == true) {
+          putExtra(FloatingDispatchOverlayService.EXTRA_NOTIF_TONE_URL, options.getString("notificationToneUrl") ?: "")
+        }
+        if (options?.hasKey("bookingRingtoneUrl") == true) {
+          putExtra(FloatingDispatchOverlayService.EXTRA_BOOKING_RINGTONE_URL, options.getString("bookingRingtoneUrl") ?: "")
         }
         if (options?.hasKey("appInForeground") == true) {
           putExtra(FloatingDispatchOverlayService.EXTRA_APP_FOREGROUND, options.getBoolean("appInForeground"))

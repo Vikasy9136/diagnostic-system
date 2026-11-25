@@ -34,6 +34,8 @@ interface NativeFloatingDispatchOverlayModule {
     authToken?: string;
     refreshToken?: string;
     appInForeground?: boolean;
+    notificationToneUrl?: string;
+    bookingRingtoneUrl?: string;
   }) => Promise<boolean>;
   stopOverlay: () => Promise<boolean>;
   triggerIncomingPickupModal: (orderData: IncomingOrderOverlayPayload) => Promise<boolean>;
@@ -270,6 +272,8 @@ export async function syncFloatingOverlayRuntime(opts: {
   authToken?: string;
   refreshToken?: string;
   appInForeground?: boolean;
+  notificationToneUrl?: string;
+  bookingRingtoneUrl?: string;
 }): Promise<void> {
   if (Platform.OS === 'web') return;
 
@@ -288,6 +292,8 @@ export async function syncFloatingOverlayRuntime(opts: {
     authToken,
     refreshToken,
     appInForeground,
+    notificationToneUrl,
+    bookingRingtoneUrl,
   } = opts;
   const shouldBeActive =
     signedIn &&
@@ -313,6 +319,8 @@ export async function syncFloatingOverlayRuntime(opts: {
             authToken: authToken || '',
             refreshToken: refreshToken || '',
             appInForeground: appInForeground !== false,
+            notificationToneUrl: notificationToneUrl || '',
+            bookingRingtoneUrl: bookingRingtoneUrl || '',
           });
         }
       } else {

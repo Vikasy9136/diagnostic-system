@@ -1,4 +1,6 @@
-import { type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { storage } from '../../firebase';
 import {
   type EmailDeliverySettings,
   type PlatformFeaturesConfig,
@@ -51,6 +53,57 @@ export function AdminSettingsTab({
   onStorageUploadTest,
   storageStatusMsg,
 }: AdminSettingsTabProps) {
+  const [audioUploadStatus, setAudioUploadStatus] = useState<string | null>(null);
+  const [uploadingAudioKey, setUploadingAudioKey] = useState<'notification' | 'booking' | null>(null);
+
+  const handleUploadPlatformAudio = async (
+    kind: 'notification' | 'booking',
+    file: File | undefined
+  ) => {
+    if (!file || !featuresConfig || !onFeaturesConfigChange) return;
+    setUploadingAudioKey(kind);
+    setAudioUploadStatus(null);
+    try {
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const storageRef = ref(storage, `platform-audio/${kind}-${Date.now()}-${safeName}`);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      if (kind === 'notification') {
+        onFeaturesConfigChange({
+          ...featuresConfig,
+          notificationToneUrl: url,
+          notificationToneLabel: file.name,
+        });
+      } else {
+        onFeaturesConfigChange({
+          ...featuresConfig,
+          bookingRingtoneUrl: url,
+          bookingRingtoneLabel: file.name,
+        });
+      }
+      setAudioUploadStatus(`Uploaded "${file.name}". Click "Save Audio & Feature Settings" to publish to all Phlebo devices.`);
+    } catch (err) {
+      setAudioUploadStatus(`Audio upload failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setUploadingAudioKey(null);
+    }
+  };
+
+  const handlePreviewAudio = (url?: string) => {
+    const clean = url?.trim();
+    if (!clean) {
+      setAudioUploadStatus('No custom URL configured — Phlebo devices will play the built-in system chime/ringtone.');
+      return;
+    }
+    try {
+      const audio = new Audio(clean);
+      void audio.play();
+      setAudioUploadStatus(`Playing preview: ${clean}`);
+    } catch {
+      setAudioUploadStatus('Could not preview this audio URL in browser.');
+    }
+  };
+
   return (
     <div className="settings-grid-2">
       {/* 1. Pickup Targets & Email Alert Settings */}
@@ -407,6 +460,151 @@ export function AdminSettingsTab({
               </label>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 4B. Dynamic Notification Tone & Rapido Booking Ringtone */}
+      {featuresConfig && onFeaturesConfigChange && (
+        <div className="chart-card-modern" style={{ gridColumn: 'span 2' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+            <div>
+              <h2 className="card-top-title">🔔 Notification Tone &amp; Rapido Ringtone Settings</h2>
+              <p style={{ fontSize: '0.82rem', color: '#64748B', marginTop: '4px' }}>
+                Configure separate dynamic audio tones for Phlebo Push/Chat Notifications and Rapido-style Incoming Booking Alerts. Leave blank to use built-in defaults.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => void onSaveSettings()}
+            >
+              Save Audio &amp; Feature Settings
+            </button>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', marginTop: '16px' }}>
+            {/* Notification & Chat Tone */}
+            <div style={{ padding: '16px', borderRadius: '12px', border: '1.5px solid #CBD5E1', backgroundColor: '#F8FAFC' }}>
+              <div style={{ fontWeight: 800, fontSize: '0.94rem', color: '#0F172A' }}>
+                💬 Push &amp; Chat Notification Tone
+              </div>
+              <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '3px', marginBottom: '12px' }}>
+                Plays for order chat messages &amp; general push notifications across Phlebo App.
+                {featuresConfig.notificationToneLabel ? ` Current: ${featuresConfig.notificationToneLabel}` : ''}
+              </div>
+              <input
+                type="url"
+                className="form-input"
+                placeholder="https://... (MP3 / WAV / OGG URL)"
+                value={featuresConfig.notificationToneUrl || ''}
+                onChange={(e) =>
+                  onFeaturesConfigChange({
+                    ...featuresConfig,
+                    notificationToneUrl: e.target.value,
+                    notificationToneLabel: e.target.value ? featuresConfig.notificationToneLabel || 'Custom URL' : '',
+                  })
+                }
+              />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '10px', alignItems: 'center' }}>
+                <label className="btn-secondary" style={{ cursor: 'pointer', fontSize: '0.8rem', padding: '6px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', backgroundColor: '#FFFFFF' }}>
+                  {uploadingAudioKey === 'notification' ? 'Uploading...' : 'Upload Audio File'}
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    style={{ display: 'none' }}
+                    disabled={uploadingAudioKey !== null}
+                    onChange={(e) => void handleUploadPlatformAudio('notification', e.target.files?.[0])}
+                  />
+                </label>
+                <button
+                  type="button"
+                  style={{ fontSize: '0.8rem', padding: '6px 12px', borderRadius: '8px', border: '1px solid #0D9488', color: '#0F766E', backgroundColor: '#F0FDFA', cursor: 'pointer' }}
+                  onClick={() => handlePreviewAudio(featuresConfig.notificationToneUrl)}
+                >
+                  ▶ Test Tone
+                </button>
+                {featuresConfig.notificationToneUrl && (
+                  <button
+                    type="button"
+                    style={{ fontSize: '0.8rem', padding: '6px 10px', borderRadius: '8px', border: '1px solid #E2E8F0', color: '#64748B', backgroundColor: '#FFFFFF', cursor: 'pointer' }}
+                    onClick={() =>
+                      onFeaturesConfigChange({
+                        ...featuresConfig,
+                        notificationToneUrl: '',
+                        notificationToneLabel: '',
+                      })
+                    }
+                  >
+                    Reset Default
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Rapido Booking Ringtone */}
+            <div style={{ padding: '16px', borderRadius: '12px', border: '1.5px solid #CBD5E1', backgroundColor: '#F8FAFC' }}>
+              <div style={{ fontWeight: 800, fontSize: '0.94rem', color: '#0F172A' }}>
+                🚨 Rapido Incoming Booking Ringtone
+              </div>
+              <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '3px', marginBottom: '12px' }}>
+                Loops continuously during incoming sample pickup broadcasts (in-app &amp; floating overlay).
+                {featuresConfig.bookingRingtoneLabel ? ` Current: ${featuresConfig.bookingRingtoneLabel}` : ''}
+              </div>
+              <input
+                type="url"
+                className="form-input"
+                placeholder="https://... (MP3 / WAV / OGG URL)"
+                value={featuresConfig.bookingRingtoneUrl || ''}
+                onChange={(e) =>
+                  onFeaturesConfigChange({
+                    ...featuresConfig,
+                    bookingRingtoneUrl: e.target.value,
+                    bookingRingtoneLabel: e.target.value ? featuresConfig.bookingRingtoneLabel || 'Custom URL' : '',
+                  })
+                }
+              />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '10px', alignItems: 'center' }}>
+                <label className="btn-secondary" style={{ cursor: 'pointer', fontSize: '0.8rem', padding: '6px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', backgroundColor: '#FFFFFF' }}>
+                  {uploadingAudioKey === 'booking' ? 'Uploading...' : 'Upload Ringtone File'}
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    style={{ display: 'none' }}
+                    disabled={uploadingAudioKey !== null}
+                    onChange={(e) => void handleUploadPlatformAudio('booking', e.target.files?.[0])}
+                  />
+                </label>
+                <button
+                  type="button"
+                  style={{ fontSize: '0.8rem', padding: '6px 12px', borderRadius: '8px', border: '1px solid #0D9488', color: '#0F766E', backgroundColor: '#F0FDFA', cursor: 'pointer' }}
+                  onClick={() => handlePreviewAudio(featuresConfig.bookingRingtoneUrl)}
+                >
+                  ▶ Test Ringtone
+                </button>
+                {featuresConfig.bookingRingtoneUrl && (
+                  <button
+                    type="button"
+                    style={{ fontSize: '0.8rem', padding: '6px 10px', borderRadius: '8px', border: '1px solid #E2E8F0', color: '#64748B', backgroundColor: '#FFFFFF', cursor: 'pointer' }}
+                    onClick={() =>
+                      onFeaturesConfigChange({
+                        ...featuresConfig,
+                        bookingRingtoneUrl: '',
+                        bookingRingtoneLabel: '',
+                      })
+                    }
+                  >
+                    Reset Default
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {audioUploadStatus && (
+            <p style={{ fontSize: '0.82rem', color: '#0F766E', marginTop: '12px', fontWeight: 600 }}>
+              {audioUploadStatus}
+            </p>
+          )}
         </div>
       )}
 

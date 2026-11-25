@@ -187,6 +187,7 @@ const DUTY_STATUS_STORAGE_KEY = '@labsetu_phlebo_duty_status_v1';
 import {
   isOrderBroadcastExpired,
   playPickupAlertChime,
+  setDynamicAudioTones,
   startContinuousPickupAlert,
   stopContinuousPickupAlert,
 } from './utils/phleboHelpers';
@@ -952,13 +953,23 @@ function PhleboAppContent() {
                 }
 
                 if (Platform.OS !== 'web') {
+                  const isChatNotif =
+                    String(n.title || '').toLowerCase().includes('chat') ||
+                    String(n.message || '').toLowerCase().includes('chat');
                   void Notifications.scheduleNotificationAsync({
                     content: {
                       title: n.title || 'LabSetu Platform Alert',
                       body: n.message || 'New logistics update received.',
-                      data: { notificationId: n.id, orderId: n.orderId, action: 'OPEN_NOTIF' },
+                      data: {
+                        notificationId: n.id,
+                        orderId: n.orderId,
+                        action: n.orderId ? 'OPEN_ORDER_CHAT' : 'OPEN_NOTIF',
+                      },
                       sound: 'default',
-                      priority: Notifications.AndroidNotificationPriority.HIGH,
+                      priority: Notifications.AndroidNotificationPriority.MAX,
+                      ...(Platform.OS === 'android'
+                        ? { channelId: isChatNotif ? 'labsetu-chat-alerts' : URGENT_DISPATCH_CHANNEL_ID }
+                        : {}),
                     },
                     trigger: null,
                   }).catch(() => { });
@@ -2214,6 +2225,13 @@ function PhleboAppContent() {
         setCurrentScreen('TODAYS_COLLECTIONS');
       } else if (data?.action === 'OPEN_NOTIF') {
         setShowNotificationsModal(true);
+      } else if (data?.action === 'OPEN_ORDER_CHAT' && data.orderId) {
+        const chatOrd = orders.find((o) => o.id === data.orderId);
+        if (chatOrd) {
+          setActiveChatOrder(chatOrd);
+        } else {
+          setShowNotificationsModal(true);
+        }
       }
     });
     return () => {
@@ -2536,6 +2554,8 @@ function PhleboAppContent() {
         authToken: idToken,
         refreshToken: auth.currentUser?.refreshToken || '',
         appInForeground: appState === 'active',
+        notificationToneUrl: platformFeatures.notificationToneUrl || '',
+        bookingRingtoneUrl: platformFeatures.bookingRingtoneUrl || '',
       });
     };
     void runSync();
@@ -2553,7 +2573,27 @@ function PhleboAppContent() {
     riderLocation.latitude,
     riderLocation.longitude,
     commissionConfig.broadcastRadiusMaxKm,
+    platformFeatures.notificationToneUrl,
+    platformFeatures.bookingRingtoneUrl,
   ]);
+
+  useEffect(() => {
+    setDynamicAudioTones({
+      notificationToneUrl: platformFeatures.notificationToneUrl,
+      bookingRingtoneUrl: platformFeatures.bookingRingtoneUrl,
+    });
+  }, [platformFeatures.notificationToneUrl, platformFeatures.bookingRingtoneUrl]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    void Notifications.setNotificationChannelAsync('labsetu-chat-alerts', {
+      name: 'LabSetu Chat & Order Alerts',
+      importance: Notifications.AndroidImportance.MAX,
+      sound: 'default',
+      vibrationPattern: [0, 250, 150, 250],
+      enableVibrate: true,
+    }).catch(() => {});
+  }, []);
 
   const metrics = useMemo<PhleboMetrics>(() => {
     const now = new Date();
@@ -2816,41 +2856,56 @@ function PhleboAppContent() {
   }
 
   async function handleTakePhotoProofWithCamera(orderId: string, target: 'SAMPLE' | 'SELFIE' = 'SELFIE') {
-    setUploadingSelfie(true);
-    setUploadingPhoto(true);
+    const isSample = target === 'SAMPLE';
+    if (isSample) {
+      setUploadingPhoto(true);
+    } else {
+      setUploadingSelfie(true);
+    }
 
     try {
       const res = await captureSampleProofPhoto(
         orderId,
         (localUri) => {
-          setSelfiePhotoUrl(localUri);
-          setSamplePhotoUrl(localUri);
+          if (isSample) {
+            setSamplePhotoUrl(localUri);
+          } else {
+            setSelfiePhotoUrl(localUri);
+          }
         },
-        { captureMode: 'user', prefix: 'selfie' }
+        {
+          captureMode: isSample ? 'environment' : 'user',
+          prefix: isSample ? 'sample' : 'selfie',
+        }
       );
 
       if (res.success && (res.photoUrl || res.localUri)) {
         const finalUrl = res.photoUrl || res.localUri || '';
-        setSelfiePhotoUrl(finalUrl);
-        setSamplePhotoUrl(finalUrl);
+        if (isSample) {
+          setSamplePhotoUrl(finalUrl);
+        } else {
+          setSelfiePhotoUrl(finalUrl);
+        }
 
         if (res.photoUrl) {
           try {
             const now = new Date().toISOString();
-            await updateDoc(doc(db, 'orders', orderId), {
-              phleboSelfieUrl: res.photoUrl,
-              phleboSelfieCapturedAt: now,
-              sampleCollectionPhotoUrl: res.photoUrl,
-              sampleProofCapturedAt: now,
-            });
+            await updateDoc(
+              doc(db, 'orders', orderId),
+              isSample
+                ? { sampleCollectionPhotoUrl: res.photoUrl, sampleProofCapturedAt: now }
+                : { phleboSelfieUrl: res.photoUrl, phleboSelfieCapturedAt: now }
+            );
           } catch {
             // Non-fatal
           }
         }
         showToast({
           variant: 'SUCCESS',
-          title: '🤳 Phlebo Photo Attached',
-          subtitle: 'Phlebotomist attendance & presence photo saved.',
+          title: isSample ? '🧪 Sample Photo Attached' : '🤳 Phlebo Photo Attached',
+          subtitle: isSample
+            ? 'Collected specimen photo saved.'
+            : 'Phlebotomist attendance & presence photo saved.',
         });
       } else if (!res.canceled && res.error) {
         showDynamicAlert({
@@ -2866,8 +2921,11 @@ function PhleboAppContent() {
         message: (err as Error).message || 'Unable to open camera.',
       });
     } finally {
-      setUploadingSelfie(false);
-      setUploadingPhoto(false);
+      if (isSample) {
+        setUploadingPhoto(false);
+      } else {
+        setUploadingSelfie(false);
+      }
     }
   }
 
@@ -2876,8 +2934,12 @@ function PhleboAppContent() {
     directFile?: unknown,
     target: 'SAMPLE' | 'SELFIE' = 'SAMPLE'
   ) {
-    setUploadingSelfie(true);
-    setUploadingPhoto(true);
+    const isSample = target === 'SAMPLE';
+    if (isSample) {
+      setUploadingPhoto(true);
+    } else {
+      setUploadingSelfie(true);
+    }
 
     if (directFile && typeof directFile === 'object') {
       const file = directFile as File;
@@ -2886,31 +2948,38 @@ function PhleboAppContent() {
           const reader = new FileReader();
           reader.onload = () => {
             if (reader.result && typeof reader.result === 'string') {
-              setSelfiePhotoUrl(reader.result);
-              setSamplePhotoUrl(reader.result);
+              if (isSample) {
+                setSamplePhotoUrl(reader.result);
+              } else {
+                setSelfiePhotoUrl(reader.result);
+              }
             }
           };
           reader.readAsDataURL(file);
         }
-        const storagePath = `samples/${orderId}/selfie-${Date.now()}-${file.name || 'proof.jpg'}`;
+        const prefix = isSample ? 'sample' : 'selfie';
+        const storagePath = `samples/${orderId}/${prefix}-${Date.now()}-${file.name || 'proof.jpg'}`;
         const url = await uploadPhleboSampleFile(storagePath, file);
-        setSelfiePhotoUrl(url);
-        setSamplePhotoUrl(url);
+        if (isSample) {
+          setSamplePhotoUrl(url);
+        } else {
+          setSelfiePhotoUrl(url);
+        }
         try {
           const now = new Date().toISOString();
-          await updateDoc(doc(db, 'orders', orderId), {
-            phleboSelfieUrl: url,
-            phleboSelfieCapturedAt: now,
-            sampleCollectionPhotoUrl: url,
-            sampleProofCapturedAt: now,
-          });
+          await updateDoc(
+            doc(db, 'orders', orderId),
+            isSample
+              ? { sampleCollectionPhotoUrl: url, sampleProofCapturedAt: now }
+              : { phleboSelfieUrl: url, phleboSelfieCapturedAt: now }
+          );
         } catch {
           // Non-fatal
         }
         showToast({
           variant: 'SUCCESS',
-          title: '🤳 Phlebo Photo Attached',
-          subtitle: 'Phlebotomist attendance photo saved.',
+          title: isSample ? '🧪 Sample Photo Attached' : '🤳 Phlebo Photo Attached',
+          subtitle: isSample ? 'Sample collection photo saved.' : 'Phlebotomist attendance photo saved.',
         });
       } catch (err) {
         showDynamicAlert({
@@ -2919,39 +2988,53 @@ function PhleboAppContent() {
           message: (err as Error).message || 'Could not upload photo.',
         });
       } finally {
-        setUploadingSelfie(false);
-        setUploadingPhoto(false);
+        if (isSample) {
+          setUploadingPhoto(false);
+        } else {
+          setUploadingSelfie(false);
+        }
       }
       return;
     }
 
     if (Platform.OS !== 'web' || typeof document === 'undefined') {
       try {
-        const res = await pickSampleProofFromLibrary(orderId, (localUri) => {
-          setSelfiePhotoUrl(localUri);
-          setSamplePhotoUrl(localUri);
-        });
+        const res = await pickSampleProofFromLibrary(
+          orderId,
+          (localUri) => {
+            if (isSample) {
+              setSamplePhotoUrl(localUri);
+            } else {
+              setSelfiePhotoUrl(localUri);
+            }
+          }
+        );
         if (res.success && (res.photoUrl || res.localUri)) {
           const finalUrl = res.photoUrl || res.localUri || '';
-          setSelfiePhotoUrl(finalUrl);
-          setSamplePhotoUrl(finalUrl);
+          if (isSample) {
+            setSamplePhotoUrl(finalUrl);
+          } else {
+            setSelfiePhotoUrl(finalUrl);
+          }
           if (res.photoUrl) {
             try {
               const now = new Date().toISOString();
-              await updateDoc(doc(db, 'orders', orderId), {
-                phleboSelfieUrl: res.photoUrl,
-                phleboSelfieCapturedAt: now,
-                sampleCollectionPhotoUrl: res.photoUrl,
-                sampleProofCapturedAt: now,
-              });
+              await updateDoc(
+                doc(db, 'orders', orderId),
+                isSample
+                  ? { sampleCollectionPhotoUrl: res.photoUrl, sampleProofCapturedAt: now }
+                  : { phleboSelfieUrl: res.photoUrl, phleboSelfieCapturedAt: now }
+              );
             } catch {
               // Non-fatal
             }
           }
           showToast({
             variant: 'SUCCESS',
-            title: '🤳 Phlebo Photo Uploaded',
-            subtitle: 'Phlebotomist attendance photo attached successfully.',
+            title: isSample ? '🧪 Sample Photo Uploaded' : '🤳 Phlebo Photo Uploaded',
+            subtitle: isSample
+              ? 'Sample collection photo attached successfully.'
+              : 'Phlebotomist attendance photo attached successfully.',
           });
         } else if (!res.canceled && res.error) {
           showDynamicAlert({
@@ -2967,8 +3050,11 @@ function PhleboAppContent() {
           message: (err as Error).message || 'Unable to open file library.',
         });
       } finally {
-        setUploadingSelfie(false);
-        setUploadingPhoto(false);
+        if (isSample) {
+          setUploadingPhoto(false);
+        } else {
+          setUploadingSelfie(false);
+        }
       }
       return;
     }
@@ -2976,7 +3062,7 @@ function PhleboAppContent() {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
-    input.setAttribute('capture', 'user');
+    input.setAttribute('capture', isSample ? 'environment' : 'user');
     input.onchange = () => {
       const file = input.files?.[0];
       if (!file) return;
@@ -2984,50 +3070,65 @@ function PhleboAppContent() {
         const reader = new FileReader();
         reader.onload = () => {
           if (reader.result && typeof reader.result === 'string') {
-            setSelfiePhotoUrl(reader.result);
-            setSamplePhotoUrl(reader.result);
+            if (isSample) {
+              setSamplePhotoUrl(reader.result);
+            } else {
+              setSelfiePhotoUrl(reader.result);
+            }
           }
         };
         reader.readAsDataURL(file);
       }
       void (async () => {
-        setUploadingSelfie(true);
-        setUploadingPhoto(true);
+        if (isSample) {
+          setUploadingPhoto(true);
+        } else {
+          setUploadingSelfie(true);
+        }
         let finalUrl = '';
         try {
+          const prefix = isSample ? 'sample' : 'selfie';
           const url = await uploadPhleboSampleFile(
-            `samples/${orderId}/selfie-${Date.now()}-${file.name}`,
+            `samples/${orderId}/${prefix}-${Date.now()}-${file.name}`,
             file
           );
           if (url) {
             finalUrl = url;
-            setSelfiePhotoUrl(url);
-            setSamplePhotoUrl(url);
+            if (isSample) {
+              setSamplePhotoUrl(url);
+            } else {
+              setSelfiePhotoUrl(url);
+            }
           }
         } catch (uploadErr) {
           console.warn('Direct storage upload failed, keeping local preview:', uploadErr);
         } finally {
-          setUploadingSelfie(false);
-          setUploadingPhoto(false);
+          if (isSample) {
+            setUploadingPhoto(false);
+          } else {
+            setUploadingSelfie(false);
+          }
         }
 
         if (finalUrl) {
           try {
             const now = new Date().toISOString();
-            await updateDoc(doc(db, 'orders', orderId), {
-              phleboSelfieUrl: finalUrl,
-              phleboSelfieCapturedAt: now,
-              sampleCollectionPhotoUrl: finalUrl,
-              sampleProofCapturedAt: now,
-            });
+            await updateDoc(
+              doc(db, 'orders', orderId),
+              isSample
+                ? { sampleCollectionPhotoUrl: finalUrl, sampleProofCapturedAt: now }
+                : { phleboSelfieUrl: finalUrl, phleboSelfieCapturedAt: now }
+            );
           } catch {
             // Non-fatal
           }
         }
         showToast({
           variant: 'SUCCESS',
-          title: '🤳 Phlebo Photo Attached',
-          subtitle: 'Phlebotomist attendance & presence photo attached.',
+          title: isSample ? '🧪 Sample Photo Attached' : '🤳 Phlebo Photo Attached',
+          subtitle: isSample
+            ? 'Sample collection photo attached.'
+            : 'Phlebotomist attendance & presence photo attached.',
         });
       })();
     };
