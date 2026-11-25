@@ -65,6 +65,10 @@ export const config = {
     webhookSecret: (process.env.RAZORPAY_WEBHOOK_SECRET || '').trim(),
     xAccountNumber: (process.env.RAZORPAYX_ACCOUNT_NUMBER || '').trim(),
   },
+  security: {
+    bankEncryptionKey: (process.env.BANK_ENCRYPTION_KEY || '').trim(),
+    bankEncryptionKeyVersion: (process.env.BANK_ENCRYPTION_KEY_VERSION || 'v1').trim(),
+  },
   cloudFunctionsApiUrl:
     process.env.CLOUD_FUNCTIONS_API_URL ||
     'https://us-central1-labsetu-diagnostics.cloudfunctions.net/api',

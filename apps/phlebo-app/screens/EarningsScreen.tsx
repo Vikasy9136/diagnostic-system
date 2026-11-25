@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,6 +9,7 @@ import {
   type PhlebotomistProfile,
 } from '@diagnostic/shared';
 import { BRAND_COLORS } from '../components/LabSetuBrand';
+import { fetchMyPayoutLedger, type MyPayoutsResponse } from '../services/phleboPayoutService';
 import { COLORS, styles } from '../styles/phleboStyles';
 import { type EarningRow, type PhleboMetrics } from '../types/phleboTypes';
 import { getPhleboPayoutSlaBadge } from '../utils/phleboHelpers';
@@ -37,6 +38,13 @@ export function EarningsScreen({
 }: EarningsScreenProps) {
   const maxCount = Math.max(1, ...metrics.weeklyBars.map((b) => b.count));
   const windowMins = instantPayoutWindowMinutes || 30;
+  const [ledgerData, setLedgerData] = useState<MyPayoutsResponse | null>(null);
+
+  useEffect(() => {
+    void fetchMyPayoutLedger()
+      .then((res) => setLedgerData(res))
+      .catch(() => {});
+  }, []);
 
   return (
     <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
@@ -171,23 +179,35 @@ export function EarningsScreen({
       <View style={[styles.bodyContainer, { paddingTop: rs(52) }]}>
         <View style={[styles.slaBannerCard, { marginBottom: 14 }]}>
           <Text style={styles.slaBannerTitle}>
-            {windowMins}-Min Instant Payout Active
+            Payout Summary &amp; Bank Status
           </Text>
           <Text style={styles.slaBannerSub}>
-            Zero monthly subscriptions. Every completed, paid sample trip is queued for payout
-            within {windowMins} minutes of drop verification.
+            Payouts are initiated only after eligibility checks &amp; bank/UPI verification. Final credit depends on bank/provider processing.
           </Text>
-          {!myPhleboProfile?.payoutProfile?.upiId &&
-          !myPhleboProfile?.payoutProfile?.bankAccountLast4 ? (
-            <TouchableOpacity
-              style={[styles.notifBannerBtn, { marginTop: 10, marginBottom: 0 }]}
-              onPress={onGoToProfile}
-            >
-              <Text style={styles.notifBannerBtnText}>
-                Add UPI / Bank Account in Profile for Instant Payouts →
+          {ledgerData && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 10 }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F766E' }}>
+                Available: {formatInr(ledgerData.summary.availableInr)}
               </Text>
-            </TouchableOpacity>
-          ) : null}
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#0369A1' }}>
+                Processing: {formatInr(ledgerData.summary.processingInr)}
+              </Text>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#B45309' }}>
+                Pending: {formatInr(ledgerData.summary.pendingInr)}
+              </Text>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#B91C1C' }}>
+                Failed: {formatInr(ledgerData.summary.failedInr)}
+              </Text>
+            </View>
+          )}
+          <TouchableOpacity
+            style={[styles.notifBannerBtn, { marginTop: 10, marginBottom: 0 }]}
+            onPress={onGoToProfile}
+          >
+            <Text style={styles.notifBannerBtnText}>
+              Manage Bank &amp; UPI Payment Details →
+            </Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.chartCard}>
@@ -265,15 +285,37 @@ export function EarningsScreen({
         )}
 
         <Text style={[styles.sectionHeaderTitle, { marginTop: 20, marginBottom: 10 }]}>
-          Released Payout Receipts ({payouts.length})
+          Payout History ({ledgerData ? ledgerData.payouts.length : payouts.length})
         </Text>
 
-        {payouts.length === 0 ? (
+        {ledgerData && ledgerData.payouts.length > 0 ? (
+          ledgerData.payouts.map((l) => (
+            <View key={l.id} style={styles.tripLedgerRow}>
+              <View style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
+                <Text style={styles.tripLedgerId}>
+                  {l.orderNumber} • {l.payoutMethod} ({l.status})
+                </Text>
+                <Text style={styles.tripLedgerLab}>
+                  Gross {formatInr(l.grossEarningInr)} - Fee {formatInr(l.platformFeeInr)} • {l.maskedDestination}
+                </Text>
+                <Text style={styles.tripLedgerBase}>
+                  {l.initiatedAt ? `Initiated: ${new Date(l.initiatedAt).toLocaleDateString('en-IN')}` : `Created: ${new Date(l.createdAt).toLocaleDateString('en-IN')}`}
+                  {l.utrNumber ? ` • UTR: ${l.utrNumber}` : ''}
+                </Text>
+                {l.errorMessage && (
+                  <Text style={{ fontSize: 11.5, color: '#B91C1C', marginTop: 3, fontWeight: '600' }}>
+                    {l.errorCode}: {l.errorMessage}
+                  </Text>
+                )}
+              </View>
+              <Text style={styles.tripLedgerFee}>{formatInr(l.netPayableInr)}</Text>
+            </View>
+          ))
+        ) : payouts.length === 0 ? (
           <View style={styles.emptyBox}>
             <Text style={styles.emptyTitle}>No Payout Transfers Yet</Text>
             <Text style={styles.emptySub}>
-              Once Admin releases payouts to your UPI or bank account, UTR transfer receipts appear
-              here.
+              Verified payouts and bank/UPI transfer statuses will appear here.
             </Text>
           </View>
         ) : (

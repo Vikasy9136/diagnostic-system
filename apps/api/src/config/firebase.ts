@@ -34,6 +34,16 @@ export function initializeFirebase(): {
   messaging: admin.messaging.Messaging | null;
   isMockMode: boolean;
 } {
+  if (process.env.FORCE_FIREBASE_MOCK === 'true') {
+    return {
+      app: null,
+      db: null,
+      auth: null,
+      storage: null,
+      messaging: null,
+      isMockMode: true,
+    };
+  }
   if (firebaseApp) {
     return {
       app: firebaseApp,

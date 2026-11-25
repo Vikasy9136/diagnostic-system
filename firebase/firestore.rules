@@ -413,7 +413,8 @@ service cloud.firestore {
         || request.resource.data.smallLabId == request.auth.uid
         || request.resource.data.get('phlebotomistId', '') != ''
       );
-      allow update: if isAuthenticated() && isAccountActive();
+      allow update: if isAdmin()
+        || hasAnyPermission(['MANAGE_INVOICES', 'MANAGE_RECONCILIATION', 'CONFIGURE_COMMISSIONS_PAYOUTS']);
       allow delete: if isSuperAdmin();
     }
 
@@ -639,6 +640,58 @@ service cloud.firestore {
 
     match /razorpay_webhook_events/{eventId} {
       allow read: if isSuperAdmin() || hasAnyPermission(['MANAGE_RECONCILIATION', 'VIEW_PAYMENT_RECORDS']);
+      allow write: if false;
+    }
+
+    // =========================================================================
+    // 18B. ENCRYPTED PHLEBO BANK/UPI & AUTOMATIC PAYOUT ENGINE (SERVER-ONLY WRITES)
+    // =========================================================================
+    match /phlebo_bank_accounts/{phleboId} {
+      allow read, write: if false; // Accessed strictly via backend API with AES-256-GCM masking/audit
+    }
+
+    match /phlebo_upi_accounts/{phleboId} {
+      allow read, write: if false; // Accessed strictly via backend API with AES-256-GCM masking/audit
+    }
+
+    match /phlebo_payment_methods/{phleboId} {
+      allow read: if isSuperAdmin()
+        || hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'CONFIGURE_COMMISSIONS_PAYOUTS'])
+        || (isPhlebotomist() && (phleboId == request.auth.uid || getPhlebotomistId() == phleboId));
+      allow write: if false;
+    }
+
+    match /phlebo_linked_accounts/{phleboId} {
+      allow read: if isSuperAdmin()
+        || hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'CONFIGURE_COMMISSIONS_PAYOUTS'])
+        || (isPhlebotomist() && (phleboId == request.auth.uid || getPhlebotomistId() == phleboId));
+      allow write: if false;
+    }
+
+    match /payout_ledger/{ledgerId} {
+      allow read: if isSuperAdmin()
+        || hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'VIEW_PAYMENT_RECORDS', 'CONFIGURE_COMMISSIONS_PAYOUTS', 'VIEW_FINANCIAL_REPORTS'])
+        || (isPhlebotomist() && getPhlebotomistId() != null && resource.data.phleboId == getPhlebotomistId());
+      allow write: if false;
+    }
+
+    match /payout_transactions/{txId} {
+      allow read: if isSuperAdmin() || hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'VIEW_PAYMENT_RECORDS', 'CONFIGURE_COMMISSIONS_PAYOUTS']);
+      allow write: if false;
+    }
+
+    match /razorpay_transfers/{transferId} {
+      allow read: if isSuperAdmin() || hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'MANAGE_RECONCILIATION']);
+      allow write: if false;
+    }
+
+    match /payout_audit_logs/{logId} {
+      allow read: if isSuperAdmin() || hasPermission('VIEW_AUDIT_LOGS');
+      allow write: if false;
+    }
+
+    match /payout_error_logs/{errId} {
+      allow read: if isSuperAdmin() || hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'CONFIGURE_COMMISSIONS_PAYOUTS', 'MANAGE_RECONCILIATION']);
       allow write: if false;
     }
 

@@ -1,0 +1,540 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Modal,
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import {
+  type BankDirectoryEntry,
+  type IfscLookupResult,
+  type PhleboPaymentMethodSummary,
+} from '@diagnostic/shared';
+import {
+  fetchBankDirectory,
+  fetchMyPaymentMethods,
+  lookupIfscFromBackend,
+  saveMyBankAccount,
+  saveMyUpiAccount,
+  setMyDefaultPayoutMethod,
+} from '../services/phleboPayoutService';
+import { styles } from '../styles/phleboStyles';
+
+function statusBadgeStyle(status?: string): { bg: string; fg: string; label: string } {
+  if (status === 'VERIFIED') return { bg: '#DCFCE7', fg: '#15803D', label: 'Verified' };
+  if (status === 'FAILED') return { bg: '#FEE2E2', fg: '#B91C1C', label: 'Verification Failed' };
+  if (status === 'REVERIFICATION_REQUIRED') {
+    return { bg: '#FEF3C7', fg: '#B45309', label: 'Re-verification Required' };
+  }
+  if (status === 'PENDING_VERIFICATION') {
+    return { bg: '#E0F2FE', fg: '#0369A1', label: 'Pending Verification' };
+  }
+  return { bg: '#F1F5F9', fg: '#475569', label: 'Not Verified' };
+}
+
+export function BankPaymentDetailsCard() {
+  const [summary, setSummary] = useState<PhleboPaymentMethodSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [activeEditor, setActiveEditor] = useState<'NONE' | 'BANK' | 'UPI'>('NONE');
+  const [statusBanner, setStatusBanner] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+
+  // Bank selector modal state
+  const [bankPickerOpen, setBankPickerOpen] = useState(false);
+  const [bankSearch, setBankSearch] = useState('');
+  const [popularBanks, setPopularBanks] = useState<BankDirectoryEntry[]>([]);
+  const [allBanks, setAllBanks] = useState<BankDirectoryEntry[]>([]);
+  const [selectedBank, setSelectedBank] = useState<BankDirectoryEntry | null>(null);
+
+  // Bank form state
+  const [holderName, setHolderName] = useState('');
+  const [acctNum, setAcctNum] = useState('');
+  const [confirmAcctNum, setConfirmAcctNum] = useState('');
+  const [showAcctDigits, setShowAcctDigits] = useState(false);
+  const [ifscInput, setIfscInput] = useState('');
+  const [ifscLoading, setIfscLoading] = useState(false);
+  const [ifscDetails, setIfscDetails] = useState<IfscLookupResult | null>(null);
+  const [ifscError, setIfscError] = useState<string | null>(null);
+  const [savingBank, setSavingBank] = useState(false);
+
+  // UPI form state
+  const [upiInput, setUpiInput] = useState('');
+  const [confirmUpiInput, setConfirmUpiInput] = useState('');
+  const [savingUpi, setSavingUpi] = useState(false);
+
+  const loadSummary = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await fetchMyPaymentMethods();
+      setSummary(data);
+    } catch {
+      // Non-fatal fallback
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSummary();
+  }, [loadSummary]);
+
+  const loadBanks = useCallback(async (q?: string) => {
+    try {
+      const res = await fetchBankDirectory(q);
+      setPopularBanks(res.popular);
+      setAllBanks(res.all);
+    } catch {
+      // Handled gracefully
+    }
+  }, []);
+
+  useEffect(() => {
+    if (bankPickerOpen) {
+      void loadBanks(bankSearch);
+    }
+  }, [bankPickerOpen, bankSearch, loadBanks]);
+
+  const handleVerifyIfsc = async (rawCode?: string) => {
+    const code = (rawCode ?? ifscInput).trim().toUpperCase();
+    setIfscDetails(null);
+    setIfscError(null);
+    if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(code)) {
+      setIfscError('Enter a valid 11-character IFSC code (e.g., SBIN0001234).');
+      return;
+    }
+    setIfscLoading(true);
+    try {
+      const res = await lookupIfscFromBackend(code);
+      setIfscDetails(res);
+    } catch (err) {
+      setIfscError(err instanceof Error ? err.message : 'IFSC lookup failed. Tap retry.');
+    } finally {
+      setIfscLoading(false);
+    }
+  };
+
+  const handleSaveBank = async () => {
+    setStatusBanner(null);
+    if (!ifscDetails) {
+      setStatusBanner({ type: 'err', text: 'Verify IFSC code and review branch details before saving.' });
+      return;
+    }
+    setSavingBank(true);
+    try {
+      const updated = await saveMyBankAccount({
+        accountHolderName: holderName.trim(),
+        accountNumber: acctNum.replace(/\s+/g, ''),
+        confirmAccountNumber: confirmAcctNum.replace(/\s+/g, ''),
+        ifscCode: ifscInput.trim().toUpperCase(),
+        selectedBankCode: selectedBank?.code,
+        makeDefault: true,
+      });
+      setSummary(updated);
+      setAcctNum('');
+      setConfirmAcctNum('');
+      setActiveEditor('NONE');
+      setStatusBanner({
+        type: 'ok',
+        text: 'Bank account encrypted & saved. Pending verification before automated payouts.',
+      });
+    } catch (err) {
+      setStatusBanner({
+        type: 'err',
+        text: err instanceof Error ? err.message : 'Could not save bank account.',
+      });
+    } finally {
+      setSavingBank(false);
+    }
+  };
+
+  const handleSaveUpi = async () => {
+    setStatusBanner(null);
+    setSavingUpi(true);
+    try {
+      const updated = await saveMyUpiAccount({
+        upiId: upiInput.trim().toLowerCase(),
+        confirmUpiId: confirmUpiInput.trim().toLowerCase(),
+        makeDefault: summary?.defaultMethod === 'NONE',
+      });
+      setSummary(updated);
+      setUpiInput('');
+      setConfirmUpiInput('');
+      setActiveEditor('NONE');
+      setStatusBanner({
+        type: 'ok',
+        text: 'UPI ID encrypted & saved. Verification required before payouts.',
+      });
+    } catch (err) {
+      setStatusBanner({
+        type: 'err',
+        text: err instanceof Error ? err.message : 'Could not save UPI ID.',
+      });
+    } finally {
+      setSavingUpi(false);
+    }
+  };
+
+  const handleSwitchDefault = async (method: 'BANK_ACCOUNT' | 'UPI') => {
+    setStatusBanner(null);
+    try {
+      const updated = await setMyDefaultPayoutMethod(method);
+      setSummary(updated);
+      setStatusBanner({ type: 'ok', text: `Default payout method updated to ${method === 'BANK_ACCOUNT' ? 'Bank Account' : 'UPI'}.` });
+    } catch (err) {
+      setStatusBanner({ type: 'err', text: err instanceof Error ? err.message : 'Unable to switch default method.' });
+    }
+  };
+
+  const bankBadge = statusBadgeStyle(summary?.bankAccount?.verificationStatus);
+  const upiBadge = statusBadgeStyle(summary?.upiAccount?.verificationStatus);
+
+  return (
+    <View style={styles.equipmentCard}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.sectionHeaderTitle}>Bank &amp; Payment Details</Text>
+          <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+            AES-256-GCM encrypted payout destination
+          </Text>
+        </View>
+        <TouchableOpacity onPress={() => void loadSummary()} style={{ padding: 6 }}>
+          <Ionicons name="refresh" size={18} color="#0D9488" />
+        </TouchableOpacity>
+      </View>
+
+      {statusBanner && (
+        <View
+          style={{
+            padding: 10,
+            borderRadius: 8,
+            marginBottom: 12,
+            backgroundColor: statusBanner.type === 'ok' ? '#DCFCE7' : '#FEE2E2',
+          }}
+        >
+          <Text style={{ fontSize: 12.5, fontWeight: '600', color: statusBanner.type === 'ok' ? '#166534' : '#991B1B' }}>
+            {statusBanner.text}
+          </Text>
+        </View>
+      )}
+
+      {loading ? (
+        <ActivityIndicator size="small" color="#0D9488" style={{ marginVertical: 14 }} />
+      ) : (
+        <>
+          {/* Default Method Selector */}
+          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+            <TouchableOpacity
+              onPress={() => void handleSwitchDefault('BANK_ACCOUNT')}
+              style={{
+                flex: 1,
+                paddingVertical: 10,
+                paddingHorizontal: 10,
+                borderRadius: 10,
+                borderWidth: 1.5,
+                borderColor: summary?.defaultMethod === 'BANK_ACCOUNT' ? '#0D9488' : '#CBD5E1',
+                backgroundColor: summary?.defaultMethod === 'BANK_ACCOUNT' ? '#F0FDFA' : '#F8FAFC',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#0F172A' }}>
+                🏦 Bank Account {summary?.defaultMethod === 'BANK_ACCOUNT' ? '(Default)' : ''}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => void handleSwitchDefault('UPI')}
+              style={{
+                flex: 1,
+                paddingVertical: 10,
+                paddingHorizontal: 10,
+                borderRadius: 10,
+                borderWidth: 1.5,
+                borderColor: summary?.defaultMethod === 'UPI' ? '#0D9488' : '#CBD5E1',
+                backgroundColor: summary?.defaultMethod === 'UPI' ? '#F0FDFA' : '#F8FAFC',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#0F172A' }}>
+                ⚡ UPI ID {summary?.defaultMethod === 'UPI' ? '(Default)' : ''}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Masked Bank Summary */}
+          <View style={{ padding: 12, borderRadius: 10, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 12 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: 13.5, fontWeight: '700', color: '#0F172A' }}>Bank Account</Text>
+              <View style={{ backgroundColor: bankBadge.bg, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: bankBadge.fg }}>{bankBadge.label}</Text>
+              </View>
+            </View>
+            {summary?.bankAccount ? (
+              <View style={{ marginTop: 6, gap: 2 }}>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>
+                  {summary.bankAccount.bankName} • {summary.bankAccount.maskedAccountNumber}
+                </Text>
+                <Text style={{ fontSize: 12, color: '#475569' }}>
+                  IFSC: {summary.bankAccount.ifsc} • {summary.bankAccount.branchName}
+                </Text>
+                <Text style={{ fontSize: 11, color: '#64748B' }}>
+                  Updated: {new Date(summary.bankAccount.updatedAt).toLocaleDateString('en-IN')}
+                </Text>
+              </View>
+            ) : (
+              <Text style={{ fontSize: 12, color: '#64748B', marginTop: 4 }}>No bank account added yet.</Text>
+            )}
+            <TouchableOpacity
+              onPress={() => setActiveEditor(activeEditor === 'BANK' ? 'NONE' : 'BANK')}
+              style={{ marginTop: 8 }}
+            >
+              <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#0D9488' }}>
+                {activeEditor === 'BANK' ? 'Close Bank Form' : summary?.bankAccount ? '✎ Update Bank Account' : '+ Add Bank Account'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Masked UPI Summary */}
+          <View style={{ padding: 12, borderRadius: 10, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 12 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: 13.5, fontWeight: '700', color: '#0F172A' }}>UPI Payout ID</Text>
+              <View style={{ backgroundColor: upiBadge.bg, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: upiBadge.fg }}>{upiBadge.label}</Text>
+              </View>
+            </View>
+            {summary?.upiAccount ? (
+              <View style={{ marginTop: 6 }}>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: '#1E293B' }}>
+                  UPI ID: {summary.upiAccount.maskedUpiId}
+                </Text>
+                <Text style={{ fontSize: 11, color: '#64748B' }}>
+                  Updated: {new Date(summary.upiAccount.updatedAt).toLocaleDateString('en-IN')}
+                </Text>
+              </View>
+            ) : (
+              <Text style={{ fontSize: 12, color: '#64748B', marginTop: 4 }}>No UPI ID added yet.</Text>
+            )}
+            <TouchableOpacity
+              onPress={() => setActiveEditor(activeEditor === 'UPI' ? 'NONE' : 'UPI')}
+              style={{ marginTop: 8 }}
+            >
+              <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#0D9488' }}>
+                {activeEditor === 'UPI' ? 'Close UPI Form' : summary?.upiAccount ? '✎ Update UPI ID' : '+ Add UPI ID'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Bank Editor */}
+          {activeEditor === 'BANK' && (
+            <View style={{ padding: 12, borderRadius: 10, backgroundColor: '#FFFFFF', borderWidth: 1.5, borderColor: '#0D9488', marginBottom: 12 }}>
+              <Text style={styles.inputLabelSm}>Select Bank *</Text>
+              <TouchableOpacity
+                onPress={() => setBankPickerOpen(true)}
+                style={[styles.fieldInput, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }]}
+              >
+                <Text style={{ fontSize: 13.5, color: selectedBank ? '#0F172A' : '#94A3B8', fontWeight: '600' }}>
+                  {selectedBank ? selectedBank.name : 'Tap to search & select bank'}
+                </Text>
+                <Ionicons name="chevron-down" size={18} color="#64748B" />
+              </TouchableOpacity>
+
+              <Text style={styles.inputLabelSm}>IFSC Code *</Text>
+              <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                <TextInput
+                  style={[styles.fieldInput, { flex: 1, marginBottom: 0 }]}
+                  value={ifscInput}
+                  onChangeText={(t) => {
+                    const up = t.toUpperCase();
+                    setIfscInput(up);
+                    setIfscDetails(null);
+                    setIfscError(null);
+                    if (up.length === 11) void handleVerifyIfsc(up);
+                  }}
+                  autoCapitalize="characters"
+                  maxLength={11}
+                  placeholder="e.g. SBIN0001234"
+                />
+                <TouchableOpacity
+                  onPress={() => void handleVerifyIfsc()}
+                  disabled={ifscLoading}
+                  style={{ backgroundColor: '#0D9488', paddingHorizontal: 12, paddingVertical: 11, borderRadius: 10 }}
+                >
+                  <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 12 }}>
+                    {ifscLoading ? '...' : 'Verify'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {ifscError && (
+                <Text style={{ fontSize: 12, color: '#B91C1C', marginBottom: 8 }}>{ifscError}</Text>
+              )}
+
+              {ifscDetails && (
+                <View style={{ padding: 10, borderRadius: 8, backgroundColor: '#F0FDFA', borderWidth: 1, borderColor: '#99F6E4', marginBottom: 10 }}>
+                  <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#0F766E' }}>
+                    ✓ {ifscDetails.bank} — {ifscDetails.branch}
+                  </Text>
+                  <Text style={{ fontSize: 11.5, color: '#115E59', marginTop: 2 }}>
+                    {ifscDetails.address}
+                  </Text>
+                  <Text style={{ fontSize: 11.5, color: '#115E59', marginTop: 2 }}>
+                    {[ifscDetails.city, ifscDetails.district, ifscDetails.state].filter(Boolean).join(', ')}
+                  </Text>
+                </View>
+              )}
+
+              <Text style={styles.inputLabelSm}>Account Holder Name *</Text>
+              <TextInput
+                style={[styles.fieldInput, { marginBottom: 10 }]}
+                value={holderName}
+                onChangeText={setHolderName}
+                placeholder="Full name as per bank passbook"
+              />
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={styles.inputLabelSm}>Account Number *</Text>
+                <TouchableOpacity onPress={() => setShowAcctDigits(!showAcctDigits)}>
+                  <Text style={{ fontSize: 11.5, color: '#0D9488', fontWeight: '700' }}>
+                    {showAcctDigits ? 'Hide' : 'Show'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              <TextInput
+                style={[styles.fieldInput, { marginBottom: 10 }]}
+                value={acctNum}
+                onChangeText={(t) => setAcctNum(t.replace(/[^0-9]/g, ''))}
+                keyboardType="numeric"
+                secureTextEntry={!showAcctDigits}
+                placeholder="9 to 18 digit account number"
+              />
+
+              <Text style={styles.inputLabelSm}>Confirm Account Number *</Text>
+              <TextInput
+                style={[styles.fieldInput, { marginBottom: 12 }]}
+                value={confirmAcctNum}
+                onChangeText={(t) => setConfirmAcctNum(t.replace(/[^0-9]/g, ''))}
+                keyboardType="numeric"
+                placeholder="Re-enter account number"
+              />
+
+              <TouchableOpacity
+                style={[styles.btnPrimary, savingBank && { opacity: 0.65 }]}
+                disabled={savingBank}
+                onPress={() => void handleSaveBank()}
+              >
+                <Text style={styles.btnPrimaryText}>
+                  {savingBank ? 'Encrypting & Saving...' : '🔒 Save & Verify Bank Account'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* UPI Editor */}
+          {activeEditor === 'UPI' && (
+            <View style={{ padding: 12, borderRadius: 10, backgroundColor: '#FFFFFF', borderWidth: 1.5, borderColor: '#0D9488', marginBottom: 12 }}>
+              <Text style={styles.inputLabelSm}>UPI ID (VPA) *</Text>
+              <TextInput
+                style={[styles.fieldInput, { marginBottom: 10 }]}
+                value={upiInput}
+                onChangeText={setUpiInput}
+                autoCapitalize="none"
+                placeholder="e.g. vikash@okhdfcbank"
+              />
+
+              <Text style={styles.inputLabelSm}>Confirm UPI ID *</Text>
+              <TextInput
+                style={[styles.fieldInput, { marginBottom: 12 }]}
+                value={confirmUpiInput}
+                onChangeText={setConfirmUpiInput}
+                autoCapitalize="none"
+                placeholder="Re-enter UPI ID"
+              />
+
+              <TouchableOpacity
+                style={[styles.btnPrimary, savingUpi && { opacity: 0.65 }]}
+                disabled={savingUpi}
+                onPress={() => void handleSaveUpi()}
+              >
+                <Text style={styles.btnPrimaryText}>
+                  {savingUpi ? 'Encrypting & Saving...' : '🔒 Save UPI ID'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </>
+      )}
+
+      {/* Searchable Bank Directory Modal */}
+      <Modal visible={bankPickerOpen} animationType="slide" transparent onRequestClose={() => setBankPickerOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: '#FFFFFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '82%', padding: 16 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>Select Your Bank</Text>
+              <TouchableOpacity onPress={() => setBankPickerOpen(false)}>
+                <Ionicons name="close" size={24} color="#475569" />
+              </TouchableOpacity>
+            </View>
+
+            <TextInput
+              style={[styles.fieldInput, { marginBottom: 12 }]}
+              value={bankSearch}
+              onChangeText={setBankSearch}
+              placeholder="Search bank name or IFSC prefix (e.g. SBI, HDFC)..."
+            />
+
+            <ScrollView keyboardShouldPersistTaps="handled">
+              {popularBanks.length > 0 && (
+                <>
+                  <Text style={{ fontSize: 11.5, fontWeight: '800', color: '#64748B', marginBottom: 6 }}>
+                    POPULAR BANKS
+                  </Text>
+                  {popularBanks.map((b) => (
+                    <TouchableOpacity
+                      key={`pop-${b.code}`}
+                      onPress={() => {
+                        setSelectedBank(b);
+                        setBankPickerOpen(false);
+                      }}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderColor: '#F1F5F9' }}
+                    >
+                      <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: b.accentColor, alignItems: 'center', justifyContent: 'center' }}>
+                        <MaterialCommunityIcons name="bank" size={18} color="#FFFFFF" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 13.5, fontWeight: '700', color: '#0F172A' }}>{b.name}</Text>
+                        <Text style={{ fontSize: 11, color: '#64748B' }}>IFSC Prefix: {b.ifscPrefix}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </>
+              )}
+
+              <Text style={{ fontSize: 11.5, fontWeight: '800', color: '#64748B', marginTop: 12, marginBottom: 6 }}>
+                ALL SUPPORTED BANKS (A–Z)
+              </Text>
+              {allBanks.map((b) => (
+                <TouchableOpacity
+                  key={`all-${b.code}`}
+                  onPress={() => {
+                    setSelectedBank(b);
+                    setBankPickerOpen(false);
+                  }}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderColor: '#F1F5F9' }}
+                >
+                  <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: b.accentColor, alignItems: 'center', justifyContent: 'center' }}>
+                    <MaterialCommunityIcons name="bank-outline" size={18} color="#FFFFFF" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 13.5, fontWeight: '600', color: '#0F172A' }}>{b.name}</Text>
+                    <Text style={{ fontSize: 11, color: '#64748B' }}>IFSC Prefix: {b.ifscPrefix}</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}

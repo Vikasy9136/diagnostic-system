@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   type CommissionConfig,
   formatInr,
@@ -7,6 +8,7 @@ import {
 } from '@diagnostic/shared';
 import { EmptyStateBox, SlaCountdownBadge } from '../../components/shared';
 import { type AdminMetrics } from './adminTypes';
+import { AdminPhleboPayoutsPanel } from './AdminPhleboPayoutsPanel';
 
 export interface AdminPaymentsTabProps {
   settlements: SettlementRecord[];
@@ -36,8 +38,31 @@ export function AdminPaymentsTab({
   onOpenPayoutModal,
   onMarkSettlementSettled,
 }: AdminPaymentsTabProps) {
+  const [subTab, setSubTab] = useState<'SETTLEMENTS' | 'PHLEBO_PAYOUTS'>('SETTLEMENTS');
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          className={subTab === 'SETTLEMENTS' ? 'btn-primary' : 'btn-secondary'}
+          onClick={() => setSubTab('SETTLEMENTS')}
+        >
+          💳 Settlements &amp; Partner Splits ({settlements.length})
+        </button>
+        <button
+          type="button"
+          className={subTab === 'PHLEBO_PAYOUTS' ? 'btn-primary' : 'btn-secondary'}
+          onClick={() => setSubTab('PHLEBO_PAYOUTS')}
+        >
+          💸 Phlebo Payouts &amp; Error Monitor
+        </button>
+      </div>
+
+      {subTab === 'PHLEBO_PAYOUTS' ? (
+        <AdminPhleboPayoutsPanel />
+      ) : (
+      <>
       <div className="chart-card-modern">
         <div className="card-top-header" style={{ flexWrap: 'wrap', gap: '10px' }}>
           <div>
@@ -286,6 +311,8 @@ export function AdminPaymentsTab({
           </div>
         )}
       </div>
+      </>
+      )}
     </div>
   );
 }

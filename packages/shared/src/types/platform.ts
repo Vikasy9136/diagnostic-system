@@ -515,6 +515,8 @@ export interface PlatformFeaturesConfig {
   notificationToneLabel?: string;
   bookingRingtoneUrl?: string;
   bookingRingtoneLabel?: string;
+  payoutEligibilityTrigger?: 'AFTER_HANDOVER' | 'AFTER_REPORT_COMPLETION';
+  preferredPayoutProvider?: 'RAZORPAY_ROUTE' | 'RAZORPAYX';
   updatedAt?: string;
   updatedBy?: string;
 }

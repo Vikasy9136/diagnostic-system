@@ -15,6 +15,7 @@ import { AppError } from '../middleware/errorHandler';
 import { sendPlatformNotification } from './notification.service';
 import { DEV_DATA_STORE } from './devStore';
 import { recordAuditLog } from '../middleware/rbac';
+import { handleTransferOrPayoutWebhookEvent } from './payoutEngine.service';
 
 export interface CreateOrderParams {
   amount?: number | string;
@@ -846,6 +847,32 @@ export async function processVerifiedRazorpayWebhook(params: {
       reconciliationStatus: 'MATCHED',
       notes: 'Gateway refund confirmed via webhook',
     });
+  } else if (eventName.startsWith('payout.') || eventName.startsWith('transfer.')) {
+    const payoutEntity = ((payload.payload as Record<string, unknown> | undefined)?.payout as
+      | { entity?: Record<string, unknown> }
+      | undefined)?.entity;
+    const transferEntity = ((payload.payload as Record<string, unknown> | undefined)?.transfer as
+      | { entity?: Record<string, unknown> }
+      | undefined)?.entity;
+    const targetEntity = payoutEntity || transferEntity;
+    const entityId = String(targetEntity?.id || '');
+    if (entityId) {
+      const hookRes = await handleTransferOrPayoutWebhookEvent({
+        eventName,
+        entityId,
+        status: targetEntity?.status ? String(targetEntity.status) : undefined,
+        utr: targetEntity?.utr ? String(targetEntity.utr) : undefined,
+        failureReason: targetEntity?.failure_reason
+          ? String(targetEntity.failure_reason)
+          : targetEntity?.status_details
+            ? JSON.stringify(targetEntity.status_details)
+            : undefined,
+      });
+      if (hookRes.updatedLedgerId) {
+        matchedRefType = 'PAYOUT_LEDGER';
+        matchedRefId = hookRes.updatedLedgerId;
+      }
+    }
   }
 
   if (db && !isMockMode) {

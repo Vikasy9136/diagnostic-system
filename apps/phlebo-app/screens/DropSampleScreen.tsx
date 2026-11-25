@@ -137,8 +137,8 @@ export function DropSampleScreen({
                 {order.dropType === 'SELF_DROP'
                   ? 'Self-Drop to Collection Centre'
                   : order.dropType === 'CUSTOM_ADDRESS'
-                  ? 'Custom Drop Address'
-                  : 'Central Reference Lab Hub'}
+                    ? 'Custom Drop Address'
+                    : 'Central Reference Lab Hub'}
               </Text>
             </View>
             {order.sampleCollectionPhotoUrl ? (
@@ -194,7 +194,7 @@ export function DropSampleScreen({
                   },
                 ]}
                 onPress={() => {
-                  Linking.openURL(`tel:${order.deliveryLocation.contactPhone}`).catch(() => {});
+                  Linking.openURL(`tel:${order.deliveryLocation.contactPhone}`).catch(() => { });
                 }}
               >
                 <Ionicons name="call" size={15} color="#FFFFFF" />
@@ -261,15 +261,15 @@ export function DropSampleScreen({
             >
               {order.paymentStatus === 'PAID'
                 ? `Booking Payment Collected (${formatInr(
-                    order.totalAmountInr || order.courierFeeInr || 0
-                  )})`
+                  order.totalAmountInr || order.courierFeeInr || 0
+                )})`
                 : `Payment Pending (${formatInr(
-                    order.totalAmountInr || order.courierFeeInr || 0
-                  )})`}
+                  order.totalAmountInr || order.courierFeeInr || 0
+                )})`}
             </Text>
           </View>
           {order.paymentStatus !== 'PAID' &&
-          (order.totalAmountInr || order.courierFeeInr || 0) >= 1 ? (
+            (order.totalAmountInr || order.courierFeeInr || 0) >= 1 ? (
             <TouchableOpacity
               style={[
                 styles.btnSecondary,
