@@ -359,6 +359,112 @@ export function PaymentSlipModal({ slip, onClose }: PaymentSlipModalProps) {
           </div>
         </div>
 
+        {/* Transparent Automated Financial Split & Ledger Verification */}
+        {(() => {
+          const courierFee = slip.logisticsFeeInr || 200;
+          const testTotal = Math.max(0, slip.totalAmountInr - courierFee);
+          const phleboFeePct = slip.feeBreakdown?.phleboFeePct ?? 5;
+          const smallLabFeePct = slip.feeBreakdown?.smallLabFeePct ?? 5;
+          const adminFeePct = phleboFeePct + smallLabFeePct;
+
+          const phleboDeduction =
+            slip.feeBreakdown?.phleboFeeDeductionInr ?? Math.round((courierFee * phleboFeePct) / 100);
+          const phleboNet =
+            slip.feeBreakdown?.phleboNetPayoutInr ?? Math.max(0, courierFee - phleboDeduction);
+
+          const smallLabDeduction =
+            slip.feeBreakdown?.smallLabFeeDeductionInr ?? Math.round((testTotal * smallLabFeePct) / 100);
+          const smallLabNet =
+            slip.feeBreakdown?.smallLabNetShareInr ?? Math.max(0, testTotal - smallLabDeduction);
+
+          const platformNet =
+            slip.feeBreakdown?.adminPlatformFeeInr ?? (phleboDeduction + smallLabDeduction);
+
+          return (
+            <div
+              style={{
+                marginBottom: '18px',
+                padding: '12px 14px',
+                borderRadius: '8px',
+                background: '#F0FDFA',
+                border: '1px solid #99F6E4',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: '0.78rem',
+                  fontWeight: 800,
+                  color: '#0F766E',
+                  marginBottom: '8px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.03em',
+                }}
+              >
+                💳 Automated Payment Split &amp; Settlement Clearance
+              </div>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                  gap: '8px',
+                  fontSize: '0.75rem',
+                }}
+              >
+                <div
+                  style={{
+                    background: '#FFFFFF',
+                    padding: '8px 10px',
+                    borderRadius: '6px',
+                    border: '1px solid #CCFBF1',
+                  }}
+                >
+                  <div style={{ color: '#0A2A5E', fontWeight: 700 }}>🏍️ Phlebotomist Payout</div>
+                  <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
+                    Gross: {formatInr(courierFee)} &bull; {phleboFeePct}% Platform Fee (-{formatInr(phleboDeduction)})
+                  </div>
+                  <div style={{ fontSize: '0.86rem', fontWeight: 800, color: '#0D9488', marginTop: '2px' }}>
+                    Net: {formatInr(phleboNet)}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    background: '#FFFFFF',
+                    padding: '8px 10px',
+                    borderRadius: '6px',
+                    border: '1px solid #CCFBF1',
+                  }}
+                >
+                  <div style={{ color: '#0A2A5E', fontWeight: 700 }}>🏥 Small Lab Referral Share</div>
+                  <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
+                    Gross: {formatInr(testTotal)} &bull; {smallLabFeePct}% Platform Fee (-{formatInr(smallLabDeduction)})
+                  </div>
+                  <div style={{ fontSize: '0.86rem', fontWeight: 800, color: '#2563EB', marginTop: '2px' }}>
+                    Net: {formatInr(smallLabNet)}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    background: '#FFFFFF',
+                    padding: '8px 10px',
+                    borderRadius: '6px',
+                    border: '1px solid #CCFBF1',
+                  }}
+                >
+                  <div style={{ color: '#0A2A5E', fontWeight: 700 }}>⚡ LabSetu Platform Fee</div>
+                  <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
+                    Combined {adminFeePct}% Cut (Admin Razorpay Linked)
+                  </div>
+                  <div style={{ fontSize: '0.86rem', fontWeight: 800, color: '#16A34A', marginTop: '2px' }}>
+                    {formatInr(platformNet)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Security Verification & Signatory Footer */}
         <div
           style={{

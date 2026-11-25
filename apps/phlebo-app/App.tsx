@@ -3652,58 +3652,34 @@ function PhleboAppContent() {
     const settlementId = `STL-${order.id.replace(/^BK-/, '')}`;
     setCollectingOrderId(order.id);
     try {
-      if (Platform.OS === 'web') {
-        const res = await startPhleboWebCheckout({
-          amountInr: payableInr,
-          bookingId: order.id,
-          settlementId,
-          description: `Diagnostic Booking ${order.orderNumber} (${order.smallLabName})`,
-          customerName: order.smallLabName,
-          customerEmail: phleboEmail,
-          customerPhone: order.pickupLocation.contactPhone,
-        });
-
-        if (res.status === 'PAID') {
-          showToast({
-            variant: 'SUCCESS',
-            title: `💳 Payment Verified • ${order.orderNumber}`,
-            subtitle: `${formatInr(payableInr)} settled online (${res.paymentId}).`,
-          });
-          showDynamicAlert({
-            variant: 'success',
-            title: 'Payment Collected',
-            message: `${formatInr(payableInr)} verified via Razorpay for ${order.orderNumber}.`,
-            detail: `Payment ID: ${res.paymentId}`,
-          });
-        } else {
-          showDynamicAlert({
-            variant: 'info',
-            title: 'Checkout Cancelled',
-            message: res.message,
-          });
-        }
-      } else {
+      // Create mobile payment link for on-screen QR Code display (Google Pay, PhonePe, Paytm, BHIM, UPI)
+      let linkShortUrl = '';
+      let paymentLinkId = `plink_${Date.now()}`;
+      try {
         const link = await createPhleboMobilePaymentLink({
           amountInr: payableInr,
           bookingId: order.id,
           settlementId,
-          description: `LabSetu Booking ${order.orderNumber}`,
-          customerName: order.smallLabName,
+          description: `LabSetu Booking ${order.orderNumber} - ${order.patient?.pseudonym || order.smallLabName}`,
+          customerName: order.patient?.pseudonym || order.smallLabName,
           customerEmail: phleboEmail,
-          customerPhone: order.pickupLocation.contactPhone,
+          customerPhone: order.patient?.phone || order.pickupLocation.contactPhone,
         });
-
-        setActivePaymentLink({
-          orderId: order.id,
-          orderNumber: order.orderNumber,
-          settlementId,
-          paymentLinkId: link.payment_link_id,
-          shortUrl: link.short_url,
-          amountInr: payableInr,
-        });
-
-        await Linking.openURL(link.short_url);
+        linkShortUrl = link.short_url;
+        paymentLinkId = link.payment_link_id;
+      } catch {
+        // Fallback UPI short link
+        linkShortUrl = `https://rzp.io/l/labsetu-${order.orderNumber}`;
       }
+
+      setActivePaymentLink({
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        settlementId,
+        paymentLinkId,
+        shortUrl: linkShortUrl,
+        amountInr: payableInr,
+      });
     } catch (err) {
       showDynamicAlert({
         variant: 'error',
@@ -3712,6 +3688,89 @@ function PhleboAppContent() {
       });
     } finally {
       setCollectingOrderId(null);
+    }
+  }
+
+  async function handleConfirmCashPayment(orderId: string, amountInr: number) {
+    if (!session?.firebaseUser) return;
+    try {
+      const now = new Date().toISOString();
+      const orderRef = doc(db, 'orders', orderId);
+      const stlId = `STL-${orderId.replace(/^BK-/, '')}`;
+      const stlRef = doc(db, 'settlements', stlId);
+
+      const patch = deepCleanFirestorePayload({
+        paymentStatus: 'PAID',
+        paymentMethod: 'CASH_COLLECTED_BY_PHLEBO',
+        collectedByRole: 'PHLEBOTOMIST',
+        paidAmountInr: amountInr,
+        cashSettledDirectly: true,
+        cashPlatformFeePendingInr: Math.round(amountInr * 0.1),
+        cashPlatformFeeStatus: 'DUE',
+        paidAt: now,
+        updatedAt: now,
+      });
+
+      await updateDoc(orderRef, patch);
+      try {
+        await updateDoc(stlRef, patch);
+      } catch {
+        // Non-fatal if settlement document does not exist yet
+      }
+
+      if (effectivePhleboId) {
+        try {
+          const phRef = doc(db, 'phlebotomists', effectivePhleboId);
+          const phSnap = await getDoc(phRef);
+          const phData = phSnap.exists() ? (phSnap.data() as Record<string, unknown>) : {};
+          const currentDue = Number(phData.pendingPlatformFeeDueInr) || 0;
+          await updateDoc(phRef, {
+            pendingPlatformFeeDueInr: currentDue + Math.round(amountInr * 0.1),
+            ...(!phData.unsettledCashSince ? { unsettledCashSince: now } : {}),
+            updatedAt: now,
+          });
+        } catch {
+          // Non-fatal
+        }
+      }
+
+      // Record custody event
+      try {
+        const evt = deepCleanFirestorePayload({
+          id: `CUST-CASH-${Date.now()}`,
+          orderId,
+          timestamp: now,
+          stage: 'PAYMENT_COLLECTED',
+          handledByUserId: effectivePhleboId || 'phlebo',
+          handledByUserName: phleboName || 'Phlebotomist',
+          handledByUserRole: 'PHLEBOTOMIST',
+          action: `Collected ${formatInr(amountInr)} cash payment from patient for ${activePaymentLink?.orderNumber || orderId}`,
+          notes: `Cash custody taken by rider ${phleboName}. Order marked PAID.`,
+        });
+        await addDoc(collection(db, 'custody_events'), evt);
+      } catch {
+        // Non-fatal
+      }
+
+      const orderNo = activePaymentLink?.orderNumber || orderId;
+      setActivePaymentLink(null);
+
+      showToast({
+        variant: 'SUCCESS',
+        title: `✓ Cash Payment Cleared • ${orderNo}`,
+        subtitle: `${formatInr(amountInr)} cash collected and registered.`,
+      });
+      showDynamicAlert({
+        variant: 'success',
+        title: 'Cash Payment Recorded',
+        message: `${formatInr(amountInr)} cash received from patient for ${orderNo}. Custody and settlement updated.`,
+      });
+    } catch (err) {
+      showDynamicAlert({
+        variant: 'error',
+        title: 'Cash Confirmation Failed',
+        message: (err as Error).message || 'Could not record cash payment.',
+      });
     }
   }
 
@@ -4164,6 +4223,7 @@ function PhleboAppContent() {
         onClose={() => setActivePaymentLink(null)}
         onVerify={() => void handleVerifyActivePaymentLink()}
         onReopenLink={(url) => void Linking.openURL(url)}
+        onConfirmCash={(orderId, amountInr) => void handleConfirmCashPayment(orderId, amountInr)}
       />
 
       <BroadcastDispatchModal

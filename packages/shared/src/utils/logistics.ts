@@ -411,6 +411,13 @@ export interface OrderPricingSplitResult {
   labPayoutInr: number;
   phleboPayoutInr: number;
   appliedCommissionPct: number;
+  phleboFeePct?: number;
+  phleboFeeDeductionInr?: number;
+  phleboNetPayoutInr?: number;
+  smallLabFeePct?: number;
+  smallLabFeeDeductionInr?: number;
+  smallLabNetShareInr?: number;
+  adminPlatformNetFeeInr?: number;
 }
 
 /**
@@ -453,11 +460,19 @@ export function computeOrderPricingSplit(
   const appliedCommissionPct =
     agreement?.agreedCommissionPct ?? input.commissionConfig.commissionPct ?? 15;
 
+  const phleboFeePct = input.commissionConfig.phleboFeePct ?? 5;
+  const smallLabFeePct = input.commissionConfig.smallLabFeePct ?? 5;
+
+  const phleboFeeDeductionInr = Math.round((courierFeeInr * phleboFeePct) / 100);
+  const phleboNetPayoutInr = Math.max(0, courierFeeInr - phleboFeeDeductionInr);
+
   if (dropType !== 'LARGE_LAB') {
     const platformFeeInr = Math.round(
       (grossAmountInr * Math.min(30, Math.max(0, appliedCommissionPct))) / 100
     );
     const phleboPayoutInr = Math.max(0, grossAmountInr - platformFeeInr);
+    const smallLabFeeDeductionInr = Math.round((smallLabTestTotalInr * smallLabFeePct) / 100);
+    const smallLabNetShareInr = Math.max(0, smallLabTestTotalInr - smallLabFeeDeductionInr);
     return {
       smallLabTestTotalInr,
       courierFeeInr,
@@ -470,6 +485,13 @@ export function computeOrderPricingSplit(
       labPayoutInr: 0,
       phleboPayoutInr,
       appliedCommissionPct,
+      phleboFeePct,
+      phleboFeeDeductionInr,
+      phleboNetPayoutInr: Math.max(0, phleboPayoutInr - phleboFeeDeductionInr),
+      smallLabFeePct,
+      smallLabFeeDeductionInr,
+      smallLabNetShareInr,
+      adminPlatformNetFeeInr: platformFeeInr,
     };
   }
 
@@ -488,6 +510,12 @@ export function computeOrderPricingSplit(
     labPayoutInr = Math.max(0, smallLabTestTotalInr - platformFeeInr);
   }
 
+  const smallLabFeeDeductionInr = Math.round((smallLabTestTotalInr * smallLabFeePct) / 100);
+  const smallLabNetShareInr = Math.max(
+    0,
+    smallLabTestTotalInr - labPayoutInr - smallLabFeeDeductionInr
+  );
+
   return {
     smallLabTestTotalInr,
     courierFeeInr,
@@ -500,6 +528,13 @@ export function computeOrderPricingSplit(
     labPayoutInr,
     phleboPayoutInr: courierFeeInr,
     appliedCommissionPct,
+    phleboFeePct,
+    phleboFeeDeductionInr,
+    phleboNetPayoutInr,
+    smallLabFeePct,
+    smallLabFeeDeductionInr,
+    smallLabNetShareInr,
+    adminPlatformNetFeeInr: platformFeeInr > 0 ? platformFeeInr : phleboFeeDeductionInr + smallLabFeeDeductionInr,
   };
 }
 

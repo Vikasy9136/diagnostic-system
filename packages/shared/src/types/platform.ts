@@ -311,6 +311,9 @@ export type PlatformBillingMode =
 
 export interface CommissionConfig {
   commissionPct: number;
+  phleboFeePct?: number; // Fee % deducted from Phlebo courier payout (e.g. 5%)
+  smallLabFeePct?: number; // Fee % deducted from Small Lab share (e.g. 5%)
+  largeLabFeePct?: number; // Fee % deducted from Large Lab share (e.g. 5%)
   defaultMarginMode?: 'PCT_OF_GROSS' | 'MARKUP_ON_B2B';
   billingMode?: PlatformBillingMode;
   hideSubscriptionsUi?: boolean;
@@ -590,6 +593,19 @@ export interface PaymentSlipData {
   totalAmountInr: number;
   status: 'PAID';
   notes?: string;
+  feeBreakdown?: {
+    phleboGrossInr: number;
+    phleboFeePct: number;
+    phleboFeeDeductionInr: number;
+    phleboNetPayoutInr: number;
+    smallLabGrossInr: number;
+    smallLabFeePct: number;
+    smallLabFeeDeductionInr: number;
+    smallLabNetShareInr: number;
+    adminPlatformFeeInr: number;
+    adminFeePct: number;
+    largeLabPayoutInr?: number;
+  };
 }
 
 export const DEFAULT_PLATFORM_SOPS: PlatformSopDocument[] = [

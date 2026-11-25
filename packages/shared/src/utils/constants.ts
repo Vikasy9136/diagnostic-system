@@ -10,7 +10,10 @@ import {
 const PLAN_SEED_TS = '2026-11-11T00:00:00.000Z';
 
 export const DEFAULT_COMMISSION_CONFIG: CommissionConfig = {
-  commissionPct: 5,
+  commissionPct: 10,
+  phleboFeePct: 5,
+  smallLabFeePct: 5,
+  largeLabFeePct: 0,
   defaultMarginMode: 'PCT_OF_GROSS',
   billingMode: 'INSTANT_30M_PAYOUT',
   hideSubscriptionsUi: true,

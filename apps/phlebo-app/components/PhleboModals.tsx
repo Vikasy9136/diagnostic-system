@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  Image,
   Linking,
   Modal,
   Platform,
@@ -50,6 +51,7 @@ export interface PaymentLinkModalProps {
   onClose: () => void;
   onVerify: () => void;
   onReopenLink: (url: string) => void;
+  onConfirmCash?: (orderId: string, amountInr: number) => Promise<void> | void;
 }
 
 export function PaymentLinkModal({
@@ -58,7 +60,34 @@ export function PaymentLinkModal({
   onClose,
   onVerify,
   onReopenLink,
+  onConfirmCash,
 }: PaymentLinkModalProps) {
+  const [payMode, setPayMode] = useState<'QR' | 'CASH'>('QR');
+  const [confirmingCash, setConfirmingCash] = useState(false);
+
+  useEffect(() => {
+    setPayMode('QR');
+    setConfirmingCash(false);
+  }, [activePaymentLink?.orderId]);
+
+  if (!activePaymentLink) return null;
+
+  const payableAmt = activePaymentLink.amountInr || 0;
+  // Construct native UPI URI format (compatible with GPay, PhonePe, Paytm, BHIM, etc.)
+  const upiIntentUri = `upi://pay?pa=labsetu@icici&pn=LabSetu%20Diagnostics&am=${payableAmt.toFixed(2)}&cu=INR&tn=Booking%20${encodeURIComponent(activePaymentLink.orderNumber)}`;
+  const qrTarget = activePaymentLink.shortUrl || upiIntentUri;
+  const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=260x260&margin=8&data=${encodeURIComponent(qrTarget)}`;
+
+  async function handleCashConfirm() {
+    if (!activePaymentLink || !onConfirmCash) return;
+    setConfirmingCash(true);
+    try {
+      await onConfirmCash(activePaymentLink.orderId, payableAmt);
+    } finally {
+      setConfirmingCash(false);
+    }
+  }
+
   return (
     <Modal
       visible={Boolean(activePaymentLink)}
@@ -69,86 +98,334 @@ export function PaymentLinkModal({
       <View
         style={{
           flex: 1,
-          backgroundColor: 'rgba(15, 23, 42, 0.58)',
+          backgroundColor: 'rgba(15, 23, 42, 0.65)',
           justifyContent: 'center',
-          padding: 20,
+          alignItems: 'center',
+          padding: 16,
         }}
       >
         <View
           style={{
             backgroundColor: '#FFFFFF',
-            borderRadius: 16,
+            borderRadius: 20,
             padding: 20,
+            width: '100%',
+            maxWidth: 420,
             borderWidth: 1,
             borderColor: COLORS.borderLight,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 6 },
+            shadowOpacity: 0.15,
+            shadowRadius: 16,
+            elevation: 8,
           }}
         >
-          <Text
-            style={{
-              fontSize: rf(16.5),
-              lineHeight: lh(rf(16.5)),
-              fontFamily: BRAND_FONTS.bold,
-              color: COLORS.textPrimary,
-              includeFontPadding: true,
-            }}
-          >
-            💳 Confirm Mobile Payment
-          </Text>
-          <Text
-            style={{
-              fontSize: rf(13),
-              lineHeight: lh(rf(13)),
-              fontFamily: BRAND_FONTS.medium,
-              color: COLORS.textSecondary,
-              marginTop: 6,
-              includeFontPadding: true,
-            }}
-          >
-            Booking {activePaymentLink?.orderNumber} • Amount:{' '}
-            {formatInr(activePaymentLink?.amountInr || 0)}
-          </Text>
-          <Text
-            style={{
-              fontSize: rf(12),
-              lineHeight: lh(rf(12), 1.42),
-              fontFamily: BRAND_FONTS.regular,
-              color: COLORS.textSecondary,
-              marginTop: 8,
-              includeFontPadding: true,
-            }}
-          >
-            Complete the Razorpay checkout in the browser/UPI sheet, then tap Verify &amp; Confirm below to mark this order paid.
-          </Text>
-
-          <View style={{ marginTop: 16, gap: 10 }}>
-            <TouchableOpacity
-              style={[styles.ctaButton, verifyingLinkPayment && { opacity: 0.65 }]}
-              disabled={verifyingLinkPayment}
-              onPress={onVerify}
-            >
-              <Text style={styles.ctaButtonText}>
-                {verifyingLinkPayment ? 'Checking Razorpay Status...' : 'Check & Confirm Payment ✓'}
+          {/* Header */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <View>
+              <Text
+                style={{
+                  fontSize: rf(16.5),
+                  lineHeight: lh(rf(16.5)),
+                  fontFamily: BRAND_FONTS.bold,
+                  color: COLORS.textPrimary,
+                }}
+              >
+                💳 Collect Patient Payment
               </Text>
-            </TouchableOpacity>
-
+              <Text
+                style={{
+                  fontSize: rf(12),
+                  lineHeight: lh(rf(12)),
+                  fontFamily: BRAND_FONTS.medium,
+                  color: COLORS.textSecondary,
+                  marginTop: 3,
+                }}
+              >
+                Booking {activePaymentLink.orderNumber}
+              </Text>
+            </View>
             <TouchableOpacity
-              style={[styles.btnSecondary, { flex: 0, paddingVertical: 12 }]}
-              onPress={() => {
-                if (activePaymentLink?.shortUrl) {
-                  onReopenLink(activePaymentLink.shortUrl);
-                }
+              onPress={onClose}
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 16,
+                backgroundColor: '#F1F5F9',
+                alignItems: 'center',
+                justifyContent: 'center',
               }}
             >
-              <Text style={styles.btnSecondaryText}>Re-open Razorpay Checkout Link</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.btnSecondary, { flex: 0, paddingVertical: 10, backgroundColor: '#F8FAFC' }]}
-              onPress={onClose}
-            >
-              <Text style={[styles.btnSecondaryText, { color: COLORS.textSecondary }]}>Close</Text>
+              <Ionicons name="close" size={18} color="#64748B" />
             </TouchableOpacity>
           </View>
+
+          {/* Amount Due Card */}
+          <View
+            style={{
+              backgroundColor: '#F0FDFA',
+              borderWidth: 1.5,
+              borderColor: '#99F6E4',
+              borderRadius: 12,
+              paddingVertical: 10,
+              paddingHorizontal: 14,
+              marginTop: 12,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <View>
+              <Text style={{ fontSize: rf(11), fontFamily: BRAND_FONTS.medium, color: '#0F766E' }}>
+                Total Payable by Patient
+              </Text>
+              <Text style={{ fontSize: rf(20), fontFamily: BRAND_FONTS.bold, color: '#0D9488' }}>
+                {formatInr(payableAmt)}
+              </Text>
+            </View>
+            <View
+              style={{
+                backgroundColor: '#CCFBF1',
+                paddingHorizontal: 8,
+                paddingVertical: 4,
+                borderRadius: 6,
+              }}
+            >
+              <Text style={{ fontSize: rf(11), fontFamily: BRAND_FONTS.bold, color: '#0F766E' }}>
+                Live Collection
+              </Text>
+            </View>
+          </View>
+
+          {/* Dual Payment Method Tabs */}
+          <View
+            style={{
+              flexDirection: 'row',
+              backgroundColor: '#F1F5F9',
+              borderRadius: 10,
+              padding: 4,
+              marginTop: 14,
+            }}
+          >
+            <TouchableOpacity
+              onPress={() => setPayMode('QR')}
+              style={{
+                flex: 1,
+                paddingVertical: 8,
+                borderRadius: 8,
+                alignItems: 'center',
+                backgroundColor: payMode === 'QR' ? '#0D9488' : 'transparent',
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: rf(12.5),
+                  fontFamily: BRAND_FONTS.bold,
+                  color: payMode === 'QR' ? '#FFFFFF' : '#475569',
+                }}
+              >
+                📱 Scan UPI QR Code
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setPayMode('CASH')}
+              style={{
+                flex: 1,
+                paddingVertical: 8,
+                borderRadius: 8,
+                alignItems: 'center',
+                backgroundColor: payMode === 'CASH' ? '#0D9488' : 'transparent',
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: rf(12.5),
+                  fontFamily: BRAND_FONTS.bold,
+                  color: payMode === 'CASH' ? '#FFFFFF' : '#475569',
+                }}
+              >
+                💵 Cash Payment
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* TAB 1: QR CODE MODE */}
+          {payMode === 'QR' ? (
+            <View style={{ marginTop: 12, alignItems: 'center' }}>
+              <Text
+                style={{
+                  fontSize: rf(12),
+                  fontFamily: BRAND_FONTS.regular,
+                  color: COLORS.textSecondary,
+                  textAlign: 'center',
+                  marginBottom: 8,
+                }}
+              >
+                Show this QR Code to patient to scan with any UPI App (GPay, PhonePe, Paytm, BHIM).
+              </Text>
+
+              {/* Dynamic QR Code Render */}
+              <View
+                style={{
+                  backgroundColor: '#FFFFFF',
+                  padding: 10,
+                  borderRadius: 14,
+                  borderWidth: 1.5,
+                  borderColor: '#E2E8F0',
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.08,
+                  shadowRadius: 6,
+                  elevation: 3,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Image
+                  source={{ uri: qrImageUrl }}
+                  style={{ width: 190, height: 190, borderRadius: 8 }}
+                  resizeMode="contain"
+                />
+              </View>
+
+              {/* Supported UPI Badges */}
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 6,
+                  marginTop: 10,
+                  paddingHorizontal: 10,
+                  paddingVertical: 4,
+                  backgroundColor: '#F8FAFC',
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  borderColor: '#E2E8F0',
+                }}
+              >
+                <Text style={{ fontSize: rf(10.5), fontFamily: BRAND_FONTS.bold, color: '#64748B' }}>
+                  GPay • PhonePe • Paytm • BHIM • Cred • Any UPI
+                </Text>
+              </View>
+
+              {/* QR Action Buttons */}
+              <View style={{ width: '100%', marginTop: 14, gap: 8 }}>
+                <TouchableOpacity
+                  style={[styles.ctaButton, verifyingLinkPayment && { opacity: 0.65 }]}
+                  disabled={verifyingLinkPayment}
+                  onPress={onVerify}
+                >
+                  <Text style={styles.ctaButtonText}>
+                    {verifyingLinkPayment ? 'Verifying Online Payment...' : 'Check Online Payment Status ✓'}
+                  </Text>
+                </TouchableOpacity>
+
+                {Boolean(activePaymentLink.shortUrl) && (
+                  <TouchableOpacity
+                    style={[styles.btnSecondary, { flex: 0, paddingVertical: 10 }]}
+                    onPress={() => onReopenLink(activePaymentLink.shortUrl)}
+                  >
+                    <Text style={styles.btnSecondaryText}>Open Checkout Link / UPI App ↗</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          ) : (
+            /* TAB 2: CASH PAYMENT MODE */
+            <View style={{ marginTop: 16 }}>
+              <View
+                style={{
+                  backgroundColor: '#FFFBEB',
+                  borderWidth: 1,
+                  borderColor: '#FDE68A',
+                  borderRadius: 12,
+                  padding: 14,
+                  alignItems: 'center',
+                }}
+              >
+                <View
+                  style={{
+                    width: 48,
+                    height: 48,
+                    borderRadius: 24,
+                    backgroundColor: '#FEF3C7',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginBottom: 8,
+                  }}
+                >
+                  <Text style={{ fontSize: 24 }}>💵</Text>
+                </View>
+                <Text
+                  style={{
+                    fontSize: rf(14),
+                    fontFamily: BRAND_FONTS.bold,
+                    color: '#92400E',
+                    textAlign: 'center',
+                  }}
+                >
+                  Collect Cash in Hand
+                </Text>
+                <Text
+                  style={{
+                    fontSize: rf(22),
+                    fontFamily: BRAND_FONTS.extraBold,
+                    color: '#B45309',
+                    marginVertical: 4,
+                  }}
+                >
+                  {formatInr(payableAmt)}
+                </Text>
+                <Text
+                  style={{
+                    fontSize: rf(11.5),
+                    fontFamily: BRAND_FONTS.regular,
+                    color: '#78350F',
+                    textAlign: 'center',
+                    lineHeight: lh(rf(11.5), 1.35),
+                  }}
+                >
+                  Please collect exact cash from the patient. Upon confirmation, cash custody is logged under your rider profile and the booking will be marked Paid.
+                </Text>
+              </View>
+
+              <View style={{ marginTop: 16, gap: 10 }}>
+                <TouchableOpacity
+                  style={[
+                    styles.ctaButton,
+                    { backgroundColor: '#059669' },
+                    confirmingCash && { opacity: 0.65 },
+                  ]}
+                  disabled={confirmingCash}
+                  onPress={() => void handleCashConfirm()}
+                >
+                  <Text style={styles.ctaButtonText}>
+                    {confirmingCash ? 'Recording Cash Payment...' : `Confirm Cash Received (${formatInr(payableAmt)}) ✓`}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.btnSecondary, { flex: 0, paddingVertical: 10 }]}
+                  onPress={() => setPayMode('QR')}
+                >
+                  <Text style={[styles.btnSecondaryText, { color: '#0D9488' }]}>
+                    ← Switch back to UPI QR Code
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* Close Modal Button */}
+          <TouchableOpacity
+            style={[
+              styles.btnSecondary,
+              { flex: 0, paddingVertical: 9, backgroundColor: '#F8FAFC', marginTop: 10 },
+            ]}
+            onPress={onClose}
+          >
+            <Text style={[styles.btnSecondaryText, { color: COLORS.textSecondary }]}>Close</Text>
+          </TouchableOpacity>
         </View>
       </View>
     </Modal>

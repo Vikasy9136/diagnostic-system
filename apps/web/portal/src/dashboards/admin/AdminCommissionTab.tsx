@@ -184,6 +184,15 @@ export function AdminCommissionTab({
   const calcPhleboPayout = Math.round(simTotalCourier);
   const calcPlatformNetFee = Math.max(0, calcSmallLabPays - calcLargeLabShare - calcPhleboPayout);
 
+  // Dynamic Platform Deductions & Net Shares
+  const simPhleboFeePct = commConfig.phleboFeePct ?? 5;
+  const simSmallLabFeePct = commConfig.smallLabFeePct ?? 5;
+  const simPhleboCut = Math.round(calcPhleboPayout * (simPhleboFeePct / 100));
+  const simPhleboNet = calcPhleboPayout - simPhleboCut;
+  const simSmallLabCut = Math.round(simSmallTariff * (simSmallLabFeePct / 100));
+  const simSmallLabNet = simSmallTariff - simSmallLabCut;
+  const simAdminPlatformCombined = calcPlatformNetFee + simPhleboCut + simSmallLabCut;
+
   const totalCalculated = Math.max(1, calcSmallLabPays);
   const largeLabPct = Number(((calcLargeLabShare / totalCalculated) * 100).toFixed(1));
   const phleboPct = Number(((calcPhleboPayout / totalCalculated) * 100).toFixed(1));
@@ -633,6 +642,60 @@ export function AdminCommissionTab({
                   <option value="PCT_OF_GROSS">% Commission on Test</option>
                   <option value="MARKUP_ON_B2B">Markup on Negotiated Large Lab Rate</option>
                 </select>
+              </div>
+            </div>
+
+            {/* Dynamic Partner Platform Cuts (Phlebo & Small Lab) */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.2fr', gap: '12px' }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" style={{ fontSize: '0.76rem' }}>
+                  Phlebo Platform Cut (%) ⓘ
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={50}
+                  className="form-input"
+                  value={commConfig.phleboFeePct ?? 5}
+                  onChange={(e) => onCommConfigChange({ ...commConfig, phleboFeePct: Number(e.target.value) })}
+                  title="Deducted from Phlebotomist courier earnings (e.g. 5% cut)"
+                />
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" style={{ fontSize: '0.76rem' }}>
+                  Small Lab Cut (%) ⓘ
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={50}
+                  className="form-input"
+                  value={commConfig.smallLabFeePct ?? 5}
+                  onChange={(e) => onCommConfigChange({ ...commConfig, smallLabFeePct: Number(e.target.value) })}
+                  title="Deducted from Small Lab test fee (e.g. 5% cut)"
+                />
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" style={{ fontSize: '0.76rem' }}>
+                  Combined Admin Cut
+                </label>
+                <div
+                  style={{
+                    backgroundColor: '#F0FDFA',
+                    border: '1px solid #99F6E4',
+                    borderRadius: '8px',
+                    padding: '8px 10px',
+                    fontSize: '0.76rem',
+                    fontWeight: 700,
+                    color: '#0D9488',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  <span>⚡</span>
+                  <span>{((commConfig.phleboFeePct ?? 5) + (commConfig.smallLabFeePct ?? 5))}% (Razorpay Linked)</span>
+                </div>
               </div>
             </div>
 
@@ -1103,7 +1166,7 @@ export function AdminCommissionTab({
             </div>
           </div>
 
-          {/* 4 Mini Result Metric Cards */}
+          {/* 4 Mini Result Metric Cards with Automated Split */}
           <div
             style={{
               display: 'grid',
@@ -1112,7 +1175,7 @@ export function AdminCommissionTab({
               marginTop: '12px',
             }}
           >
-            {/* 1. Small Lab Pays */}
+            {/* 1. Small Lab Gross & Net */}
             <div
               style={{
                 backgroundColor: '#F0FDF4',
@@ -1121,12 +1184,12 @@ export function AdminCommissionTab({
                 padding: '8px 10px',
               }}
             >
-              <div style={{ fontSize: '0.68rem', color: '#166534', fontWeight: 600 }}>Small Lab Pays</div>
+              <div style={{ fontSize: '0.68rem', color: '#166534', fontWeight: 600 }}>Small Lab Gross / Net</div>
               <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#15803D' }}>
                 ₹{calcSmallLabPays.toLocaleString('en-IN')}
               </div>
               <div style={{ fontSize: '0.62rem', color: '#166534' }}>
-                Tariff + ₹{calcPhleboPayout} courier
+                Net Share: ₹{simSmallLabNet.toLocaleString('en-IN')} (-{simSmallLabFeePct}%)
               </div>
             </div>
 
@@ -1157,10 +1220,10 @@ export function AdminCommissionTab({
             >
               <div style={{ fontSize: '0.68rem', color: '#1E40AF', fontWeight: 600 }}>Phlebotomist Payout</div>
               <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#2563EB' }}>
-                ₹{calcPhleboPayout.toLocaleString('en-IN')}
+                ₹{simPhleboNet.toLocaleString('en-IN')}
               </div>
               <div style={{ fontSize: '0.62rem', color: '#1E40AF' }}>
-                = ₹{phleboPerKm} / km
+                Gross ₹{calcPhleboPayout} (₹{phleboPerKm}/km) • -{simPhleboFeePct}%
               </div>
             </div>
 
@@ -1173,12 +1236,12 @@ export function AdminCommissionTab({
                 padding: '8px 10px',
               }}
             >
-              <div style={{ fontSize: '0.68rem', color: '#0F766E', fontWeight: 600 }}>Platform Net Fee</div>
+              <div style={{ fontSize: '0.68rem', color: '#0F766E', fontWeight: 600 }}>Admin Net Platform Fee</div>
               <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0D9488' }}>
-                ₹{calcPlatformNetFee.toLocaleString('en-IN')}
+                ₹{simAdminPlatformCombined.toLocaleString('en-IN')}
               </div>
               <div style={{ fontSize: '0.62rem', color: '#0F766E' }}>
-                Approx. {platformPct}%
+                Razorpay Linked Cut
               </div>
             </div>
           </div>
@@ -1250,14 +1313,14 @@ export function AdminCommissionTab({
                   row.urgency === 'Routine'
                     ? '#F0FDF4'
                     : row.urgency === 'Priority'
-                    ? '#FEF3C7'
-                    : '#FCE7F3';
+                      ? '#FEF3C7'
+                      : '#FCE7F3';
                 const urgencyColor =
                   row.urgency === 'Routine'
                     ? '#166534'
                     : row.urgency === 'Priority'
-                    ? '#92400E'
-                    : '#9D174D';
+                      ? '#92400E'
+                      : '#9D174D';
 
                 return (
                   <tr key={row.id}>
