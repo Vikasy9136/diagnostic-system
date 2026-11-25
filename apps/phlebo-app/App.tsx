@@ -2592,7 +2592,7 @@ function PhleboAppContent() {
       sound: 'default',
       vibrationPattern: [0, 250, 150, 250],
       enableVibrate: true,
-    }).catch(() => {});
+    }).catch(() => { });
   }, []);
 
   const metrics = useMemo<PhleboMetrics>(() => {

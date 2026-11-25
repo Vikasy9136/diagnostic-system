@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Image, Linking, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Image, Linking, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { KeyboardAwareScrollView } from '../components/KeyboardAwareScrollView';
 import {
   type PickupOrder,
   TUBE_METADATA,
@@ -106,7 +107,7 @@ export function CollectSampleScreen({
   });
 
   return (
-    <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
+    <KeyboardAwareScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
       <View style={styles.navBarHeader}>
         <TouchableOpacity onPress={onBack} hitSlop={8}>
           <Ionicons name="arrow-back" size={23} color="#FFFFFF" />
@@ -1173,6 +1174,6 @@ export function CollectSampleScreen({
           </Text>
         </TouchableOpacity>
       </View>
-    </ScrollView>
+    </KeyboardAwareScrollView>
   );
 }

@@ -1,12 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import {
   Image,
-  ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { KeyboardAwareScrollView } from '../components/KeyboardAwareScrollView';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -164,7 +164,7 @@ export function ProfileScreen({
   };
 
   return (
-    <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
+    <KeyboardAwareScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
       {/* Hero Header */}
       <LinearGradient
         colors={['#061D42', '#0A2A5E', '#0D5E6B']}
@@ -1029,6 +1029,6 @@ export function ProfileScreen({
           LabSetu Phlebo App • Live Field Operations Network
         </Text>
       </View>
-    </ScrollView>
+    </KeyboardAwareScrollView>
   );
 }

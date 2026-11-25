@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import { Image, Linking, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { formatInr, type LiveGeoCoordinate, type PickupOrder, type SupportContactsConfig } from '@diagnostic/shared';
+import { KeyboardAwareScrollView } from '../components/KeyboardAwareScrollView';
 import { BRAND_COLORS } from '../components/LabSetuBrand';
 import { OsmWebMapPreview } from '../components/OsmWebMapPreview';
 import { formatFullProperAddress } from '../utils/addressUtils';
@@ -44,6 +45,8 @@ export function DropSampleScreen({
   const { width: winWidth } = useResponsive();
   const [receivedByStaff, setReceivedByStaff] = useState('');
   const [handoverRemarks, setHandoverRemarks] = useState('');
+  const scrollRef = useRef<React.ElementRef<typeof ScrollView> | null>(null);
+  const formCardYRef = useRef(0);
   const otpInputRefs = useRef<Array<{ focus: () => void; blur: () => void } | null>>([]);
   const otpBoxSize = Math.max(40, Math.min(50, Math.floor((winWidth - rs(32) - rs(36)) / 5)));
 
@@ -90,7 +93,12 @@ export function DropSampleScreen({
   });
 
   return (
-    <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
+    <KeyboardAwareScrollView
+      ref={scrollRef}
+      style={styles.scrollArea}
+      showsVerticalScrollIndicator={false}
+      extraBottomPadding={48}
+    >
       <View style={styles.navBarHeader}>
         <TouchableOpacity onPress={onBack} hitSlop={8}>
           <Ionicons name="arrow-back" size={23} color="#FFFFFF" />
@@ -302,7 +310,12 @@ export function DropSampleScreen({
         />
 
         {/* Handover Form Card matching SS2 */}
-        <View style={styles.photoProofCard}>
+        <View
+          style={styles.photoProofCard}
+          onLayout={(e) => {
+            formCardYRef.current = e.nativeEvent.layout.y;
+          }}
+        >
           <Text style={styles.inputLabelSm}>Handover Time *</Text>
           <View
             style={[
@@ -345,6 +358,14 @@ export function DropSampleScreen({
               }}
               value={receivedByStaff}
               onChangeText={setReceivedByStaff}
+              onFocus={() => {
+                setTimeout(() => {
+                  scrollRef.current?.scrollTo({
+                    y: Math.max(0, formCardYRef.current - 12),
+                    animated: true,
+                  });
+                }, 140);
+              }}
               placeholder="e.g. Rohit Kumar (Lab Reception)"
               placeholderTextColor="#94A3B8"
             />
@@ -355,6 +376,14 @@ export function DropSampleScreen({
             style={[styles.fieldInput, { marginBottom: 12 }]}
             value={dropTempInput}
             onChangeText={onChangeDropTemp}
+            onFocus={() => {
+              setTimeout(() => {
+                scrollRef.current?.scrollTo({
+                  y: Math.max(0, formCardYRef.current + 90),
+                  animated: true,
+                });
+              }, 140);
+            }}
             keyboardType="numeric"
             placeholder="4.2"
           />
@@ -364,6 +393,14 @@ export function DropSampleScreen({
             style={[styles.fieldInput, { minHeight: 68, textAlignVertical: 'top' }]}
             value={handoverRemarks}
             onChangeText={setHandoverRemarks}
+            onFocus={() => {
+              setTimeout(() => {
+                scrollRef.current?.scrollTo({
+                  y: Math.max(0, formCardYRef.current + 170),
+                  animated: true,
+                });
+              }, 140);
+            }}
             placeholder="e.g. Sample handed over in good sealed condition"
             placeholderTextColor="#94A3B8"
             multiline
@@ -394,6 +431,11 @@ export function DropSampleScreen({
                 textAlign="center"
                 selectTextOnFocus
                 returnKeyType={idx === otpValue.length - 1 ? 'done' : 'next'}
+                onFocus={() => {
+                  setTimeout(() => {
+                    scrollRef.current?.scrollToEnd({ animated: true });
+                  }, 140);
+                }}
                 onChangeText={(val) => handleOtpChange(idx, val)}
                 onKeyPress={({ nativeEvent }) => {
                   if (nativeEvent.key === 'Backspace' && !digit && idx > 0) {
@@ -419,6 +461,6 @@ export function DropSampleScreen({
           </View>
         </TouchableOpacity>
       </View>
-    </ScrollView>
+    </KeyboardAwareScrollView>
   );
 }

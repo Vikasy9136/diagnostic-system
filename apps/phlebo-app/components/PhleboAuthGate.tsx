@@ -17,6 +17,7 @@ import {
   type UserProfile,
   UserRole,
 } from '@diagnostic/shared';
+import { KeyboardAwareScrollView } from './KeyboardAwareScrollView';
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
@@ -1599,7 +1600,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
       <TopCornerWave height={116 + insets.top} />
       <BottomWaveBackdrop height={92 + insets.bottom} />
 
-      <ScrollView
+      <KeyboardAwareScrollView
         contentContainerStyle={[
           styles.scrollContainer,
           {
@@ -1878,7 +1879,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
         <Text style={styles.footerRoleNote}>
           {LABSETU_THEME.brand.name} • {ROLE_LABELS[REQUIRED_ROLE]} Portal
         </Text>
-      </ScrollView>
+      </KeyboardAwareScrollView>
     </View>
   );
 }
