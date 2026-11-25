@@ -133,6 +133,13 @@ export interface PickupOrder {
   declinedPhleboIds?: string[];
   cancellationReason?: string;
   rejectionReason?: string;
+  chatUnreadByPhlebo?: number;
+  chatUnreadBySmallLab?: number;
+  chatUnreadByLargeLab?: number;
+  lastChatAt?: string;
+  lastChatMessage?: string;
+  lastChatSenderRole?: 'PHLEBOTOMIST' | 'SMALL_LAB' | 'LARGE_LAB';
+  lastChatSenderName?: string;
   createdAt: string;
   updatedAt: string;
 }

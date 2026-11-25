@@ -22,6 +22,7 @@ import {
 import { BRAND_COLORS, BRAND_FONTS } from './LabSetuBrand';
 import {
   cleanupCompletedOrderChats,
+  markOrderChatReadByPhlebo,
   sendOrderChatMessage,
   subscribeOrderChat,
 } from '../services/orderChatService';
@@ -77,9 +78,13 @@ export function OrderChatModal({
 
     // Auto-cleanup check if order was completed > 1.5 hours ago
     void cleanupCompletedOrderChats(order);
+    void markOrderChatReadByPhlebo(order.id);
 
     const unsub = subscribeOrderChat(order.id, (msgs) => {
       setMessages(msgs);
+      if ((order.chatUnreadByPhlebo || 0) > 0) {
+        void markOrderChatReadByPhlebo(order.id);
+      }
       setTimeout(() => {
         scrollRef.current?.scrollToEnd({ animated: true });
       }, 100);
@@ -101,6 +106,7 @@ export function OrderChatModal({
         senderName: phleboName,
         senderRole: 'PHLEBOTOMIST',
         message: txt,
+        order,
       });
     } finally {
       setSending(false);

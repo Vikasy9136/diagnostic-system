@@ -325,7 +325,7 @@ export async function syncFloatingOverlayRuntime(opts: {
 
   // 2. Clean up any legacy sticky duty notification in status bar
   try {
-    await Notifications.dismissNotificationAsync(STICKY_DUTY_NOTIF_ID).catch(() => {});
+    await Notifications.dismissNotificationAsync(STICKY_DUTY_NOTIF_ID).catch(() => { });
   } catch {
     // Ignore cleanup error
   }

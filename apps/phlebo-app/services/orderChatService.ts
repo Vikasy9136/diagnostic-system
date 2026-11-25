@@ -4,6 +4,7 @@ import {
   deleteDoc,
   doc,
   getDocs,
+  increment,
   onSnapshot,
   orderBy,
   query,
@@ -11,7 +12,15 @@ import {
 } from 'firebase/firestore';
 import { deleteObject, ref } from 'firebase/storage';
 import { db, storage } from '../firebase';
-import { type OrderChatMessage, type PickupOrder, isOrderCompleted } from '@diagnostic/shared';
+import {
+  NotificationCategory,
+  NotificationChannel,
+  NotificationPriority,
+  type OrderChatMessage,
+  type PickupOrder,
+  UserRole,
+  isOrderCompleted,
+} from '@diagnostic/shared';
 
 /**
  * Real-time listener for order guidance chat
@@ -44,15 +53,30 @@ export function subscribeOrderChat(
 }
 
 /**
- * Send real-time guidance message
+ * Mark order chat messages as read by phlebotomist
+ */
+export async function markOrderChatReadByPhlebo(orderId: string): Promise<void> {
+  if (!orderId) return;
+  try {
+    await updateDoc(doc(db, 'orders', orderId), {
+      chatUnreadByPhlebo: 0,
+    });
+  } catch {
+    // Non-fatal
+  }
+}
+
+/**
+ * Send real-time guidance message and notify Small Lab (plus Large Lab if included in order)
  */
 export async function sendOrderChatMessage(params: {
   orderId: string;
   orderNumber: string;
   senderId: string;
   senderName: string;
-  senderRole: 'PHLEBOTOMIST' | 'SMALL_LAB';
+  senderRole: 'PHLEBOTOMIST' | 'SMALL_LAB' | 'LARGE_LAB';
   message: string;
+  order?: PickupOrder | null;
 }): Promise<void> {
   const cleanMsg = params.message.trim();
   if (!cleanMsg) return;
@@ -67,21 +91,90 @@ export async function sendOrderChatMessage(params: {
     senderName: params.senderName,
     senderRole: params.senderRole,
     message: cleanMsg,
+    text: cleanMsg,
     timestamp: now,
     createdAt: now,
   };
 
   await addDoc(colRef, payload);
 
-  // Also touch order's lastActivity
+  const ord = params.order;
+  const hasLargeLab = Boolean(
+    ord &&
+      String(ord.dropType || '') !== 'SELF_LAB_RETURN' &&
+      ord.targetLabId &&
+      ord.targetLabId !== ord.smallLabId
+  );
+
+  // Increment unread counters for other participants and update lastChat metadata
   try {
-    await updateDoc(doc(db, 'orders', params.orderId), {
+    const orderPatch: Record<string, any> = {
       lastChatAt: now,
       lastChatMessage: cleanMsg,
+      lastChatSenderRole: params.senderRole,
+      lastChatSenderName: params.senderName,
       updatedAt: now,
-    });
+    };
+    if (params.senderRole === 'PHLEBOTOMIST') {
+      orderPatch.chatUnreadBySmallLab = increment(1);
+      if (hasLargeLab) {
+        orderPatch.chatUnreadByLargeLab = increment(1);
+      }
+    } else if (params.senderRole === 'SMALL_LAB') {
+      if (ord?.phlebotomistId) orderPatch.chatUnreadByPhlebo = increment(1);
+      if (hasLargeLab) orderPatch.chatUnreadByLargeLab = increment(1);
+    } else if (params.senderRole === 'LARGE_LAB') {
+      if (ord?.phlebotomistId) orderPatch.chatUnreadByPhlebo = increment(1);
+      orderPatch.chatUnreadBySmallLab = increment(1);
+    }
+    await updateDoc(doc(db, 'orders', params.orderId), orderPatch);
   } catch {
     // Non-fatal
+  }
+
+  // Send real-time in-app notifications to respective participants
+  try {
+    const preview = cleanMsg.length > 90 ? `${cleanMsg.slice(0, 87)}...` : cleanMsg;
+    const senderLabel =
+      params.senderRole === 'PHLEBOTOMIST'
+        ? `Phlebo (${params.senderName || 'Courier'})`
+        : params.senderRole === 'LARGE_LAB'
+          ? `Large Lab (${params.senderName || 'Reference Lab'})`
+          : `Small Lab (${params.senderName || 'Lab Desk'})`;
+
+    if (params.senderRole !== 'SMALL_LAB' && ord?.smallLabId) {
+      await addDoc(collection(db, 'notifications'), {
+        title: `💬 New Chat • ${params.orderNumber}`,
+        message: `${senderLabel}: ${preview}`,
+        category: NotificationCategory.SYSTEM_ALERT,
+        priority: NotificationPriority.HIGH,
+        recipientRole: UserRole.SMALL_LAB,
+        labId: ord.smallLabId,
+        orderId: params.orderId,
+        channels: [NotificationChannel.IN_APP],
+        read: false,
+        emailSent: false,
+        createdAt: now,
+      });
+    }
+
+    if (params.senderRole !== 'LARGE_LAB' && hasLargeLab && ord?.targetLabId) {
+      await addDoc(collection(db, 'notifications'), {
+        title: `💬 New Order Chat • ${params.orderNumber}`,
+        message: `${senderLabel}: ${preview}`,
+        category: NotificationCategory.SYSTEM_ALERT,
+        priority: NotificationPriority.HIGH,
+        recipientRole: UserRole.LARGE_LAB,
+        labId: ord.targetLabId,
+        orderId: params.orderId,
+        channels: [NotificationChannel.IN_APP],
+        read: false,
+        emailSent: false,
+        createdAt: now,
+      });
+    }
+  } catch {
+    // Non-fatal notification dispatch failure
   }
 }
 

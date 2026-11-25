@@ -33,6 +33,7 @@ import {
   CredentialSlipModal,
   DashboardShell,
   OrderLiveTrackingModal,
+  SmallLabOrderChatModal,
 } from '../components/shared';
 import {
   computeNextAssignedIdForRole,
@@ -127,6 +128,7 @@ export function LargeLabDashboard({
   // QC Accessioning Modal & Live Tracking Modal
   const [qcOrder, setQcOrder] = useState<PickupOrder | null>(null);
   const [trackingOrder, setTrackingOrder] = useState<PickupOrder | null>(null);
+  const [chatOrder, setChatOrder] = useState<PickupOrder | null>(null);
   const [qcTemp, setQcTemp] = useState<string>('4.2');
   const [qcQuality, setQcQuality] = useState<SpecimenQualityStatus>(SpecimenQualityStatus.INTACT);
   const [qcRejectReason, setQcRejectReason] = useState('');
@@ -695,6 +697,7 @@ export function LargeLabDashboard({
             onCenterFilterChange={setCenterFilter}
             filteredOrders={filteredOrders}
             onTrackOrder={setTrackingOrder}
+            onOpenChat={setChatOrder}
             onOpenQc={(o) => {
               setQcOrder(o);
               setQcTemp(String(o.arrivalTemperatureCelsius ?? '4.2'));
@@ -833,6 +836,15 @@ export function LargeLabDashboard({
             : undefined
         }
         formatLabel={formatDashboardLabel}
+        onOpenChat={setChatOrder}
+      />
+
+      <SmallLabOrderChatModal
+        open={Boolean(chatOrder)}
+        order={chatOrder}
+        labName={myLab?.name || 'Reference Lab'}
+        senderRole="LARGE_LAB"
+        onClose={() => setChatOrder(null)}
       />
 
       <CatalogItemModal

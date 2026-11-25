@@ -7,7 +7,7 @@ export interface OrderChatMessage {
   orderNumber: string;
   senderId: string;
   senderName: string;
-  senderRole: 'PHLEBOTOMIST' | 'SMALL_LAB';
+  senderRole: 'PHLEBOTOMIST' | 'SMALL_LAB' | 'LARGE_LAB';
   message: string;
   text?: string;
   timestamp: string; // ISO String

@@ -15,6 +15,7 @@ export interface LargeLabIncomingTabProps {
   filteredOrders: PickupOrder[];
   onTrackOrder: (order: PickupOrder) => void;
   onOpenQc: (order: PickupOrder) => void;
+  onOpenChat?: (order: PickupOrder) => void;
 }
 
 export function LargeLabIncomingTab({
@@ -25,6 +26,7 @@ export function LargeLabIncomingTab({
   filteredOrders,
   onTrackOrder,
   onOpenQc,
+  onOpenChat,
 }: LargeLabIncomingTabProps) {
   return (
     <div className="chart-card-modern">
@@ -130,6 +132,38 @@ export function LargeLabIncomingTab({
                             {o.sampleCollectionPhotoUrl ? '📷 Photo & 📍 Live' : '📍 Live Location'}
                           </button>
                         )}
+                        {o.phlebotomistId && onOpenChat && (
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            style={{
+                              fontSize: '0.72rem',
+                              padding: '3px 8px',
+                              background: '#2563EB',
+                              borderColor: '#2563EB',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                            }}
+                            onClick={() => onOpenChat(o)}
+                          >
+                            💬 Chat
+                            {(o.chatUnreadByLargeLab || 0) > 0 && (
+                              <span
+                                style={{
+                                  background: '#EF4444',
+                                  color: '#FFFFFF',
+                                  borderRadius: '999px',
+                                  fontSize: '0.66rem',
+                                  fontWeight: 800,
+                                  padding: '1px 5px',
+                                }}
+                              >
+                                {o.chatUnreadByLargeLab}
+                              </span>
+                            )}
+                          </button>
+                        )}
                       </div>
                     </td>
                     <td>{o.arrivalTemperatureCelsius !== undefined ? `${o.arrivalTemperatureCelsius}°C` : 'Pending Check'}</td>
@@ -151,4 +185,3 @@ export function LargeLabIncomingTab({
     </div>
   );
 }
-

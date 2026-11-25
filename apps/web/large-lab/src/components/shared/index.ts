@@ -17,5 +17,9 @@ export {
   type PasswordInputWithGeneratorProps,
 } from './PasswordInputWithGenerator';
 export { SlaCountdownBadge, type SlaCountdownBadgeProps } from './SlaCountdownBadge';
+export {
+  SmallLabOrderChatModal,
+  type SmallLabOrderChatModalProps,
+} from './SmallLabOrderChatModal';
 export { StatusDonutCard, type StatusDonutCardProps } from './StatusDonutCard';
 export { WeeklyVolumeBarCard, type WeeklyVolumeBarCardProps } from './WeeklyVolumeBarCard';

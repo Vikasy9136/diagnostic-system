@@ -665,6 +665,21 @@ export function SmallLabBookingsTab({
                           onClick={() => onOpenOrderChat(o)}
                         >
                           💬 Chat Phlebo
+                          {(o.chatUnreadBySmallLab || 0) > 0 && (
+                            <span
+                              style={{
+                                background: '#EF4444',
+                                color: '#FFFFFF',
+                                borderRadius: '999px',
+                                fontSize: '0.68rem',
+                                fontWeight: 800,
+                                padding: '1px 6px',
+                                lineHeight: 1.3,
+                              }}
+                            >
+                              {o.chatUnreadBySmallLab}
+                            </span>
+                          )}
                         </button>
                       )}
 

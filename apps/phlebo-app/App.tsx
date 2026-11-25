@@ -887,7 +887,19 @@ function PhleboAppContent() {
                 return false;
               }
               // 1. If notification is tied to an order, ONLY show if this phlebo has accepted/is assigned to that order
+              // AND ensure notifications meant specifically for SMALL_LAB / LARGE_LAB are not shown to the Phlebo
               if (n.orderId) {
+                if (n.recipientRole && n.recipientRole !== UserRole.PHLEBOTOMIST) {
+                  return false;
+                }
+                if (
+                  n.recipientUid &&
+                  n.recipientUid !== session?.firebaseUser?.uid &&
+                  n.recipientUid !== effectivePhleboId &&
+                  n.recipientUid !== myPhleboProfile?.id
+                ) {
+                  return false;
+                }
                 return myAssignedOrderIdsRef.current.has(n.orderId);
               }
 
@@ -1036,11 +1048,11 @@ function PhleboAppContent() {
         void AsyncStorage.setItem(
           `@labsetu_cleared_notifs_${effectivePhleboId}`,
           JSON.stringify(persisted)
-        ).catch(() => {});
+        ).catch(() => { });
       }
 
       if (Platform.OS !== 'web') {
-        void Notifications.dismissAllNotificationsAsync().catch(() => {});
+        void Notifications.dismissAllNotificationsAsync().catch(() => { });
       }
 
       // Firestore rules restrict delete to admins, so archive/mark cleared via update (permitted for active accounts)
@@ -1087,7 +1099,7 @@ function PhleboAppContent() {
             list.forEach((id) => clearedNotifIdsRef.current.add(String(id)));
             setNotifications((prev) => prev.filter((n) => !clearedNotifIdsRef.current.has(n.id)));
           }
-        } catch {}
+        } catch { }
       }
     });
     void AsyncStorage.getItem(`labsetu_declined_orders_${effectivePhleboId}`).then((raw) => {
@@ -2505,7 +2517,7 @@ function PhleboAppContent() {
       let idToken = '';
       try {
         idToken = (await auth.currentUser?.getIdToken()) || '';
-      } catch {}
+      } catch { }
       if (cancelled) return;
       const firebaseOpts = auth.app?.options as { apiKey?: string; projectId?: string } | undefined;
       void syncFloatingOverlayRuntime({
@@ -3403,8 +3415,18 @@ function PhleboAppContent() {
       }));
     }
 
-    const finalPhoto = selfiePhotoUrl.trim() || samplePhotoUrl.trim();
-    if (!finalPhoto) {
+    const finalSamplePhoto = samplePhotoUrl.trim();
+    if (!finalSamplePhoto) {
+      showDynamicAlert({
+        variant: 'warning',
+        title: 'Sample Collection Photo Required',
+        message: 'Please capture or upload a clear photo of the collected specimen vials / sample pouch.',
+      });
+      return;
+    }
+
+    const finalSelfiePhoto = selfiePhotoUrl.trim();
+    if (!finalSelfiePhoto) {
       showDynamicAlert({
         variant: 'warning',
         title: 'Phlebotomist Photo Required',
@@ -3438,8 +3460,8 @@ function PhleboAppContent() {
       await updateDoc(doc(db, 'orders', order.id), {
         status: OrderStatus.PICKED_UP,
         specimens: verifiedSpecimens,
-        sampleCollectionPhotoUrl: finalPhoto,
-        phleboSelfieUrl: finalPhoto,
+        sampleCollectionPhotoUrl: finalSamplePhoto,
+        phleboSelfieUrl: finalSelfiePhoto,
         phleboLiveLocation: {
           latitude: riderLocation.latitude,
           longitude: riderLocation.longitude,

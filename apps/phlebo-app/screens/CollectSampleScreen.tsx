@@ -92,9 +92,10 @@ export function CollectSampleScreen({
   const allTubesVerified = enableBarcodeScanner
     ? (specimens.length > 0 && verifiedCount === specimens.length)
     : true;
-  const phleboPhoto = selfiePhotoUrl || samplePhotoUrl;
+  const phleboPhoto = selfiePhotoUrl;
   const isUploading = Boolean(uploadingSelfie || uploadingPhoto);
-  const infoStepDone = allTubesVerified && Boolean(phleboPhoto);
+  const infoStepDone = allTubesVerified && Boolean(samplePhotoUrl) && Boolean(phleboPhoto);
+  const unreadChatCount = Number(order.chatUnreadByPhlebo || 0);
 
   const formattedNow = new Date().toLocaleString('en-IN', {
     day: '2-digit',
@@ -240,6 +241,23 @@ export function CollectSampleScreen({
                 >
                   Chat Lab
                 </Text>
+                {unreadChatCount > 0 ? (
+                  <View
+                    style={{
+                      backgroundColor: '#EF4444',
+                      borderRadius: 999,
+                      minWidth: 18,
+                      height: 18,
+                      paddingHorizontal: 5,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Text style={{ color: '#FFFFFF', fontSize: 10, fontFamily: FONTS.bold }}>
+                      {unreadChatCount > 99 ? '99+' : unreadChatCount}
+                    </Text>
+                  </View>
+                ) : null}
               </TouchableOpacity>
             ) : null}
           </View>
@@ -836,7 +854,158 @@ export function CollectSampleScreen({
           />
         </View>
 
-        {/* SINGLE UNIFIED PHOTO CARD: PHLEBOTOMIST PHOTO PROOF */}
+        {/* CARD 1: SAMPLE COLLECTION PHOTO (SPECIMEN VIALS / SAMPLE BAG) */}
+        <View style={styles.photoProofCard}>
+          <View
+            style={{
+              flexDirection: 'row',
+              flexWrap: 'wrap',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+              <Ionicons name="flask-outline" size={20} color={BRAND_COLORS.tealPrimary} />
+              <Text style={styles.specimenCardTitle}>Sample Collection Photo</Text>
+            </View>
+            <View
+              style={[
+                styles.pickupTimeBadge,
+                {
+                  marginBottom: 0,
+                  flexShrink: 0,
+                  backgroundColor: samplePhotoUrl ? '#DCFCE7' : '#FFEDD5',
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.pickupTimeText,
+                  { color: samplePhotoUrl ? '#15803D' : '#C2410C' },
+                ]}
+              >
+                {samplePhotoUrl ? '✓ Sample Captured' : 'Mandatory'}
+              </Text>
+            </View>
+          </View>
+          <Text style={[styles.specimenCardSub, { marginTop: 4, marginBottom: 12 }]}>
+            Take a clear photo of the collected specimen vials / sealed sample pouch before leaving {order.smallLabName}.
+          </Text>
+
+          {samplePhotoUrl ? (
+            <View style={{ marginBottom: 12 }}>
+              <Image
+                source={{ uri: samplePhotoUrl }}
+                style={styles.samplePhotoPreview}
+                resizeMode="cover"
+              />
+              <TouchableOpacity
+                style={{ marginTop: 6, alignSelf: 'flex-end' }}
+                onPress={onClearSamplePhoto}
+              >
+                <Text style={{ color: COLORS.errorRed, fontSize: 12, fontFamily: FONTS.semiBold }}>
+                  Retake / Remove Sample Photo
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
+          <View style={styles.actionsRow}>
+            {Platform.OS === 'web' && typeof document !== 'undefined' ? (
+              <View style={{ flex: 1, position: 'relative' }}>
+                <TouchableOpacity
+                  style={[styles.scanCamButton, { width: '100%', backgroundColor: '#0284C7' }, uploadingPhoto && { opacity: 0.65 }]}
+                  disabled={uploadingPhoto}
+                >
+                  <Ionicons name="camera-outline" size={17} color="#FFFFFF" />
+                  <Text style={styles.scanCamButtonText}>
+                    {uploadingPhoto ? 'Uploading Sample...' : '🧪 Take Sample Photo'}
+                  </Text>
+                </TouchableOpacity>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  disabled={uploadingPhoto}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: '100%',
+                    opacity: 0,
+                    cursor: 'pointer',
+                    zIndex: 10,
+                  }}
+                  onChange={(e) => {
+                    const file = (e.target as HTMLInputElement).files?.[0];
+                    if (!file) return;
+                    onUploadPhotoFile(order.id, file, 'SAMPLE');
+                  }}
+                />
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={[styles.scanCamButton, { flex: 1, backgroundColor: '#0284C7' }, uploadingPhoto && { opacity: 0.65 }]}
+                disabled={uploadingPhoto}
+                onPress={() => {
+                  if (onTakePhotoWithCamera) {
+                    onTakePhotoWithCamera(order.id, 'SAMPLE');
+                  } else {
+                    onUploadPhotoFile(order.id, undefined, 'SAMPLE');
+                  }
+                }}
+              >
+                <Ionicons name="camera-outline" size={17} color="#FFFFFF" />
+                <Text style={styles.scanCamButtonText}>
+                  {uploadingPhoto ? 'Opening Camera...' : '🧪 Take Sample Photo'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {Platform.OS === 'web' && typeof document !== 'undefined' ? (
+              <View style={{ position: 'relative' }}>
+                <TouchableOpacity
+                  style={[styles.btnSecondary, uploadingPhoto && { opacity: 0.65 }]}
+                  disabled={uploadingPhoto}
+                >
+                  <Text style={styles.btnSecondaryText}>Upload</Text>
+                </TouchableOpacity>
+                <input
+                  type="file"
+                  accept="image/*"
+                  disabled={uploadingPhoto}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: '100%',
+                    opacity: 0,
+                    cursor: 'pointer',
+                    zIndex: 10,
+                  }}
+                  onChange={(e) => {
+                    const file = (e.target as HTMLInputElement).files?.[0];
+                    if (!file) return;
+                    onUploadPhotoFile(order.id, file, 'SAMPLE');
+                  }}
+                />
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={[styles.btnSecondary, uploadingPhoto && { opacity: 0.65 }]}
+                disabled={uploadingPhoto}
+                onPress={() => onUploadPhotoFile(order.id, undefined, 'SAMPLE')}
+              >
+                <Text style={styles.btnSecondaryText}>Upload</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        {/* CARD 2: PHLEBOTOMIST PHOTO PROOF */}
         <View style={styles.photoProofCard}>
           <View
             style={{

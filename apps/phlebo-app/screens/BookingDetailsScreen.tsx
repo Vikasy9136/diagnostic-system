@@ -235,13 +235,38 @@ export function BookingDetailsScreen({
               <TouchableOpacity
                 style={[
                   styles.navMapButton,
-                  { flex: 1, backgroundColor: '#F0FDFA', borderColor: '#99F6E4' },
+                  {
+                    flex: 1,
+                    backgroundColor: '#F0FDFA',
+                    borderColor: '#99F6E4',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                  },
                 ]}
                 onPress={() => onOpenOrderChat(order)}
               >
                 <Text style={[styles.navMapButtonText, { color: '#0F766E' }]}>
                   💬 Chat Lab
                 </Text>
+                {(order.chatUnreadByPhlebo || 0) > 0 ? (
+                  <View
+                    style={{
+                      backgroundColor: '#EF4444',
+                      borderRadius: 999,
+                      minWidth: 18,
+                      height: 18,
+                      paddingHorizontal: 5,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Text style={{ color: '#FFFFFF', fontSize: 10, fontFamily: FONTS.bold }}>
+                      {(order.chatUnreadByPhlebo || 0) > 99 ? '99+' : order.chatUnreadByPhlebo}
+                    </Text>
+                  </View>
+                ) : null}
               </TouchableOpacity>
             ) : null}
           </View>

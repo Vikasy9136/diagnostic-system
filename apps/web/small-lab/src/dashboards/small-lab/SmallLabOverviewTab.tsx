@@ -212,6 +212,21 @@ export function SmallLabOverviewTab({
                               onClick={() => onOpenOrderChat(o)}
                             >
                               💬 Chat
+                              {(o.chatUnreadBySmallLab || 0) > 0 && (
+                                <span
+                                  style={{
+                                    marginLeft: '5px',
+                                    background: '#EF4444',
+                                    color: '#FFFFFF',
+                                    borderRadius: '999px',
+                                    fontSize: '0.66rem',
+                                    fontWeight: 800,
+                                    padding: '1px 5px',
+                                  }}
+                                >
+                                  {o.chatUnreadBySmallLab}
+                                </span>
+                              )}
                             </button>
                           )}
                           <button

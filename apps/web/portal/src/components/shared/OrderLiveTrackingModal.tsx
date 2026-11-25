@@ -402,6 +402,20 @@ export function OrderLiveTrackingModal({
                   onClick={() => onOpenChat(activeOrder)}
                 >
                   💬 Chat Courier
+                  {((activeOrder.chatUnreadByLargeLab || activeOrder.chatUnreadBySmallLab || 0) > 0) && (
+                    <span
+                      style={{
+                        background: '#EF4444',
+                        color: '#FFFFFF',
+                        borderRadius: '999px',
+                        fontSize: '0.68rem',
+                        fontWeight: 800,
+                        padding: '1px 6px',
+                      }}
+                    >
+                      {activeOrder.chatUnreadByLargeLab || activeOrder.chatUnreadBySmallLab}
+                    </span>
+                  )}
                 </button>
               )}
               {livePhleboPos && (
