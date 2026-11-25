@@ -28,7 +28,6 @@ import * as Notifications from 'expo-notifications';
 import * as Updates from 'expo-updates';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
-import * as WebBrowser from 'expo-web-browser';
 import {
   checkAppUpdateAvailability,
   applyAppUpdate,
@@ -1978,7 +1977,8 @@ function PhleboAppContent() {
     // Single Ringing Engine:
     // If inside app in active foreground, play single in-app chime and ensure no outside-app overlay is open!
     // If outside app in background, trigger native floating modal over other apps (which plays its own ringtone)
-    if (appState === 'active') {
+    const isAppCurrentlyActive = AppState.currentState === 'active' || appState === 'active';
+    if (isAppCurrentlyActive) {
       startContinuousPickupAlert(45);
       void dismissIncomingPickupOverlay();
     } else {
@@ -2334,12 +2334,16 @@ function PhleboAppContent() {
     nowTick,
   ]);
 
-  // Auto-dismiss broadcast if active broadcast order expires
+  // Auto-dismiss broadcast if active broadcast order expires, and ensure native overlay stays hidden in foreground
   useEffect(() => {
-    if (activeBroadcastMatch && isOrderBroadcastExpired(activeBroadcastMatch.order)) {
-      handleDismissBroadcast(activeBroadcastMatch.order.id, false);
+    if (activeBroadcastMatch) {
+      if (isOrderBroadcastExpired(activeBroadcastMatch.order)) {
+        handleDismissBroadcast(activeBroadcastMatch.order.id, false);
+      } else if (AppState.currentState === 'active' || appState === 'active') {
+        void dismissIncomingPickupOverlay();
+      }
     }
-  }, [activeBroadcastMatch, handleDismissBroadcast, nowTick]);
+  }, [activeBroadcastMatch, handleDismissBroadcast, nowTick, appState]);
 
   // Merge live settlements & payouts with handled orders for accurate earnings computation
   const earningRows = useMemo<EarningRow[]>(() => {
@@ -3963,18 +3967,23 @@ function PhleboAppContent() {
             return;
           }
         } else {
-          // Native Android & iOS: Open Chrome Custom Tab / In-App Browser overlay
-          // The rider never leaves the app; LabSetu toolbar and X close button appear at top
-          await WebBrowser.openBrowserAsync(url, {
-            toolbarColor: '#0D9488',
-            secondaryToolbarColor: '#0A2A5E',
-            showTitle: true,
-            enableBarCollapsing: true,
-            presentationStyle: WebBrowser.WebBrowserPresentationStyle.OVER_FULL_SCREEN,
-            controlsColor: '#FFFFFF',
-          });
-          // Immediately after custom tab is closed/finished, poll for payment status
-          void handleVerifyActivePaymentLink();
+          // Native Android & iOS: Open Chrome Custom Tab / In-App Browser overlay if native module is available in APK
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const WebBrowser = require('expo-web-browser');
+          if (WebBrowser?.openBrowserAsync) {
+            await WebBrowser.openBrowserAsync(url, {
+              toolbarColor: '#0D9488',
+              secondaryToolbarColor: '#0A2A5E',
+              showTitle: true,
+              enableBarCollapsing: true,
+              presentationStyle: WebBrowser?.WebBrowserPresentationStyle?.OVER_FULL_SCREEN,
+              controlsColor: '#FFFFFF',
+            });
+            // Immediately after custom tab is closed/finished, poll for payment status
+            void handleVerifyActivePaymentLink();
+          } else {
+            await Linking.openURL(url);
+          }
         }
       } catch (err) {
         console.warn('In-app checkout open error:', err);
