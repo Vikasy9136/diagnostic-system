@@ -12,6 +12,8 @@ interface AdminInventoryScannerBridgeModalProps {
   context?: string;
 }
 
+const LIVE_SCANNER_ORIGIN = 'https://labsetu-diagnostics.web.app';
+
 export function AdminInventoryScannerBridgeModal({
   isOpen = true,
   onClose,
@@ -35,6 +37,8 @@ export function AdminInventoryScannerBridgeModal({
   const [customHost, setCustomHost] = useState('');
   const [showHostInput, setShowHostInput] = useState(false);
   const [protocolChoice, setProtocolChoice] = useState<'https' | 'http'>('https');
+  const [liveLinkAvailable, setLiveLinkAvailable] = useState<boolean>(true);
+  const [preferLocalFallback, setPreferLocalFallback] = useState<boolean>(false);
 
   const pollIntervalRef = useRef<any>(null);
   const nextSinceIndexRef = useRef<number>(0);
@@ -65,6 +69,28 @@ export function AdminInventoryScannerBridgeModal({
   useEffect(() => {
     if (isOpen) {
       initSession();
+      const localCheck =
+        typeof window !== 'undefined' &&
+        (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+      if (!localCheck) {
+        setLiveLinkAvailable(true);
+      } else {
+        const ctrl = new AbortController();
+        const tid = setTimeout(() => ctrl.abort(), 2500);
+        fetch(`${LIVE_SCANNER_ORIGIN}/favicon.ico`, {
+          mode: 'no-cors',
+          cache: 'no-store',
+          signal: ctrl.signal,
+        })
+          .then(() => {
+            clearTimeout(tid);
+            setLiveLinkAvailable(true);
+          })
+          .catch(() => {
+            clearTimeout(tid);
+            setLiveLinkAvailable(false);
+          });
+      }
     } else {
       stopPolling();
       setSession(null);
@@ -121,18 +147,23 @@ export function AdminInventoryScannerBridgeModal({
 
   if (!isOpen) return null;
 
-  // Compute the direct URL that phone cameras / Google Lens can open
+  // Compute the direct URL that phone cameras / Google Lens can open:
+  // Automatically prefer verified Live HTTPS link (no Chrome/mobile SSL spam warning),
+  // and fall back to Local Network IP only if Live link is unavailable.
   const isLocal =
     typeof window !== 'undefined' &&
     (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
+  const localFallbackHost = `${session?.lanIp || '192.168.0.114'}:${window.location.port || '3003'}`;
+  const usingLiveOrigin = !customHost.trim() && (!isLocal || (liveLinkAvailable && !preferLocalFallback));
+
   const resolvedHost =
     customHost.trim() ||
-    (isLocal
-      ? `${session?.lanIp || '192.168.0.114'}:${window.location.port || '3003'}`
-      : window.location.host);
+    (usingLiveOrigin
+      ? (isLocal ? new URL(LIVE_SCANNER_ORIGIN).host : window.location.host)
+      : localFallbackHost);
 
-  const selectedProtocol = `${protocolChoice}:`;
+  const selectedProtocol = usingLiveOrigin ? 'https:' : `${protocolChoice}:`;
 
   const directScannerUrl = session
     ? `${selectedProtocol}//${resolvedHost}/mobile-scanner?session=${encodeURIComponent(session.sessionId)}&token=${encodeURIComponent(session.pairingToken)}&context=${encodeURIComponent(effectiveTitle)}&auto=1`
@@ -303,9 +334,34 @@ export function AdminInventoryScannerBridgeModal({
                 Tap the link that appears on your phone screen to open the live wireless barcode scanner. No login or Phlebo app required.
               </div>
 
-              {protocolChoice === 'https' && (
+              {usingLiveOrigin ? (
                 <div style={{ fontSize: '11px', color: '#047857', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '8px', padding: '6px 12px', maxWidth: '380px', marginBottom: '12px', textAlign: 'left', lineHeight: 1.4 }}>
-                  📱 <strong>Mobile Note:</strong> When opening on mobile for the first time, tap <strong>"Advanced" &rarr; "Proceed"</strong> to trust local SSL, then tap <strong>"Allow"</strong> when asked for camera permission.
+                  🟢 <strong>Verified Live HTTPS Link:</strong> Using <strong>{resolvedHost}</strong> — opens directly on mobile camera &amp; Google Lens without any browser security warning.
+                  {isLocal && (
+                    <button
+                      type="button"
+                      onClick={() => setPreferLocalFallback(true)}
+                      style={{ marginLeft: '6px', background: 'none', border: 'none', color: '#0369A1', textDecoration: 'underline', cursor: 'pointer', fontSize: '11px', padding: 0 }}
+                    >
+                      Use Local Wi-Fi IP instead
+                    </button>
+                  )}
+                </div>
+              ) : protocolChoice === 'https' && (
+                <div style={{ fontSize: '11px', color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '8px', padding: '6px 12px', maxWidth: '380px', marginBottom: '12px', textAlign: 'left', lineHeight: 1.4 }}>
+                  🟡 <strong>Local Network Fallback ({resolvedHost}):</strong> Live link unavailable or overridden. Tap <strong>"Advanced" &rarr; "Proceed"</strong> if prompted on local IP.
+                  {liveLinkAvailable && isLocal && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomHost('');
+                        setPreferLocalFallback(false);
+                      }}
+                      style={{ marginLeft: '6px', background: 'none', border: 'none', color: '#047857', textDecoration: 'underline', cursor: 'pointer', fontSize: '11px', padding: 0 }}
+                    >
+                      Switch to Live HTTPS Link
+                    </button>
+                  )}
                 </div>
               )}
 
