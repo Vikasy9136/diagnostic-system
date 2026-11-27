@@ -1355,13 +1355,14 @@ export function SmallLabDashboard({
 
         {activeTab === 'partners' && (
           <SmallLabPartnersTab
-            verifiedLargeLabs={verifiedLargeLabs}
-            pickupLat={pickupLat}
-            pickupLng={pickupLng}
-            onSelectPartnerForBooking={(orgLabIdVal, centerIdVal) => {
+            largeLabs={verifiedLargeLabs}
+            onStartBooking={(orgLabIdVal, testCode) => {
               setDropMode('LARGE_LAB');
               setSelectedOrgLabId(orgLabIdVal);
-              setSelectedCenterLabId(centerIdVal);
+              setSelectedCenterLabId(orgLabIdVal);
+              if (testCode && !selectedTestCodes.includes(testCode)) {
+                setSelectedTestCodes((prev) => [...prev, testCode]);
+              }
               setActiveTab('new-booking');
             }}
           />
@@ -1408,7 +1409,11 @@ export function SmallLabDashboard({
         )}
 
         {activeTab === 'reports' && (
-          <SmallLabReportsTab reports={reports} onPreviewPrintReport={setPrintingReport} />
+          <SmallLabReportsTab
+            reports={reports}
+            orders={orders}
+            onPrintReport={setPrintingReport}
+          />
         )}
 
         {activeTab === 'payments' && (

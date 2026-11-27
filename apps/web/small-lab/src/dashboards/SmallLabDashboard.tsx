@@ -298,9 +298,9 @@ export function SmallLabDashboard({
     if (!orders.length) return;
     orders.forEach((o) => {
       if (isOrderCompleted(o.status)) {
-        void cleanupCompletedOrderChats(o).catch(() => {});
+        void cleanupCompletedOrderChats(o).catch(() => { });
       }
-      void purgeExpiredOrderMedia(o).catch(() => {});
+      void purgeExpiredOrderMedia(o).catch(() => { });
     });
   }, [orders]);
 
@@ -1182,7 +1182,7 @@ export function SmallLabDashboard({
 
   const initials = (session.profile.displayName || 'SL')
     .split(' ')
-    .map((p: string) => p[0])
+    .map((p) => p[0])
     .join('')
     .toUpperCase()
     .slice(0, 2);
@@ -1209,7 +1209,7 @@ export function SmallLabDashboard({
         onSearchChange={setSearchQuery}
         notifications={notifications}
         notifTitle="Lab Alerts"
-        notifSubtitle={ROLE_LABELS[session.profile.role as UserRole]}
+        notifSubtitle={ROLE_LABELS[session.profile.role]}
         notifEmptyText="No alerts yet."
         formatLabel={formatDashboardLabel}
         profile={{
@@ -1355,13 +1355,14 @@ export function SmallLabDashboard({
 
         {activeTab === 'partners' && (
           <SmallLabPartnersTab
-            verifiedLargeLabs={verifiedLargeLabs}
-            pickupLat={pickupLat}
-            pickupLng={pickupLng}
-            onSelectPartnerForBooking={(orgLabIdVal, centerIdVal) => {
+            largeLabs={verifiedLargeLabs}
+            onStartBooking={(orgLabIdVal, testCode) => {
               setDropMode('LARGE_LAB');
               setSelectedOrgLabId(orgLabIdVal);
-              setSelectedCenterLabId(centerIdVal);
+              setSelectedCenterLabId(orgLabIdVal);
+              if (testCode && !selectedTestCodes.includes(testCode)) {
+                setSelectedTestCodes((prev) => [...prev, testCode]);
+              }
               setActiveTab('new-booking');
             }}
           />
@@ -1408,7 +1409,11 @@ export function SmallLabDashboard({
         )}
 
         {activeTab === 'reports' && (
-          <SmallLabReportsTab reports={reports} onPreviewPrintReport={setPrintingReport} />
+          <SmallLabReportsTab
+            reports={reports}
+            orders={orders}
+            onPrintReport={setPrintingReport}
+          />
         )}
 
         {activeTab === 'payments' && (

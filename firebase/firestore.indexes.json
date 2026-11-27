@@ -219,6 +219,31 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "expiresAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "test_catalog",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isActive", "order": "ASCENDING" },
+        { "fieldPath": "approvalStatus", "order": "ASCENDING" },
+        { "fieldPath": "b2bPriceInr", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "collection_centres",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "largeLabId", "order": "ASCENDING" },
+        { "fieldPath": "isAvailable", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "reports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "smallLabId", "order": "ASCENDING" },
+        { "fieldPath": "orderId", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

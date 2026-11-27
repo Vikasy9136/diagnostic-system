@@ -58,8 +58,15 @@ import {
 } from '../services/firestoreService';
 import { provisionBranchFacilityApi } from '../services/orgApiService';
 import {
+  transitionOrderProcessingStatusApi,
+  uploadTestOrCombinedReportApi,
+  upsertCatalogueItemApi,
+  type WorkflowReportType,
+} from '../services/workflowApiService';
+import {
   LargeLabAddBranchModal,
   LargeLabAnalyticsTab,
+  LargeLabCentresTab,
   LargeLabIncomingTab,
   type LargeLabMetrics,
   type LargeLabOrgCatalogItems,
@@ -340,14 +347,22 @@ export function LargeLabDashboard({
   }
 
   async function handleSaveCatalogItem(input: CatalogItemSaveInput) {
-    await saveDiagnosticTest({
-      ...input,
-      isActive: true,
-    });
+    try {
+      await upsertCatalogueItemApi({
+        ...input,
+        isActive: true,
+        isAvailable: true,
+      });
+    } catch {
+      await saveDiagnosticTest({
+        ...input,
+        isActive: true,
+      });
+    }
     onShowAlert({
       variant: 'success',
       title: input.itemType === 'PACKAGE' ? 'Health Package Published' : 'Test Tariff Saved',
-      message: `${input.code} (${input.name}) is now live for Small Collection Labs to compare & book.`,
+      message: `${input.code} (${input.name}) is now saved in your verified catalogue.`,
     });
   }
 
@@ -415,26 +430,81 @@ export function LargeLabDashboard({
     });
   }
 
-  async function handlePublishReportSubmit(e: FormEvent) {
+  async function handleTransitionOrderStatus(
+    order: PickupOrder,
+    nextStatus: OrderStatus,
+    remarks?: string
+  ) {
+    try {
+      await transitionOrderProcessingStatusApi(order.id, nextStatus, remarks);
+      onShowAlert({
+        variant: 'success',
+        title: 'Processing Stage Updated',
+        message: `${order.orderNumber} moved to ${formatDashboardLabel(nextStatus)}.`,
+      });
+    } catch (err) {
+      onShowAlert({
+        variant: 'error',
+        title: 'Status Transition Blocked',
+        message: (err as Error).message || 'Invalid processing stage transition.',
+      });
+    }
+  }
+
+  async function handlePublishReportSubmit(
+    e: FormEvent,
+    options?: {
+      reportType: WorkflowReportType;
+      coveredTestIds: string[];
+      remarks?: string;
+    }
+  ) {
     e.preventDefault();
     if (!reportOrder || !session.firebaseUser) return;
     setUploadingReport(true);
     try {
-      const rec = await publishDiagnosticReport({
-        order: reportOrder,
-        pathologistName,
-        file: reportFile,
-        operatorUid: session.firebaseUser.uid,
-        operatorName: session.profile.displayName,
-        operatorRole: UserRole.LARGE_LAB,
-      });
-      setReportOrder(null);
-      setReportFile(null);
-      onShowAlert({
-        variant: 'success',
-        title: `Report ${rec.id} Published`,
-        message: `Uploaded and shared immediately with ${reportOrder.smallLabName}.`,
-      });
+      if (reportFile) {
+        const buffer = await reportFile.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 1) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        const fileBase64 = btoa(binary);
+        const result = await uploadTestOrCombinedReportApi(reportOrder.id, {
+          reportType: options?.reportType || 'COMBINED',
+          coveredTestIds: options?.coveredTestIds || [],
+          pathologistName,
+          fileName: reportFile.name,
+          fileBase64,
+          contentType: reportFile.type || 'application/pdf',
+          remarks: options?.remarks,
+          authorisationStatus: 'AUTHORISED',
+        });
+        setReportOrder(null);
+        setReportFile(null);
+        onShowAlert({
+          variant: 'success',
+          title: `Report ${result.report.id} Published`,
+          message: `Private encrypted PDF shared with ${reportOrder.smallLabName}.`,
+        });
+      } else {
+        const rec = await publishDiagnosticReport({
+          order: reportOrder,
+          pathologistName,
+          file: reportFile,
+          operatorUid: session.firebaseUser.uid,
+          operatorName: session.profile.displayName,
+          operatorRole: UserRole.LARGE_LAB,
+        });
+        setReportOrder(null);
+        setReportFile(null);
+        onShowAlert({
+          variant: 'success',
+          title: `Report ${rec.id} Published`,
+          message: `Uploaded and shared immediately with ${reportOrder.smallLabName}.`,
+        });
+      }
     } catch (err) {
       onShowAlert({
         variant: 'error',
@@ -623,6 +693,7 @@ export function LargeLabDashboard({
     { id: 'testing', icon: '🔬', label: 'Analyzer Worklist', badgeCount: testingQueue.length, badgeVariant: 'teal', path: getPathForTab('testing') },
     { id: 'reports', icon: '📄', label: 'Upload Reports', badgeCount: reports.length, badgeVariant: 'green', path: getPathForTab('reports') },
     { id: 'rates', icon: '🏷️', label: 'Catalog & Branches', path: getPathForTab('rates') },
+    { id: 'centres', icon: '📍', label: 'Collection Centres', path: getPathForTab('centres') },
     { id: 'settlements', icon: '💳', label: 'Settlements', path: getPathForTab('settlements') },
     { id: 'analytics', icon: '📈', label: 'TAT & Analytics', path: getPathForTab('analytics') },
     { id: 'settings', icon: '⚙️', label: 'Facility Settings', path: getPathForTab('settings') },
@@ -712,6 +783,7 @@ export function LargeLabDashboard({
             deptFilter={deptFilter}
             onDeptFilterChange={setDeptFilter}
             onStartRun={handleMoveToAnalysis}
+            onTransitionStatus={handleTransitionOrderStatus}
             onOpenReportUpload={(o) => {
               setReportOrder(o);
               setActiveTab('reports');
@@ -754,6 +826,14 @@ export function LargeLabDashboard({
               })
             }
             onOpenAddBranchModal={openAddBranchModal}
+          />
+        )}
+
+        {activeTab === 'centres' && (
+          <LargeLabCentresTab
+            largeLabId={orgId || session.profile.labId || ''}
+            largeLabName={myLab?.name || session.profile.displayName}
+            onAlert={onShowAlert}
           />
         )}
 

@@ -88,16 +88,27 @@ export function LargeLabRatesTab({
                     typeof t.largeLabB2bRateInr === 'number'
                       ? t.largeLabB2bRateInr
                       : Math.round(
-                          (t.b2bPriceInr || 0) *
-                            (1 - (activeAgreement?.agreedCommissionPct ?? commConfig.commissionPct) / 100)
-                        );
+                        (t.b2bPriceInr || 0) *
+                        (1 - (activeAgreement?.agreedCommissionPct ?? commConfig.commissionPct) / 100)
+                      );
                   return (
                     <tr key={t.id}>
                       <td>
                         <strong>{t.code}</strong>
-                        <div style={{ marginTop: '4px' }}>
+                        <div style={{ marginTop: '4px', display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                           <span className={t.itemType === 'PACKAGE' ? 'package-match-pill' : 'status-pill-blue'}>
                             {t.itemType === 'PACKAGE' ? '📦 PACKAGE' : '🧪 TEST'}
+                          </span>
+                          <span
+                            className={
+                              t.approvalStatus === 'APPROVED' || !t.approvalStatus
+                                ? 'status-pill-green'
+                                : t.approvalStatus === 'REJECTED'
+                                ? 'status-pill-red'
+                                : 'status-pill-amber'
+                            }
+                          >
+                            {t.approvalStatus || 'APPROVED'}
                           </span>
                         </div>
                       </td>
@@ -260,3 +271,4 @@ export function LargeLabRatesTab({
     </div>
   );
 }
+

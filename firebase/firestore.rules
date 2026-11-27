@@ -505,6 +505,20 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /collection_centres/{centreId} {
+      allow read: if isAuthenticated() && isAccountActive();
+      allow write: if isAdmin() || (isLargeLab() && getLabId() != null && request.resource.data.largeLabId == getLabId());
+    }
+
+    match /handover_otps/{orderId} {
+      allow read, write: if false; // Backend Admin SDK only (short-lived hashed OTP + anti-replay)
+    }
+
+    match /report_versions/{versionId} {
+      allow read: if isAdmin() || isLargeLab() || isSmallLab();
+      allow write: if false; // Backend Admin SDK only (immutable version trail)
+    }
+
     match /agreements/{agreementId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin();

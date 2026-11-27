@@ -6,6 +6,7 @@ export * from './utils/logistics.js';
 export * from './utils/rbac.js';
 export * from './utils/dashboardRoutes.js';
 export * from './utils/bankHelpers.js';
+export * from './utils/workflowTransitions.js';
 export * from './theme/index.js';
 export * from './brand.js';
 export * from './festivalBranding.js';

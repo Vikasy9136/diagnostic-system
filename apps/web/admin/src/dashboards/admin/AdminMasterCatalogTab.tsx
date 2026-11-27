@@ -8,6 +8,7 @@ import {
   TubeType,
 } from '@diagnostic/shared';
 import { EmptyStateBox } from '../../components/shared';
+import { adminApproveCatalogueApi } from '../../services/workflowApiService';
 import { type AlertTriggerFn } from '../types';
 
 export interface AdminMasterCatalogTabProps {
@@ -105,9 +106,20 @@ export function AdminMasterCatalogTab({
                     <tr key={t.id}>
                       <td>
                         <strong>{t.code}</strong>
-                        <div style={{ marginTop: '4px' }}>
+                        <div style={{ marginTop: '4px', display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                           <span className={t.itemType === 'PACKAGE' ? 'package-match-pill' : 'status-pill-blue'}>
                             {t.itemType === 'PACKAGE' ? '📦 PACKAGE' : '🧪 TEST'}
+                          </span>
+                          <span
+                            className={
+                              t.approvalStatus === 'REJECTED'
+                                ? 'status-pill-red'
+                                : t.approvalStatus === 'PENDING_APPROVAL'
+                                ? 'status-pill-amber'
+                                : 'status-pill-green'
+                            }
+                          >
+                            {t.approvalStatus || 'APPROVED'}
                           </span>
                         </div>
                       </td>
@@ -140,7 +152,43 @@ export function AdminMasterCatalogTab({
                         <div style={{ fontSize: '0.7rem', color: '#64748B' }}>MRP {formatInr(t.mrpInr)}</div>
                       </td>
                       <td>
-                        <div style={{ display: 'flex', gap: '6px' }}>
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          {t.approvalStatus !== 'APPROVED' && (
+                            <button
+                              type="button"
+                              className="btn-primary"
+                              style={{ padding: '4px 8px', fontSize: '0.74rem' }}
+                              onClick={() => {
+                                void adminApproveCatalogueApi(t.id, 'APPROVED').then(() =>
+                                  onShowAlert({
+                                    variant: 'success',
+                                    title: 'Catalogue Item Approved',
+                                    message: `${t.code} is now live for Small Lab discovery.`,
+                                  })
+                                );
+                              }}
+                            >
+                              Approve
+                            </button>
+                          )}
+                          {t.approvalStatus !== 'REJECTED' && (
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              style={{ padding: '4px 8px', fontSize: '0.74rem' }}
+                              onClick={() => {
+                                void adminApproveCatalogueApi(t.id, 'REJECTED', 'Rejected by Admin').then(() =>
+                                  onShowAlert({
+                                    variant: 'warning',
+                                    title: 'Catalogue Item Rejected',
+                                    message: `${t.code} removed from Small Lab discovery.`,
+                                  })
+                                );
+                              }}
+                            >
+                              Reject
+                            </button>
+                          )}
                           <button type="button" className="btn-secondary" onClick={() => onEditTestModal(t)}>
                             Edit
                           </button>

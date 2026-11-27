@@ -164,6 +164,10 @@ import {
   startPhleboWebCheckout,
 } from './services/razorpayMobile';
 import {
+  generateHandoverOtpMobile,
+  verifyHandoverOtpMobile,
+} from './services/handoverOtpService';
+import {
   captureSampleProofPhoto,
   pickSampleProofFromLibrary,
 } from './services/cameraPhotoService';
@@ -448,7 +452,7 @@ function PhleboAppContent() {
 
   // Selected trip & workflow form state
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
-  const [otpValue, setOtpValue] = useState<string[]>(['', '', '', '', '']);
+  const [otpValue, setOtpValue] = useState<string[]>(['', '', '', '', '', '']);
   const [specimenDrafts, setSpecimenDrafts] = useState<SpecimenDraftMap>({});
   const [samplePhotoUrl, setSamplePhotoUrl] = useState('');
   const [selfiePhotoUrl, setSelfiePhotoUrl] = useState('');
@@ -3295,7 +3299,7 @@ function PhleboAppContent() {
     setDropTempInput(
       String(order.arrivalTemperatureCelsius ?? myPhleboProfile?.chillerTempCelsius ?? 4.2)
     );
-    setOtpValue(['', '', '', '', '']);
+    setOtpValue(['', '', '', '', '', '']);
 
     if (
       order.status === OrderStatus.PICKED_UP ||
@@ -3683,7 +3687,7 @@ function PhleboAppContent() {
         });
       }
 
-      setOtpValue(['', '', '', '', '']);
+      setOtpValue(['', '', '', '', '', '']);
       setDropTempInput(String(numericTemp));
       setCurrentScreen('DROP_SAMPLE');
 
@@ -3703,25 +3707,40 @@ function PhleboAppContent() {
     }
   }
 
-  async function handleConfirmDropOtp(order: PickupOrder) {
+  async function handleGenerateHandoverOtp(order: PickupOrder) {
+    if (!session?.firebaseUser) return;
+    setSubmittingAction(true);
+    try {
+      const res = await generateHandoverOtpMobile(order.id, order.selectedCentreId);
+      showToast({
+        variant: 'SUCCESS',
+        title: 'Handover OTP Requested',
+        subtitle: `6-digit OTP sent to ${order.targetLabName} (valid ${res.ttlMinutes} mins).`,
+      });
+    } catch (err) {
+      showDynamicAlert({
+        variant: 'error',
+        title: 'OTP Generation Failed',
+        message: (err as Error).message || 'Could not generate Handover OTP.',
+      });
+    } finally {
+      setSubmittingAction(false);
+    }
+  }
+
+  async function handleConfirmDropOtp(
+    order: PickupOrder,
+    meta?: { receivedByStaff?: string; remarks?: string }
+  ) {
     if (!session?.firebaseUser) return;
     const enteredOtp = otpValue.join('').replace(/\D/g, '');
     const numericTemp = Number.parseFloat(dropTempInput);
 
-    if (enteredOtp.length < 5) {
+    if (enteredOtp.length < 6) {
       showDynamicAlert({
         variant: 'warning',
-        title: '5-Digit Handover OTP Required',
-        message: 'Ask the receiving lab / Collection Centre coordinator for the 5-digit Handover OTP.',
-      });
-      return;
-    }
-
-    if (order.handoverOtp && enteredOtp !== order.handoverOtp) {
-      showDynamicAlert({
-        variant: 'error',
-        title: 'Handover OTP Mismatch',
-        message: `Entered code "${enteredOtp}" does not match booking ${order.orderNumber}. Verify directly with receiving desk.`,
+        title: '6-Digit Handover OTP Required',
+        message: 'Ask the receiving lab / Collection Centre coordinator for the 6-digit Handover OTP.',
       });
       return;
     }
@@ -3738,26 +3757,13 @@ function PhleboAppContent() {
     setSubmittingAction(true);
     try {
       const now = new Date().toISOString();
-      const evt: CustodyEvent = {
-        id: `EVT-${Date.now()}`,
-        orderId: order.id,
-        eventType: CustodyEventType.DELIVERED_TO_PARTNER_LAB,
-        timestamp: now,
-        operatorId: session.firebaseUser.uid,
-        operatorName: phleboName,
-        operatorRole: UserRole.PHLEBOTOMIST,
+      await verifyHandoverOtpMobile(order.id, {
+        otp: enteredOtp,
+        centreId: order.selectedCentreId,
+        receivedByStaff: meta?.receivedByStaff,
         temperatureCelsius: numericTemp,
-        notes: `Handover OTP verified & delivered to ${order.targetLabName} at ${numericTemp}°C`,
-      };
-
-      await updateDoc(doc(db, 'orders', order.id), {
-        status: OrderStatus.DELIVERED_TO_LAB,
-        actualDeliveredAt: now,
-        arrivalTemperatureCelsius: numericTemp,
-        custodyHistory: [...(order.custodyHistory || []), evt],
-        updatedAt: now,
+        remarks: meta?.remarks,
       });
-      await addDoc(collection(db, 'custody_events'), evt);
 
       if (order.dropType === 'SELF_DROP' || order.dropType === 'CUSTOM_ADDRESS') {
         await addDoc(collection(db, 'notifications'), {
@@ -3801,7 +3807,7 @@ function PhleboAppContent() {
           minute: '2-digit',
         }),
       });
-      setOtpValue(['', '', '', '', '']);
+      setOtpValue(['', '', '', '', '', '']);
       setCurrentScreen('COMPLETED');
       showToast({
         variant: 'SUCCESS',
@@ -4837,7 +4843,8 @@ function PhleboAppContent() {
                 onCollectBookingPayment={(order) => void handleCollectBookingPayment(order)}
                 onUpdateOtpDigit={updateOtpDigit}
                 onChangeDropTemp={setDropTempInput}
-                onConfirmDropOtp={(order) => void handleConfirmDropOtp(order)}
+                onGenerateHandoverOtp={(order) => void handleGenerateHandoverOtp(order)}
+                onConfirmDropOtp={(order, meta) => void handleConfirmDropOtp(order, meta)}
               />
             ) : currentScreen === 'COMPLETED' ? (
               <CompletedReceiptScreen

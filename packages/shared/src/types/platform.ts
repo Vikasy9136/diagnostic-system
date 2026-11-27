@@ -181,11 +181,30 @@ export interface DiagnosticTestItem {
   largeLabB2bRateInr?: number; // Negotiated base B2B settlement rate paid out to Large Reference Lab
   mrpInr: number;
   isActive: boolean;
+  isAvailable?: boolean;
+  approvalStatus?: 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED';
+  approvedBy?: string;
+  approvedAt?: string;
+  collectionRequirements?: string;
+  preparationInstructions?: string;
+  reportFormat?: string;
+  includedTestIds?: string[];
+  includedTests?: Array<{ id: string; code: string; name: string; b2bPriceInr: number }>;
+  pricingHistory?: Array<{ priceInr: number; changedBy: string; changedAt: string; reason?: string }>;
   labId?: string;
   ownerOrgId?: string;
   labName?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ReportVersionEntry {
+  version: number;
+  fileName: string;
+  storagePath: string;
+  uploadedBy: string;
+  uploadedAt: string;
+  remarks?: string;
 }
 
 export interface DiagnosticReportRecord {
@@ -194,12 +213,21 @@ export interface DiagnosticReportRecord {
   orderNumber: string;
   patientId: string;
   patientName: string;
+  patientReferenceId?: string;
   smallLabId: string;
   smallLabName: string;
   targetLabId: string;
   targetParentLabId?: string;
   targetLabName: string;
   testsSummary: string;
+  reportType?: 'INDIVIDUAL' | 'COMBINED';
+  coveredTestIds?: string[];
+  coveredTestNames?: string[];
+  authorisationStatus?: 'DRAFT' | 'AUTHORISED';
+  version?: number;
+  versions?: ReportVersionEntry[];
+  reportDate?: string;
+  remarks?: string;
   pathologistName: string;
   fileName: string;
   downloadUrl: string;

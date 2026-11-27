@@ -21,7 +21,11 @@ export interface DropSampleScreenProps {
   onCollectBookingPayment: (order: PickupOrder) => void;
   onUpdateOtpDigit: (index: number, value: string) => void;
   onChangeDropTemp: (val: string) => void;
-  onConfirmDropOtp: (order: PickupOrder) => void;
+  onGenerateHandoverOtp?: (order: PickupOrder) => void;
+  onConfirmDropOtp: (
+    order: PickupOrder,
+    meta?: { receivedByStaff?: string; remarks?: string }
+  ) => void;
   onOpenOrderChat?: (order: PickupOrder) => void;
   supportContacts?: SupportContactsConfig;
 }
@@ -38,6 +42,7 @@ export function DropSampleScreen({
   onCollectBookingPayment,
   onUpdateOtpDigit,
   onChangeDropTemp,
+  onGenerateHandoverOtp,
   onConfirmDropOtp,
   onOpenOrderChat,
   supportContacts,
@@ -410,8 +415,20 @@ export function DropSampleScreen({
         <View style={styles.handoverBanner}>
           <Text style={styles.handoverCheck}>Chain-of-Custody Handover OTP</Text>
           <Text style={styles.handoverSub}>
-            Enter the 5-digit Handover OTP from the receiving lab for {order.orderNumber}
+            Request &amp; enter the {otpValue.length}-digit Handover OTP from the receiving lab for {order.orderNumber}
           </Text>
+          {onGenerateHandoverOtp ? (
+            <TouchableOpacity
+              style={[
+                styles.btnSecondary,
+                { marginTop: 8, alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 6 },
+              ]}
+              disabled={submittingAction}
+              onPress={() => onGenerateHandoverOtp(order)}
+            >
+              <Text style={styles.btnSecondaryText}>Request / Resend Handover OTP</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         <View style={styles.otpBoxesRow}>
@@ -451,7 +468,12 @@ export function DropSampleScreen({
         <TouchableOpacity
           style={[styles.ctaButton, { marginTop: 22 }, submittingAction && { opacity: 0.65 }]}
           disabled={submittingAction}
-          onPress={() => onConfirmDropOtp(order)}
+          onPress={() =>
+            onConfirmDropOtp(order, {
+              receivedByStaff: receivedByStaff.trim() || undefined,
+              remarks: handoverRemarks.trim() || undefined,
+            })
+          }
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
             <Ionicons name="checkmark" size={18} color="#FFFFFF" />

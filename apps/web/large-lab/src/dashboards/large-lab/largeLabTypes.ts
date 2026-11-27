@@ -10,6 +10,7 @@ export type LargeLabTab =
   | 'testing'
   | 'reports'
   | 'rates'
+  | 'centres'
   | 'settlements'
   | 'analytics'
   | 'settings';
@@ -31,3 +32,4 @@ export interface LargeLabOrgCatalogItems {
   globalFallback: DiagnosticTestItem[];
   singleTests: DiagnosticTestItem[];
 }
+

@@ -1,5 +1,6 @@
 export * from './largeLabTypes';
 export { LargeLabAnalyticsTab, type LargeLabAnalyticsTabProps } from './LargeLabAnalyticsTab';
+export { LargeLabCentresTab, type LargeLabCentresTabProps } from './LargeLabCentresTab';
 export { LargeLabIncomingTab, type LargeLabIncomingTabProps } from './LargeLabIncomingTab';
 export {
   LargeLabAddBranchModal,

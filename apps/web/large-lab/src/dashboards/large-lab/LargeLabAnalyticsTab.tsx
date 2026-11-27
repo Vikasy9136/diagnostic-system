@@ -14,3 +14,4 @@ export function LargeLabAnalyticsTab({ weeklyBars }: LargeLabAnalyticsTabProps) 
     />
   );
 }
+

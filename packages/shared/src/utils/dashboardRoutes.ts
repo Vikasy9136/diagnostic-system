@@ -335,6 +335,13 @@ export const LARGE_LAB_ROUTES: Record<LargeLabTab, DashboardRouteMeta<LargeLabTa
     title: 'LabSetu | Custom B2B Rate Sheet',
     navLabel: 'B2B Rate Sheet',
   },
+  centres: {
+    tab: 'centres',
+    path: '/dashboard/centres',
+    aliases: ['/centres', '/dashboard/collection-centres'],
+    title: 'LabSetu | Collection Centres & Drop Locations',
+    navLabel: 'Collection Centres',
+  },
   settlements: {
     tab: 'settlements',
     path: '/dashboard/settlements',

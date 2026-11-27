@@ -187,6 +187,11 @@ service firebase.storage {
       allow read, write: if false;
     }
 
+    // Private Diagnostic Reports: served strictly via backend short-lived signed URLs (/api/v1/workflow/reports/:id/download)
+    match /private-reports/{orderId}/{fileName} {
+      allow read, write: if false;
+    }
+
     // Seasonal Brand Icons uploaded by Admin: brand-icons/{fileName}
     match /brand-icons/{fileName} {
       allow read: if true;

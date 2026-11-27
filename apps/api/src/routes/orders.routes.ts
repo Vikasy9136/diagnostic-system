@@ -12,6 +12,9 @@ import {
   NotificationPriority,
   PermissionCode,
   type ServiceZoneRecord,
+  type BookingTestItem,
+  type ProcessingStatusHistoryEntry,
+  TestReportStatus,
   UserRole,
   evaluatePointServiceCoverage,
   isValidSpecimenBarcode,
@@ -181,6 +184,37 @@ ordersRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res: Respo
     const now = new Date().toISOString();
     const orderNumber =
       req.body.orderNumber || `BK-${Math.floor(100000 + Math.random() * 899999)}`;
+    const idempotencyKey =
+      typeof req.body.idempotencyKey === 'string' && req.body.idempotencyKey.trim()
+        ? req.body.idempotencyKey.trim()
+        : undefined;
+
+    const { db, isMockMode } = initializeFirebase();
+    if (db && !isMockMode) {
+      if (req.body.orderNumber) {
+        const dupSnap = await db.collection('orders').doc(orderNumber).get();
+        if (dupSnap.exists) {
+          return next(new AppError(`Duplicate booking: order ${orderNumber} already exists.`, 409, 'DUPLICATE_BOOKING'));
+        }
+      }
+      if (idempotencyKey) {
+        const idemSnap = await db
+          .collection('orders')
+          .where('idempotencyKey', '==', idempotencyKey)
+          .limit(1)
+          .get();
+        if (!idemSnap.empty) {
+          return next(new AppError('Duplicate booking request detected.', 409, 'DUPLICATE_BOOKING'));
+        }
+      }
+    } else {
+      if (
+        (req.body.orderNumber && VOLATILE_DEV_ORDERS.some((o) => o.id === orderNumber)) ||
+        (idempotencyKey && VOLATILE_DEV_ORDERS.some((o) => (o as any).idempotencyKey === idempotencyKey))
+      ) {
+        return next(new AppError('Duplicate booking request detected.', 409, 'DUPLICATE_BOOKING'));
+      }
+    }
 
     const pickupLoc = req.body.pickupLocation || {
       address: smallLabName,
@@ -216,6 +250,37 @@ ordersRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res: Respo
       );
     }
 
+    const rawBookingTestItems: BookingTestItem[] = Array.isArray(req.body.bookingTestItems)
+      ? req.body.bookingTestItems.map((item: any, idx: number) => ({
+          testId: String(item.testId || `TEST-${idx + 1}`),
+          testName: String(item.testName || item.name || `Test ${idx + 1}`),
+          ...(item.packageId ? { packageId: String(item.packageId) } : {}),
+          ...(item.packageName ? { packageName: String(item.packageName) } : {}),
+          priceInr: Number(item.priceInr || item.b2bPriceInr || 0),
+          reportStatus: 'PENDING' as TestReportStatus,
+          testCode: String(item.testCode || item.testId || `TEST-${idx + 1}`),
+          updatedAt: now,
+        }))
+      : (Array.isArray(specimens) ? specimens : []).map((s: any, idx: number) => ({
+          testId: String(s.testCode || s.id || `TEST-${idx + 1}`),
+          testCode: String(s.testCode || s.id || `TEST-${idx + 1}`),
+          testName: String(s.testName || `Test ${idx + 1}`),
+          priceInr: Number(s.priceInr || 0),
+          reportStatus: 'PENDING' as TestReportStatus,
+          updatedAt: now,
+        }));
+
+    const initialStatusHistory: ProcessingStatusHistoryEntry[] = [
+      {
+        previousStatus: OrderStatus.READY_FOR_PICKUP,
+        newStatus: OrderStatus.READY_FOR_PICKUP,
+        userId: req.user?.uid || 'system',
+        userRole: req.user?.role || UserRole.SMALL_LAB,
+        timestamp: now,
+        remarks: 'Booking created',
+      },
+    ];
+
     const newOrder: PickupOrder = {
       id: orderNumber,
       orderNumber,
@@ -224,6 +289,8 @@ ordersRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res: Respo
       targetLabId: req.body.targetLabId || 'LAB-LG-UNASSIGNED',
       targetLabName: targetLabName || 'Partner Reference Lab',
       ...(req.body.targetParentLabId ? { targetParentLabId: req.body.targetParentLabId } : {}),
+      ...(req.body.selectedCentreId ? { selectedCentreId: String(req.body.selectedCentreId) } : {}),
+      ...(req.body.selectedCentreName ? { selectedCentreName: String(req.body.selectedCentreName) } : {}),
       ...(req.body.dropType ? { dropType: req.body.dropType } : {}),
       ...(req.body.phlebotomistId ? { phlebotomistId: req.body.phlebotomistId } : {}),
       ...(req.body.phlebotomistName ? { phlebotomistName: req.body.phlebotomistName } : {}),
@@ -233,7 +300,10 @@ ordersRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res: Respo
       priority: priority || OrderPriority.ROUTINE,
       patient,
       specimens: Array.isArray(specimens) ? specimens : [],
+      bookingTestItems: rawBookingTestItems,
+      processingStatusHistory: initialStatusHistory,
       custodyHistory: [],
+      ...(idempotencyKey ? { idempotencyKey } : {}),
       pickupLocation: {
         ...pickupLoc,
         ...(pickupPincode ? { pincode: pickupPincode } : {}),
@@ -264,7 +334,6 @@ ordersRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res: Respo
       updatedAt: now,
     };
 
-    const { db, isMockMode } = initializeFirebase();
     if (db && !isMockMode) {
       await db.collection('orders').doc(orderNumber).set(newOrder);
     } else {

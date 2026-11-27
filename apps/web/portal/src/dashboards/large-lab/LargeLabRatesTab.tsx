@@ -95,9 +95,20 @@ export function LargeLabRatesTab({
                     <tr key={t.id}>
                       <td>
                         <strong>{t.code}</strong>
-                        <div style={{ marginTop: '4px' }}>
+                        <div style={{ marginTop: '4px', display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                           <span className={t.itemType === 'PACKAGE' ? 'package-match-pill' : 'status-pill-blue'}>
                             {t.itemType === 'PACKAGE' ? '📦 PACKAGE' : '🧪 TEST'}
+                          </span>
+                          <span
+                            className={
+                              t.approvalStatus === 'APPROVED' || !t.approvalStatus
+                                ? 'status-pill-green'
+                                : t.approvalStatus === 'REJECTED'
+                                ? 'status-pill-red'
+                                : 'status-pill-amber'
+                            }
+                          >
+                            {t.approvalStatus || 'APPROVED'}
                           </span>
                         </div>
                       </td>

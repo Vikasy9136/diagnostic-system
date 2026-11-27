@@ -11,11 +11,77 @@ export enum OrderStatus {
   PICKED_UP = 'PICKED_UP',
   IN_TRANSIT = 'IN_TRANSIT',
   DELIVERED_TO_LAB = 'DELIVERED_TO_LAB',
+  SAMPLE_RECEIVED_AT_CENTRE = 'SAMPLE_RECEIVED_AT_CENTRE',
+  SAMPLE_IN_LAB = 'SAMPLE_IN_LAB',
   UNDER_ANALYSIS = 'UNDER_ANALYSIS',
+  PROCESSING_COMPLETED = 'PROCESSING_COMPLETED',
+  REPORT_PENDING = 'REPORT_PENDING',
   REPORT_UPLOADED = 'REPORT_UPLOADED',
+  REPORT_AVAILABLE_TO_SMALL_LAB = 'REPORT_AVAILABLE_TO_SMALL_LAB',
   COMPLETED = 'COMPLETED',
+  INSUFFICIENT_SAMPLE = 'INSUFFICIENT_SAMPLE',
+  RECOLLECTION_REQUIRED = 'RECOLLECTION_REQUIRED',
+  ON_HOLD = 'ON_HOLD',
+  PROCESSING_FAILED = 'PROCESSING_FAILED',
   CANCELLED = 'CANCELLED',
   REJECTED = 'REJECTED',
+}
+
+export type TestReportStatus =
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'READY_FOR_UPLOAD'
+  | 'UPLOADED'
+  | 'VERIFIED'
+  | 'AVAILABLE_TO_SMALL_LAB';
+
+export interface BookingTestItem {
+  testId: string;
+  testCode: string;
+  testName: string;
+  packageId?: string;
+  packageName?: string;
+  sampleType?: string;
+  priceInr: number;
+  reportStatus: TestReportStatus;
+  latestReportId?: string;
+  reportType?: 'INDIVIDUAL' | 'COMBINED';
+  updatedAt: string;
+}
+
+export interface ProcessingStatusHistoryEntry {
+  previousStatus: OrderStatus | string;
+  newStatus: OrderStatus | string;
+  userId: string;
+  userRole: string;
+  timestamp: string;
+  centreId?: string;
+  remarks?: string;
+}
+
+export interface CollectionCentreRecord {
+  id: string;
+  largeLabId: string;
+  name: string;
+  address: string;
+  city: string;
+  district?: string;
+  state?: string;
+  pincode: string;
+  latitude?: number;
+  longitude?: number;
+  centreType: 'COLLECTION_CENTRE' | 'PROCESSING_LAB' | 'BOTH';
+  contactPersonName: string;
+  contactDesignation?: string;
+  contactPhone: string;
+  alternatePhone?: string;
+  operatingHours: string;
+  isAvailable: boolean;
+  canReceiveSamples: boolean;
+  canProcessSamples: boolean;
+  handoverInstructions?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /**
@@ -122,6 +188,13 @@ export interface PickupOrder {
   instantPayoutEligible?: boolean;
   instantPayoutAutoTriggered?: boolean;
   handoverOtp?: string;
+  selectedCentreId?: string;
+  selectedCentreName?: string;
+  bookingTestItems?: BookingTestItem[];
+  processingStatusHistory?: ProcessingStatusHistoryEntry[];
+  handoverVerifiedAt?: string;
+  handoverVerifiedBy?: string;
+  handoverCentreId?: string;
   arrivalTemperatureCelsius?: number;
   qualityStatus?: SpecimenQualityStatus;
   department?: string;
