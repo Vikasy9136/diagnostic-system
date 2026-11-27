@@ -365,6 +365,120 @@ export interface CommissionConfig {
   updatedAt: string;
 }
 
+export type PhleboCostFundingModel = 'INCLUDED_IN_B2B' | 'SEPARATELY_BILLED';
+
+export interface PlatformPricingConfig {
+  id: string;
+  pricingVersion: string;
+  effectiveDate: string;
+  isActive: boolean;
+  // A. Large Lab Platform Margin
+  defaultLargeLabMarginPct: number;
+  largeLabMarginMode: 'PRICE_DIFFERENCE';
+  largeLabSideFeePct: number;
+  // B. Small Lab Platform Fee (Included in B2B Price)
+  smallLabDefaultFeePct: number;
+  smallLabTestFeePctOverrides?: Record<string, number>;
+  smallLabPackageFeePctOverrides?: Record<string, number>;
+  smallLabPartnerFeePctOverrides?: Record<string, number>;
+  smallLabFeeBase: 'B2B_SELLING_PRICE';
+  // C. Phlebo Platform Fee (Deducted from Gross Payout)
+  phleboBaseVisitPayoutPaise: number;
+  phleboCollectionPayoutPaise: number;
+  phleboDeliveryPayoutPaise: number;
+  phleboAdditionalChargesPaise: number;
+  phleboPlatformFeePct: number;
+  phleboCostFundingModel: PhleboCostFundingModel;
+  // D. Tax & Gateway
+  taxPct: number;
+  gatewayChargePct: number;
+  updatedByUid?: string;
+  updatedByEmail?: string;
+  updatedAt: string;
+}
+
+export interface PlatformPricingChangeHistoryEntry {
+  id: string;
+  pricingVersion: string;
+  changedAt: string;
+  changedByUid: string;
+  changedByEmail: string;
+  summary: string;
+  configSnapshot: PlatformPricingConfig;
+}
+
+export interface BookingPricingSnapshot {
+  pricingVersion: string;
+  effectiveDate: string;
+  calculatedAt: string;
+  phleboCostFundingModel: PhleboCostFundingModel;
+  // Commercial amounts (integer paise)
+  smallLabB2bPricePaise: number;
+  largeLabNegotiatedPricePaise: number;
+  largeLabPriceDifferenceMarginPaise: number;
+  largeLabSideFeePct: number;
+  largeLabSideFeePaise: number;
+  largeLabNetPayablePaise: number;
+  // Small Lab included fee (never added on top of B2B price)
+  smallLabIncludedFeePct: number;
+  smallLabIncludedFeePaise: number;
+  smallLabFeeLabel: 'Included in B2B Price';
+  // Phlebo payout & fee
+  phleboGrossPayoutPaise: number;
+  phleboPlatformFeePct: number;
+  phleboPlatformFeePaise: number;
+  phleboNetEarningPaise: number;
+  // Taxes, gateway, discounts, final payable
+  taxPct: number;
+  taxPaise: number;
+  gatewayChargePct: number;
+  gatewayChargePaise: number;
+  discountPaise: number;
+  finalSmallLabPayablePaise: number;
+  // Balanced revenue summary (no double counting)
+  grossPlatformRevenuePaise: number;
+  netPlatformRevenuePaise: number;
+  reconciliationBalanced: boolean;
+}
+
+export type FinancialLedgerCategory =
+  | 'LARGE_LAB_PROCESSING_COST'
+  | 'LARGE_LAB_PRICE_DIFFERENCE_MARGIN'
+  | 'SMALL_LAB_INCLUDED_PLATFORM_FEE'
+  | 'PHLEBO_GROSS_EARNING'
+  | 'PHLEBO_PLATFORM_FEE'
+  | 'PHLEBO_NET_EARNING'
+  | 'APPLICABLE_TAX'
+  | 'PAYMENT_GATEWAY_CHARGE'
+  | 'REFUND'
+  | 'ADJUSTMENT'
+  | 'SETTLEMENT';
+
+export interface FinancialLedgerRecord {
+  id: string;
+  orderId: string;
+  orderNumber: string;
+  category: FinancialLedgerCategory;
+  beneficiaryId?: string;
+  beneficiaryRole?: 'LARGE_LAB' | 'SMALL_LAB' | 'PHLEBOTOMIST' | 'PLATFORM' | 'TAX_AUTHORITY' | 'GATEWAY';
+  smallLabId?: string;
+  largeLabId?: string;
+  phleboId?: string;
+  testCode?: string;
+  packageCode?: string;
+  pricingVersion: string;
+  calculationBasePaise: number;
+  percentageApplied: number;
+  grossAmountPaise: number;
+  feeAmountPaise: number;
+  netAmountPaise: number;
+  status: 'RECORDED' | 'REVERSED' | 'SETTLED';
+  transactionRef: string;
+  idempotencyKey: string;
+  timestamp: string;
+  notes?: string;
+}
+
 export type AgreementRoleTarget = 'PHLEBOTOMIST' | 'SMALL_LAB' | 'LARGE_LAB';
 
 export interface RoleAgreementTemplate {

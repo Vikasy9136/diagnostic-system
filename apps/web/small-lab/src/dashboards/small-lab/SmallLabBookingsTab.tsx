@@ -486,6 +486,25 @@ export function SmallLabBookingsTab({
                     ) : null}
                   </div>
 
+                  {o.pricingSnapshot && (
+                    <div
+                      style={{
+                        marginTop: '6px',
+                        fontSize: '0.71rem',
+                        color: '#0369A1',
+                        background: '#F0F9FF',
+                        border: '1px solid #BAE6FD',
+                        borderRadius: '6px',
+                        padding: '4px 8px',
+                      }}
+                    >
+                      B2B Price: <strong>₹{(o.pricingSnapshot.smallLabB2bPricePaise / 100).toFixed(2)}</strong> &bull;
+                      Platform Fee ({o.pricingSnapshot.smallLabIncludedFeePct}%):{' '}
+                      <strong>₹{(o.pricingSnapshot.smallLabIncludedFeePaise / 100).toFixed(2)}</strong>{' '}
+                      <em>(Included in B2B Price)</em>
+                    </div>
+                  )}
+
                   {/* Per-test report status & Request Urgent Report action */}
                   {(() => {
                     const testRows: BookingTestItem[] = o.bookingTestItems?.length

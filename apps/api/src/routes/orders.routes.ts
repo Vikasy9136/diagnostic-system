@@ -28,6 +28,10 @@ import { config } from '../config/env';
 import { sendPlatformNotification } from '../services/notification.service';
 import { dualList } from '../services/dualCollection';
 import { creditBookingEarningAtomically } from '../services/wallet.service';
+import {
+  calculateAuthoritativeBookingSnapshot,
+  recordBookingFinancialLedger,
+} from '../services/platformPricing.service';
 
 export const ordersRouter = Router();
 
@@ -281,6 +285,28 @@ ordersRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res: Respo
       },
     ];
 
+    const smallLabB2bInr =
+      typeof req.body.smallLabB2bAmountInr === 'number'
+        ? req.body.smallLabB2bAmountInr
+        : typeof req.body.totalAmountInr === 'number'
+        ? req.body.totalAmountInr
+        : rawBookingTestItems.reduce((acc, t) => acc + (t.priceInr || 0), 0);
+
+    const pricingSnapshot = await calculateAuthoritativeBookingSnapshot({
+      smallLabB2bPricePaise: Math.round(smallLabB2bInr * 100),
+      largeLabNegotiatedPricePaise:
+        typeof req.body.largeLabB2bAmountInr === 'number'
+          ? Math.round(req.body.largeLabB2bAmountInr * 100)
+          : undefined,
+      phleboGrossPayoutOverridePaise:
+        typeof req.body.courierFeeInr === 'number'
+          ? Math.round(req.body.courierFeeInr * 100)
+          : undefined,
+      testCode: rawBookingTestItems[0]?.testCode,
+      packageCode: rawBookingTestItems[0]?.packageId,
+      smallLabId: req.body.smallLabId || req.user?.labId || 'LAB-SM-UNASSIGNED',
+    });
+
     const newOrder: PickupOrder = {
       id: orderNumber,
       orderNumber,
@@ -301,6 +327,7 @@ ordersRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res: Respo
       patient,
       specimens: Array.isArray(specimens) ? specimens : [],
       bookingTestItems: rawBookingTestItems,
+      pricingSnapshot,
       processingStatusHistory: initialStatusHistory,
       custodyHistory: [],
       ...(idempotencyKey ? { idempotencyKey } : {}),
@@ -339,6 +366,17 @@ ordersRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res: Respo
     } else {
       VOLATILE_DEV_ORDERS.unshift(newOrder);
     }
+
+    await recordBookingFinancialLedger({
+      orderId: newOrder.id,
+      orderNumber: newOrder.orderNumber,
+      smallLabId: newOrder.smallLabId,
+      largeLabId: newOrder.targetParentLabId || newOrder.targetLabId,
+      phleboId: newOrder.phlebotomistId,
+      testCode: rawBookingTestItems[0]?.testCode,
+      packageCode: rawBookingTestItems[0]?.packageId,
+      snapshot: pricingSnapshot,
+    });
 
     await sendPlatformNotification({
       title: `New Booking ${orderNumber} from ${smallLabName}`,

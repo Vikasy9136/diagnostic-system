@@ -1,5 +1,6 @@
 import { SpecimenItem, SpecimenQualityStatus } from './specimen.js';
 import { CustodyEvent } from './custody.js';
+import type { BookingPricingSnapshot } from './platform.js';
 
 /**
  * Status lifecycle of a diagnostic pickup order
@@ -208,6 +209,7 @@ export interface PickupOrder {
   priority: OrderPriority;
   patient: PatientMetadata;
   specimens: SpecimenItem[];
+  pricingSnapshot?: BookingPricingSnapshot;
   custodyHistory: CustodyEvent[];
   pickupLocation: {
     address: string;

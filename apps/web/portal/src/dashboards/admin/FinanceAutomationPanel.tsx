@@ -14,6 +14,7 @@ import {
   type UserProfile,
 } from '@diagnostic/shared';
 import { type DynamicAlertVariant } from '../../components/DynamicAlertModal';
+import { AdminPlatformPricingPanel } from './AdminPlatformPricingPanel';
 import {
   assignLabSubscriptionApi,
   createExpenseApi,
@@ -48,6 +49,7 @@ type AlertTriggerFn = (opts: {
 
 type FinanceSubTab =
   | 'payouts'
+  | 'pricing'
   | 'plans'
   | 'invoices'
   | 'reconciliation'
@@ -774,6 +776,9 @@ export function FinanceAutomationPanel({
         <button type="button" className={`sub-tab-pill ${subTab === 'reports' ? 'active' : ''}`} onClick={() => setSubTab('reports')}>
           CA-Review Reports &amp; Runs
         </button>
+        <button type="button" className={`sub-tab-pill ${subTab === 'pricing' ? 'active' : ''}`} onClick={() => setSubTab('pricing')}>
+          Platform Pricing &amp; Fee Settings
+        </button>
       </div>
 
       {/* SUB-TAB 0: 30-MIN INSTANT PAYOUTS */}
@@ -1439,6 +1444,22 @@ export function FinanceAutomationPanel({
       )}
 
       {/* SUB-TAB 6: CA-REVIEW REPORTS & AUTOMATION RUNS */}
+      {subTab === 'pricing' && (
+        <AdminPlatformPricingPanel
+          canConfigure={
+            isEffectiveSuperAdmin(currentUser) ||
+            hasPermission(currentUser, 'CONFIGURE_COMMISSIONS_PAYOUTS')
+          }
+          onNotify={(msg, isError) =>
+            onShowAlert({
+              variant: isError ? 'error' : 'success',
+              title: isError ? 'Pricing Update Error' : 'Platform Pricing Updated',
+              message: msg,
+            })
+          }
+        />
+      )}
+
       {subTab === 'reports' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <div className="chart-card-modern">

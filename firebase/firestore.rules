@@ -952,6 +952,22 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /financial_ledger/{ledgerId} {
+      allow read: if isAuthenticated() && isAccountActive() && (
+        isSuperAdmin()
+        || hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'MANAGE_RECONCILIATION', 'VIEW_FINANCIAL_REPORTS'])
+      );
+      allow write: if false;
+    }
+
+    match /pricing_config_history/{historyId} {
+      allow read: if isAuthenticated() && isAccountActive() && (
+        isSuperAdmin()
+        || hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'CONFIGURE_COMMISSIONS_PAYOUTS'])
+      );
+      allow write: if false;
+    }
+
     // =========================================================================
     // DEFAULT DENY
     // =========================================================================

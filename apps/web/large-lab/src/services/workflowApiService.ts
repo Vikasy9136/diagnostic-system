@@ -1,9 +1,13 @@
 import {
+  type BookingPricingSnapshot,
   type CollectionCentreRecord,
   type DiagnosticReportRecord,
   type DiagnosticTestItem,
+  type FinancialLedgerRecord,
   OrderStatus,
   type PickupOrder,
+  type PlatformPricingChangeHistoryEntry,
+  type PlatformPricingConfig,
   type UrgentPriorityLevel,
   type UrgentReportRequestRecord,
   type UrgentRequestStatus,
@@ -302,5 +306,78 @@ export async function submitUrgentClarificationApi(
       body: JSON.stringify({ clarificationResponse }),
     }
   );
+  return res.data;
+}
+
+export async function getPlatformPricingConfigApi(): Promise<PlatformPricingConfig> {
+  const res = await callWorkflowApi<PlatformPricingConfig>('/finance/pricing-config');
+  return res.data;
+}
+
+export async function updatePlatformPricingConfigApi(
+  patch: Partial<PlatformPricingConfig> & { summary?: string }
+): Promise<PlatformPricingConfig> {
+  const res = await callWorkflowApi<PlatformPricingConfig>('/finance/pricing-config', {
+    method: 'PUT',
+    body: JSON.stringify(patch),
+  });
+  return res.data;
+}
+
+export async function getPlatformPricingHistoryApi(): Promise<PlatformPricingChangeHistoryEntry[]> {
+  const res = await callWorkflowApi<PlatformPricingChangeHistoryEntry[]>('/finance/pricing-history');
+  return res.data || [];
+}
+
+export async function calculatePricingPreviewApi(payload: {
+  smallLabB2bPricePaise: number;
+  largeLabNegotiatedPricePaise?: number;
+  phleboGrossPayoutOverridePaise?: number;
+  testCode?: string;
+  packageCode?: string;
+  smallLabId?: string;
+}): Promise<BookingPricingSnapshot> {
+  const res = await callWorkflowApi<BookingPricingSnapshot>('/finance/calculate-preview', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return res.data;
+}
+
+export async function getAdminFinancialLedgerSummaryApi(filters?: {
+  date?: string;
+  testCode?: string;
+  packageCode?: string;
+  largeLabId?: string;
+  smallLabId?: string;
+  phleboId?: string;
+  orderId?: string;
+  pricingVersion?: string;
+}): Promise<{
+  records: FinancialLedgerRecord[];
+  totals: {
+    largeLabPriceDifferenceMarginPaise: number;
+    smallLabIncludedPlatformFeePaise: number;
+    phleboPlatformFeePaise: number;
+    largeLabProcessingCostPaise: number;
+    phleboNetEarningPaise: number;
+    totalGrossPlatformRevenuePaise: number;
+    refundsAndAdjustmentsPaise: number;
+    taxesPaise: number;
+    gatewayExpensesPaise: number;
+    netPlatformRevenuePaise: number;
+  };
+}> {
+  const qs = new URLSearchParams();
+  if (filters?.date) qs.set('date', filters.date);
+  if (filters?.testCode) qs.set('testCode', filters.testCode);
+  if (filters?.packageCode) qs.set('packageCode', filters.packageCode);
+  if (filters?.largeLabId) qs.set('largeLabId', filters.largeLabId);
+  if (filters?.smallLabId) qs.set('smallLabId', filters.smallLabId);
+  if (filters?.phleboId) qs.set('phleboId', filters.phleboId);
+  if (filters?.orderId) qs.set('orderId', filters.orderId);
+  if (filters?.pricingVersion) qs.set('pricingVersion', filters.pricingVersion);
+  const query = qs.toString();
+  const res = await callWorkflowApi<any>(`/finance/ledger-summary${query ? `?${query}` : ''}`);
   return res.data;
 }

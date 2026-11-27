@@ -28,6 +28,13 @@ import {
   requireAnyPermission,
   requirePermissions,
 } from '../middleware/rbac';
+import {
+  calculateAuthoritativeBookingSnapshot,
+  getAdminFinancialLedgerSummary,
+  getPlatformPricingConfig,
+  getPlatformPricingHistory,
+  updatePlatformPricingConfig,
+} from '../services/platformPricing.service';
 import { sendPlatformNotification } from '../services/notification.service';
 import { issueGatewayRefund, releasePayout } from '../services/razorpay.service';
 import { ensureOrganisationBootstrapped } from '../services/user-directory.service';
@@ -1672,6 +1679,103 @@ financeRouter.post(
     try {
       const report = await runCashPlatformFeeAudit();
       return res.json({ success: true, report });
+    } catch (err) {
+      return next(err);
+    }
+  }
+);
+
+// ============================================================================
+// CENTRALIZED PERCENTAGE-BASED PLATFORM PRICING & LEDGER ROUTES
+// ============================================================================
+
+financeRouter.get(
+  '/pricing-config',
+  requireAuth,
+  async (_req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const data = await getPlatformPricingConfig();
+      return res.json({ success: true, data, timestamp: new Date().toISOString() });
+    } catch (err) {
+      return next(err);
+    }
+  }
+);
+
+financeRouter.put(
+  '/pricing-config',
+  requireAnyPermission('CONFIGURE_COMMISSIONS_PAYOUTS', 'VIEW_SUPER_ADMIN_DASHBOARD'),
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const data = await updatePlatformPricingConfig({
+        patch: req.body || {},
+        actorUid: req.user?.uid || '',
+        actorEmail: req.user?.email || 'admin',
+        summary: req.body?.summary ? String(req.body.summary) : undefined,
+      });
+      return res.json({ success: true, data, timestamp: new Date().toISOString() });
+    } catch (err) {
+      return next(err);
+    }
+  }
+);
+
+financeRouter.get(
+  '/pricing-history',
+  requireAnyPermission('VIEW_FINANCE_DASHBOARD', 'CONFIGURE_COMMISSIONS_PAYOUTS'),
+  async (_req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const data = await getPlatformPricingHistory();
+      return res.json({ success: true, data, timestamp: new Date().toISOString() });
+    } catch (err) {
+      return next(err);
+    }
+  }
+);
+
+financeRouter.post(
+  '/calculate-preview',
+  requireAuth,
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const data = await calculateAuthoritativeBookingSnapshot({
+        smallLabB2bPricePaise: Number(req.body?.smallLabB2bPricePaise || 0),
+        largeLabNegotiatedPricePaise:
+          typeof req.body?.largeLabNegotiatedPricePaise === 'number'
+            ? req.body.largeLabNegotiatedPricePaise
+            : undefined,
+        phleboGrossPayoutOverridePaise:
+          typeof req.body?.phleboGrossPayoutOverridePaise === 'number'
+            ? req.body.phleboGrossPayoutOverridePaise
+            : undefined,
+        testCode: req.body?.testCode ? String(req.body.testCode) : undefined,
+        packageCode: req.body?.packageCode ? String(req.body.packageCode) : undefined,
+        smallLabId: req.body?.smallLabId ? String(req.body.smallLabId) : req.user?.labId,
+        discountPaise: typeof req.body?.discountPaise === 'number' ? req.body.discountPaise : 0,
+      });
+      return res.json({ success: true, data, timestamp: new Date().toISOString() });
+    } catch (err) {
+      return next(err);
+    }
+  }
+);
+
+financeRouter.get(
+  '/ledger-summary',
+  requireAnyPermission('VIEW_FINANCE_DASHBOARD', 'VIEW_FINANCIAL_REPORTS', 'MANAGE_RECONCILIATION'),
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const data = await getAdminFinancialLedgerSummary({
+        date: req.query.date ? String(req.query.date) : undefined,
+        testCode: req.query.testCode ? String(req.query.testCode) : undefined,
+        packageCode: req.query.packageCode ? String(req.query.packageCode) : undefined,
+        largeLabId: req.query.largeLabId ? String(req.query.largeLabId) : undefined,
+        smallLabId: req.query.smallLabId ? String(req.query.smallLabId) : undefined,
+        phleboId: req.query.phleboId ? String(req.query.phleboId) : undefined,
+        orderId: req.query.orderId ? String(req.query.orderId) : undefined,
+        pricingVersion: req.query.pricingVersion ? String(req.query.pricingVersion) : undefined,
+      });
+      return res.json({ success: true, data, timestamp: new Date().toISOString() });
     } catch (err) {
       return next(err);
     }
