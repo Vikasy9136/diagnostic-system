@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Image, type ImageSourcePropType, StyleSheet, Text, View, type ViewStyle } from 'react-native';
-import { getBankBrandMeta } from '../src/utils/bankHelpers.js';
+import { getBankBrandMeta } from '@diagnostic/shared';
 
 const NATIVE_BANK_ASSETS: Record<string, ImageSourcePropType> = {
   'sbi.png': require('../assets/banks/sbi.png'),
