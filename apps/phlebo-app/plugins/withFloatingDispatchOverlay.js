@@ -43,6 +43,7 @@ import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.os.CountDownTimer
+import android.view.KeyEvent
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -116,6 +117,57 @@ class FloatingDispatchOverlayService : Service() {
   private val pollerAlertedKeys = HashSet<String>()
   private val pollerChatNotifiedMap = HashMap<String, Int>()
   private var chatTonePlayer: MediaPlayer? = null
+  private val fontCache = HashMap<String, Typeface>()
+
+  private fun brandFont(weight: String = "regular"): Typeface {
+    fontCache[weight]?.let { return it }
+    val fileName = when (weight) {
+      "extraBold" -> "PlusJakartaSans_800ExtraBold.ttf"
+      "bold" -> "PlusJakartaSans_700Bold.ttf"
+      "semiBold" -> "PlusJakartaSans_600SemiBold.ttf"
+      "medium" -> "PlusJakartaSans_500Medium.ttf"
+      else -> "PlusJakartaSans_400Regular.ttf"
+    }
+    return try {
+      val tf = Typeface.createFromAsset(assets, "fonts/\${fileName}")
+      fontCache[weight] = tf
+      tf
+    } catch (_: Exception) {
+      if (weight == "bold" || weight == "extraBold" || weight == "semiBold") Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+    }
+  }
+
+  private fun syncDutyStatusToFirestore(dutyStatus: String) {
+    if (currentPhleboId.isBlank() || currentAuthToken.isBlank() || currentFirebaseProjectId.isBlank()) return
+    Thread {
+      var conn: HttpURLConnection? = null
+      try {
+        val isOnlineBool = dutyStatus == "ONLINE"
+        val url = URL(
+          "https://firestore.googleapis.com/v1/projects/\${currentFirebaseProjectId}/databases/(default)/documents/phlebotomists/\${currentPhleboId}?updateMask.fieldPaths=isOnline&updateMask.fieldPaths=shiftStatus"
+        )
+        conn = (url.openConnection() as HttpURLConnection).apply {
+          requestMethod = "PATCH"
+          doOutput = true
+          connectTimeout = 6000
+          readTimeout = 6000
+          setRequestProperty("Content-Type", "application/json")
+          setRequestProperty("Authorization", "Bearer \${currentAuthToken}")
+        }
+        val body = JSONObject().apply {
+          put("fields", JSONObject().apply {
+            put("isOnline", JSONObject().put("booleanValue", isOnlineBool))
+            put("shiftStatus", JSONObject().put("stringValue", dutyStatus))
+          })
+        }
+        OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
+        conn.responseCode
+      } catch (_: Exception) {
+      } finally {
+        conn?.disconnect()
+      }
+    }.start()
+  }
 
   private var currentIncomingOrderId: String? = null
   private var currentIncomingOrderNumber: String? = null
@@ -474,7 +526,7 @@ class FloatingDispatchOverlayService : Service() {
       text = "⚡ NEW PICKUP REQUEST"
       setTextColor(Color.parseColor("#047857"))
       textSize = 12f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
       setPadding(dp(10), dp(5), dp(10), dp(5))
       background = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
@@ -493,7 +545,7 @@ class FloatingDispatchOverlayService : Service() {
       text = "⏱ \${timeoutSec}s"
       setTextColor(Color.parseColor("#B45309"))
       textSize = 13.5f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
       setPadding(dp(10), dp(5), dp(10), dp(5))
       background = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
@@ -531,7 +583,7 @@ class FloatingDispatchOverlayService : Service() {
         text = "⚡ +₹\${surgeIncentive} SURGE HIKE INCLUDED"
         setTextColor(Color.parseColor("#B45309"))
         textSize = 11.5f
-        typeface = Typeface.DEFAULT_BOLD
+        typeface = brandFont("bold")
       }
       surgeBanner.addView(surgeText)
       root.addView(surgeBanner, surgeLp)
@@ -567,7 +619,7 @@ class FloatingDispatchOverlayService : Service() {
       text = payout
       setTextColor(Color.parseColor("#047857"))
       textSize = 22f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
     }
     priceRow.addView(priceText)
 
@@ -579,7 +631,7 @@ class FloatingDispatchOverlayService : Service() {
       text = orderNum
       setTextColor(Color.parseColor("#64748B"))
       textSize = 12f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
     }
     priceRow.addView(orderTag)
     priceBox.addView(priceRow)
@@ -588,7 +640,7 @@ class FloatingDispatchOverlayService : Service() {
       text = "Guaranteed Courier Earnings • Instant Transfer"
       setTextColor(Color.parseColor("#0D9488"))
       textSize = 11f
-      typeface = Typeface.DEFAULT
+      typeface = brandFont("regular")
     }
     priceBox.addView(payoutSub)
     root.addView(priceBox, priceBoxLp)
@@ -627,7 +679,7 @@ class FloatingDispatchOverlayService : Service() {
       text = pickupLab
       setTextColor(Color.parseColor("#0F172A"))
       textSize = 14.5f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
     }
     pickupTitleRow.addView(pickupDot)
     pickupTitleRow.addView(pickupLabView)
@@ -645,7 +697,7 @@ class FloatingDispatchOverlayService : Service() {
       text = "📍 $distance"
       setTextColor(Color.parseColor("#0369A1"))
       textSize = 11.5f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
       setPadding(dp(8), dp(3), dp(8), dp(3))
       val chipBg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
@@ -692,7 +744,7 @@ class FloatingDispatchOverlayService : Service() {
       text = "Drop: $targetLab"
       setTextColor(Color.parseColor("#0F172A"))
       textSize = 14f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
     }
     dropTitleRow.addView(dropDot)
     dropTitleRow.addView(dropLabView)
@@ -733,7 +785,7 @@ class FloatingDispatchOverlayService : Service() {
       text = "✕ Reject"
       setTextColor(Color.parseColor("#DC2626"))
       textSize = 14.5f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
       gravity = Gravity.CENTER
       val bg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
@@ -758,7 +810,7 @@ class FloatingDispatchOverlayService : Service() {
       text = "⚡ ACCEPT PICKUP"
       setTextColor(Color.WHITE)
       textSize = 15.5f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
       gravity = Gravity.CENTER
       val bg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
@@ -1073,7 +1125,7 @@ class FloatingDispatchOverlayService : Service() {
       text = "✕"
       setTextColor(Color.WHITE)
       textSize = 22f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
       gravity = Gravity.CENTER
     }
     val crossLp = FrameLayout.LayoutParams(
@@ -1311,7 +1363,7 @@ class FloatingDispatchOverlayService : Service() {
       text = if (currentNearbyCount > 9) "9+" else currentNearbyCount.toString()
       setTextColor(Color.WHITE)
       textSize = 10f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
       gravity = Gravity.CENTER
       val badgeBg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
@@ -1523,6 +1575,19 @@ class FloatingDispatchOverlayService : Service() {
   private fun launchAppWithAction(actionType: String, deepLinkUri: String) {
     detachQuickActionMenu()
     try {
+      val viewIntent = Intent(Intent.ACTION_VIEW, Uri.parse(deepLinkUri)).apply {
+        setPackage(packageName)
+        addFlags(
+          Intent.FLAG_ACTIVITY_NEW_TASK or
+            Intent.FLAG_ACTIVITY_SINGLE_TOP or
+            Intent.FLAG_ACTIVITY_CLEAR_TOP
+        )
+        putExtra("ACTION", actionType)
+      }
+      if (viewIntent.resolveActivity(packageManager) != null) {
+        startActivity(viewIntent)
+        return
+      }
       val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         putExtra("ACTION", actionType)
@@ -1613,13 +1678,13 @@ class FloatingDispatchOverlayService : Service() {
       text = "LabSetu Partner Radar"
       setTextColor(Color.WHITE)
       textSize = 14f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
     }
     val headerSubtitle = TextView(this).apply {
       text = if (currentOnline) "● On Duty • Live Radar Active" else "⚪ Off Duty • Standby Mode"
       setTextColor(if (currentOnline) Color.parseColor("#34D399") else Color.parseColor("#94A3B8"))
       textSize = 10.5f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
     }
     headerTitleCol.addView(headerTitle)
     headerTitleCol.addView(headerSubtitle)
@@ -1632,7 +1697,7 @@ class FloatingDispatchOverlayService : Service() {
       text = "✕"
       setTextColor(Color.WHITE)
       textSize = 14f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
       gravity = Gravity.CENTER
       background = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
@@ -1678,16 +1743,20 @@ class FloatingDispatchOverlayService : Service() {
       isFocusable = true
       setOnClickListener {
         currentOnline = true
+        savePollerConfig()
+        startBackgroundPoller()
         refreshBubbleAppearance()
         dutyChangeListener?.invoke("ONLINE")
-        detachQuickActionMenu()
+        syncDutyStatusToFirestore("ONLINE")
         triggerHaptic(30L)
+        detachQuickActionMenu()
+        showQuickActionMenu(anchorX, anchorY, bubbleSizePx)
       }
     }
     val txtOnline = TextView(this).apply {
       text = "🟢 Online"
       textSize = 11f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
       setTextColor(if (currentOnline) Color.parseColor("#15803D") else Color.parseColor("#64748B"))
       gravity = Gravity.CENTER
     }
@@ -1714,16 +1783,20 @@ class FloatingDispatchOverlayService : Service() {
       isFocusable = true
       setOnClickListener {
         currentOnline = false
+        savePollerConfig()
+        stopBackgroundPoller()
         refreshBubbleAppearance()
         dutyChangeListener?.invoke("BREAK")
-        detachQuickActionMenu()
+        syncDutyStatusToFirestore("BREAK")
         triggerHaptic(30L)
+        detachQuickActionMenu()
+        showQuickActionMenu(anchorX, anchorY, bubbleSizePx)
       }
     }
     val txtBreak = TextView(this).apply {
       text = "☕ Break"
       textSize = 11f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
       setTextColor(Color.parseColor("#64748B"))
       gravity = Gravity.CENTER
     }
@@ -1754,16 +1827,20 @@ class FloatingDispatchOverlayService : Service() {
       isFocusable = true
       setOnClickListener {
         currentOnline = false
+        savePollerConfig()
+        stopBackgroundPoller()
         refreshBubbleAppearance()
         dutyChangeListener?.invoke("OFFLINE")
-        detachQuickActionMenu()
+        syncDutyStatusToFirestore("OFFLINE")
         triggerHaptic(30L)
+        detachQuickActionMenu()
+        showQuickActionMenu(anchorX, anchorY, bubbleSizePx)
       }
     }
     val txtOffline = TextView(this).apply {
       text = "🔴 Offline"
       textSize = 11f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
       setTextColor(if (!currentOnline) Color.parseColor("#B91C1C") else Color.parseColor("#64748B"))
       gravity = Gravity.CENTER
     }
@@ -1829,7 +1906,7 @@ class FloatingDispatchOverlayService : Service() {
       text = "Today's Assignments"
       setTextColor(Color.parseColor("#0F766E"))
       textSize = 12.5f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
     }
     val todaySub = TextView(this).apply {
       text = "Active sample pickups & assigned tasks"
@@ -1847,7 +1924,7 @@ class FloatingDispatchOverlayService : Service() {
       text = "Open ➔"
       setTextColor(Color.parseColor("#0D9488"))
       textSize = 10.5f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
       background = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(6).toFloat()
@@ -1911,7 +1988,7 @@ class FloatingDispatchOverlayService : Service() {
       text = "Pending Collections"
       setTextColor(Color.parseColor("#B45309"))
       textSize = 12.5f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
     }
     val radarSub = TextView(this).apply {
       text = if (currentNearbyCount > 0) "$currentNearbyCount pending task\${if (currentNearbyCount > 1) \"s\" else \"\"}" else "1–5 km radar active nearby"
@@ -1929,7 +2006,7 @@ class FloatingDispatchOverlayService : Service() {
       text = if (currentNearbyCount > 0) "$currentNearbyCount Pending" else "Radar ➔"
       setTextColor(if (currentNearbyCount > 0) Color.WHITE else Color.parseColor("#D97706"))
       textSize = 10.5f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
       background = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(6).toFloat()
@@ -1993,7 +2070,7 @@ class FloatingDispatchOverlayService : Service() {
       text = "Collection History"
       setTextColor(Color.parseColor("#1E293B"))
       textSize = 12.5f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
     }
     val historySub = TextView(this).apply {
       text = "Past trips, sample logs & payouts"
@@ -2010,7 +2087,7 @@ class FloatingDispatchOverlayService : Service() {
       text = "View ➔"
       setTextColor(Color.parseColor("#475569"))
       textSize = 10.5f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
       background = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(6).toFloat()
@@ -2074,7 +2151,7 @@ class FloatingDispatchOverlayService : Service() {
       text = "Partner Support"
       setTextColor(Color.parseColor("#1E40AF"))
       textSize = 12.5f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
     }
     val supportSub = TextView(this).apply {
       text = "Direct dispatch helpline & SOP guides"
@@ -2091,7 +2168,7 @@ class FloatingDispatchOverlayService : Service() {
       text = "Help ➔"
       setTextColor(Color.parseColor("#2563EB"))
       textSize = 10.5f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
       background = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(6).toFloat()
@@ -2140,7 +2217,7 @@ class FloatingDispatchOverlayService : Service() {
       text = "🚀 Open LabSetu Partner App"
       setTextColor(Color.WHITE)
       textSize = 13f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
       gravity = Gravity.CENTER
     }
     openAppBtn.addView(openAppText)
@@ -2160,7 +2237,7 @@ class FloatingDispatchOverlayService : Service() {
       text = "📍 GPS Active • System-Level Overlay Ready"
       setTextColor(Color.parseColor("#94A3B8"))
       textSize = 10f
-      typeface = Typeface.DEFAULT_BOLD
+      typeface = brandFont("bold")
       gravity = Gravity.CENTER
       setPadding(0, dp(2), 0, 0)
     }
@@ -2189,6 +2266,17 @@ class FloatingDispatchOverlayService : Service() {
       gravity = Gravity.TOP or Gravity.START
       x = menuX
       y = menuY
+    }
+
+    root.isFocusableInTouchMode = true
+    root.requestFocus()
+    root.setOnKeyListener { _, keyCode, event ->
+      if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
+        detachQuickActionMenu()
+        true
+      } else {
+        false
+      }
     }
 
     root.setOnTouchListener { _, event ->
@@ -3169,6 +3257,29 @@ module.exports = function withFloatingDispatchOverlay(config) {
         buildOverlayPackageKotlin(pkgName),
         'utf8'
       );
+
+      // Copy Plus Jakarta Sans font files to Android assets/fonts/ so native overlays match main app typography
+      const fontsDestDir = path.join(projectRoot, 'app', 'src', 'main', 'assets', 'fonts');
+      fs.mkdirSync(fontsDestDir, { recursive: true });
+      const fontFiles = [
+        ['400Regular', 'PlusJakartaSans_400Regular.ttf'],
+        ['500Medium', 'PlusJakartaSans_500Medium.ttf'],
+        ['600SemiBold', 'PlusJakartaSans_600SemiBold.ttf'],
+        ['700Bold', 'PlusJakartaSans_700Bold.ttf'],
+        ['800ExtraBold', 'PlusJakartaSans_800ExtraBold.ttf'],
+      ];
+      for (const [dir, file] of fontFiles) {
+        try {
+          const resolved = require.resolve(`@expo-google-fonts/plus-jakarta-sans/${dir}/${file}`, {
+            paths: [path.join(__dirname, '..'), path.join(__dirname, '..', '..', '..')],
+          });
+          if (fs.existsSync(resolved)) {
+            fs.copyFileSync(resolved, path.join(fontsDestDir, file));
+          }
+        } catch (err) {
+          console.warn(`[withFloatingDispatchOverlay] Could not copy font ${file}:`, err.message);
+        }
+      }
 
       // Copy custom audio alert ringtones to Android raw resources
       const rawResPath = path.join(projectRoot, 'app', 'src', 'main', 'res', 'raw');

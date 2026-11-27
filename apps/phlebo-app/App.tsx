@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   AppState,
   type AppStateStatus,
   BackHandler,
@@ -1045,57 +1046,83 @@ function PhleboAppContent() {
     }
   };
 
+  const clearingNotificationsRef = useRef(false);
   const handleClearAllNotifications = async () => {
-    try {
-      if (notifications.length === 0) return;
-      const toClear = [...notifications];
-      const clearUid = effectivePhleboId || session?.firebaseUser?.uid || 'phlebo';
+    if (clearingNotificationsRef.current || notifications.length === 0) return;
+    const performClear = async () => {
+      clearingNotificationsRef.current = true;
+      try {
+        const currentUid = session?.firebaseUser?.uid || '';
+        const clearUid = effectivePhleboId || currentUid || 'phlebo';
+        const toClear = notifications.filter(
+          (n) =>
+            !n.recipientUid ||
+            n.recipientUid === currentUid ||
+            n.recipientUid === effectivePhleboId ||
+            n.recipientUid === myPhleboProfile?.id
+        );
+        if (toClear.length === 0) return;
 
-      toClear.forEach((n) => clearedNotifIdsRef.current.add(n.id));
-      setNotifications([]);
+        toClear.forEach((n) => clearedNotifIdsRef.current.add(n.id));
+        setNotifications((prev) => prev.filter((n) => !clearedNotifIdsRef.current.has(n.id)));
 
-      if (effectivePhleboId) {
-        const persisted = Array.from(clearedNotifIdsRef.current).slice(-300);
-        void AsyncStorage.setItem(
-          `@labsetu_cleared_notifs_${effectivePhleboId}`,
-          JSON.stringify(persisted)
-        ).catch(() => { });
-      }
+        if (effectivePhleboId) {
+          const persisted = Array.from(clearedNotifIdsRef.current).slice(-300);
+          await AsyncStorage.setItem(
+            `@labsetu_cleared_notifs_${effectivePhleboId}`,
+            JSON.stringify(persisted)
+          ).catch(() => {});
+        }
 
-      if (Platform.OS !== 'web') {
-        void Notifications.dismissAllNotificationsAsync().catch(() => { });
-      }
+        if (Platform.OS !== 'web') {
+          void Notifications.dismissAllNotificationsAsync().catch(() => {});
+        }
 
-      // Firestore rules restrict delete to admins, so archive/mark cleared via update (permitted for active accounts)
-      const now = new Date().toISOString();
-      for (let i = 0; i < toClear.length; i += 400) {
-        const chunk = toClear.slice(i, i + 400);
-        const batch = writeBatch(db);
-        chunk.forEach((n) => {
-          const isPersonal =
-            Boolean(n.recipientUid) &&
-            (n.recipientUid === session?.firebaseUser?.uid ||
-              n.recipientUid === effectivePhleboId ||
-              n.recipientUid === myPhleboProfile?.id);
-          batch.update(doc(db, 'notifications', n.id), {
-            read: true,
-            readAt: now,
-            clearedByUids: arrayUnion(clearUid),
-            ...(isPersonal ? { archivedByPhlebo: true } : {}),
+        // Archive/mark cleared in Firestore (preserves audit history; never deletes records)
+        const now = new Date().toISOString();
+        for (let i = 0; i < toClear.length; i += 400) {
+          const chunk = toClear.slice(i, i + 400);
+          const batch = writeBatch(db);
+          chunk.forEach((n) => {
+            const isPersonal =
+              Boolean(n.recipientUid) &&
+              (n.recipientUid === currentUid ||
+                n.recipientUid === effectivePhleboId ||
+                n.recipientUid === myPhleboProfile?.id);
+            batch.update(doc(db, 'notifications', n.id), {
+              read: true,
+              readAt: now,
+              clearedByUids: arrayUnion(clearUid),
+              ...(isPersonal ? { archivedByPhlebo: true } : {}),
+            });
           });
-        });
-        await batch.commit().catch((err) => {
-          console.warn('Firestore notification clear batch warning:', err);
-        });
-      }
+          await batch.commit();
+        }
 
-      showToast({
-        variant: 'INFO',
-        title: 'Notifications Cleared',
-        subtitle: 'All notifications have been cleared.',
-      });
-    } catch (err) {
-      console.warn('Failed to clear notifications:', err);
+        showToast({
+          variant: 'INFO',
+          title: 'Notifications Cleared',
+          subtitle: `${toClear.length} notification(s) cleared.`,
+        });
+      } catch (err) {
+        showToast({
+          variant: 'WARNING',
+          title: 'Clear Notifications Failed',
+          subtitle: err instanceof Error ? err.message : 'Unable to sync cleared notifications.',
+        });
+      } finally {
+        clearingNotificationsRef.current = false;
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && !window.confirm('Clear all notifications?')) return;
+      void performClear();
+    } else {
+      Alert.alert('Clear All Notifications', 'Mark all your notifications as cleared?', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Clear All', style: 'destructive', onPress: () => void performClear() },
+      ]);
     }
   };
 

@@ -2559,7 +2559,7 @@ export function PhleboNotificationsModal({
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={{
-                      paddingHorizontal: 9,
+                      paddingHorizontal: 10,
                       paddingVertical: 6,
                       borderRadius: 8,
                       backgroundColor: '#FEE2E2',
@@ -2574,7 +2574,7 @@ export function PhleboNotificationsModal({
                         color: '#DC2626',
                       }}
                     >
-                      🗑️ Clear
+                      Clear All
                     </Text>
                   </TouchableOpacity>
                 </>
