@@ -34,6 +34,7 @@ import {
   fetchPrivateQrPreview,
   uploadPrivateQrImage,
 } from '../services/walletService';
+import { BankLogo } from '@diagnostic/shared/native/BankLogo';
 import { styles } from '../styles/phleboStyles';
 import { BRAND_FONTS } from './LabSetuBrand';
 
@@ -369,18 +370,12 @@ export function BankPaymentDetailsCard() {
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 {summary?.bankAccount && (
-                  <View
-                    style={{
-                      paddingHorizontal: 7,
-                      paddingVertical: 3,
-                      borderRadius: 6,
-                      backgroundColor: getBankBrandMeta(summary.bankAccount.bankCode || summary.bankAccount.ifsc).accentColor,
-                    }}
-                  >
-                    <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#FFFFFF' }}>
-                      {getBankBrandMeta(summary.bankAccount.bankCode || summary.bankAccount.ifsc).shortName}
-                    </Text>
-                  </View>
+                  <BankLogo
+                    bankCode={summary.bankAccount.bankCode}
+                    ifsc={summary.bankAccount.ifsc}
+                    bankName={summary.bankAccount.bankName}
+                    size={28}
+                  />
                 )}
                 <Text style={{ fontSize: 13.5, fontWeight: '700', color: '#0F172A' }}>1. Bank Account</Text>
               </View>
@@ -506,18 +501,12 @@ export function BankPaymentDetailsCard() {
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
                   {selectedBank ? (
-                    <View
-                      style={{
-                        paddingHorizontal: 7,
-                        paddingVertical: 3,
-                        borderRadius: 6,
-                        backgroundColor: selectedBank.accentColor,
-                      }}
-                    >
-                      <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#FFFFFF' }}>
-                        {selectedBank.shortName}
-                      </Text>
-                    </View>
+                    <BankLogo
+                      bankCode={selectedBank.code}
+                      ifsc={selectedBank.ifscPrefix}
+                      bankName={selectedBank.name}
+                      size={28}
+                    />
                   ) : (
                     <MaterialCommunityIcons name="bank-outline" size={18} color="#94A3B8" />
                   )}
@@ -561,18 +550,12 @@ export function BankPaymentDetailsCard() {
 
               {ifscDetails && (
                 <View style={{ padding: 10, borderRadius: 8, backgroundColor: '#F0FDFA', borderWidth: 1, borderColor: '#99F6E4', marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <View
-                    style={{
-                      paddingHorizontal: 8,
-                      paddingVertical: 5,
-                      borderRadius: 6,
-                      backgroundColor: getBankBrandMeta(ifscDetails.bankCode || ifscDetails.ifsc).accentColor,
-                    }}
-                  >
-                    <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#FFFFFF' }}>
-                      {getBankBrandMeta(ifscDetails.bankCode || ifscDetails.ifsc).shortName}
-                    </Text>
-                  </View>
+                  <BankLogo
+                    bankCode={ifscDetails.bankCode}
+                    ifsc={ifscDetails.ifsc}
+                    bankName={ifscDetails.bank}
+                    size={32}
+                  />
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#0F766E' }}>
                       ✓ {ifscDetails.bank} — {ifscDetails.branch}
@@ -705,9 +688,12 @@ export function BankPaymentDetailsCard() {
                       }}
                       style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderColor: '#F1F5F9' }}
                     >
-                      <View style={{ minWidth: 46, height: 32, paddingHorizontal: 6, borderRadius: 8, backgroundColor: b.accentColor, alignItems: 'center', justifyContent: 'center' }}>
-                        <Text style={{ fontSize: 10, fontWeight: '800', color: '#FFFFFF' }}>{b.shortName}</Text>
-                      </View>
+                      <BankLogo
+                        bankCode={b.code}
+                        ifsc={b.ifscPrefix}
+                        bankName={b.name}
+                        size={36}
+                      />
                       <View style={{ flex: 1 }}>
                         <Text style={{ fontSize: 13.5, fontWeight: '700', color: '#0F172A' }}>{b.name}</Text>
                         <Text style={{ fontSize: 11, color: '#64748B' }}>IFSC Prefix: {b.ifscPrefix}</Text>
@@ -729,9 +715,12 @@ export function BankPaymentDetailsCard() {
                   }}
                   style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderColor: '#F1F5F9' }}
                 >
-                  <View style={{ minWidth: 46, height: 32, paddingHorizontal: 6, borderRadius: 8, backgroundColor: b.accentColor, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#FFFFFF' }}>{b.shortName}</Text>
-                  </View>
+                  <BankLogo
+                    bankCode={b.code}
+                    ifsc={b.ifscPrefix}
+                    bankName={b.name}
+                    size={36}
+                  />
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 13.5, fontWeight: '600', color: '#0F172A' }}>{b.name}</Text>
                     <Text style={{ fontSize: 11, color: '#64748B' }}>IFSC Prefix: {b.ifscPrefix}</Text>

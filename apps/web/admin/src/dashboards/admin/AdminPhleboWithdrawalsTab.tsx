@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   formatInr,
-  getBankBrandMeta,
   type ManualPaymentMethod,
   type ManualSettlementRecord,
   type PhleboPaymentMethodSummary,
@@ -10,6 +9,7 @@ import {
   type WithdrawalConfig,
   type WithdrawalRequest,
 } from '@diagnostic/shared';
+import { BankLogo } from '@diagnostic/shared/web/BankLogo';
 import { API_BASE_URL, auth } from '../../firebase';
 
 async function callWalletAdminApi<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -439,18 +439,12 @@ export function AdminPhleboWithdrawalsTab() {
                     <div>Preferred Method: <strong>{detailData.payoutProfile.defaultMethod}</strong></div>
                     {detailData.payoutProfile.bankAccount && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        <span
-                          style={{
-                            padding: '2px 7px',
-                            borderRadius: '6px',
-                            background: getBankBrandMeta(detailData.payoutProfile.bankAccount.bankCode || detailData.payoutProfile.bankAccount.ifsc).accentColor,
-                            color: '#FFFFFF',
-                            fontWeight: 800,
-                            fontSize: '0.7rem',
-                          }}
-                        >
-                          {getBankBrandMeta(detailData.payoutProfile.bankAccount.bankCode || detailData.payoutProfile.bankAccount.ifsc).shortName}
-                        </span>
+                        <BankLogo
+                          bankCode={detailData.payoutProfile.bankAccount.bankCode}
+                          ifsc={detailData.payoutProfile.bankAccount.ifsc}
+                          bankName={detailData.payoutProfile.bankAccount.bankName}
+                          size={32}
+                        />
                         <span>
                           {detailData.payoutProfile.bankAccount.bankName} ({detailData.payoutProfile.bankAccount.branchName}) •{' '}
                           <strong>{detailData.sensitiveDetails?.accountNumber || detailData.payoutProfile.bankAccount.maskedAccountNumber}</strong> •{' '}

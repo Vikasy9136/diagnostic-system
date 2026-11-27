@@ -13,8 +13,11 @@
       "require": "./dist/index.js"
     },
     "./web/LabSetuLogo": "./web/LabSetuLogo.tsx",
+    "./web/BankLogo": "./web/BankLogo.tsx",
     "./web/useSeasonalFavicon": "./web/useSeasonalFavicon.ts",
-    "./assets/brand/*": "./assets/brand/*"
+    "./native/BankLogo": "./native/BankLogo.tsx",
+    "./assets/brand/*": "./assets/brand/*",
+    "./assets/banks/*": "./assets/banks/*"
   },
   "scripts": {
     "build": "tsc",

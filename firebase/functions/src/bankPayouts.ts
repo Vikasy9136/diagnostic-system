@@ -31,6 +31,7 @@ const BANKS = [
   { code: 'KARB', name: 'Karnataka Bank', shortName: 'KARNATAKA', ifscPrefix: 'KARB', popular: false, accentColor: '#7C2D12', upiSupported: true, impsSupported: true, neftSupported: true },
   { code: 'KVBL', name: 'Karur Vysya Bank', shortName: 'KVB', ifscPrefix: 'KVBL', popular: false, accentColor: '#15803D', upiSupported: true, impsSupported: true, neftSupported: true },
   { code: 'CIUB', name: 'City Union Bank', shortName: 'CUB', ifscPrefix: 'CIUB', popular: false, accentColor: '#047857', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'PSIB', name: 'Punjab & Sind Bank', shortName: 'PSB', ifscPrefix: 'PSIB', popular: false, accentColor: '#15803D', upiSupported: true, impsSupported: true, neftSupported: true },
   { code: 'DBSS', name: 'DBS Bank India', shortName: 'DBS', ifscPrefix: 'DBSS', popular: false, accentColor: '#DC2626', upiSupported: true, impsSupported: true, neftSupported: true },
   { code: 'SCBL', name: 'Standard Chartered Bank', shortName: 'SCB', ifscPrefix: 'SCBL', popular: false, accentColor: '#0F766E', upiSupported: true, impsSupported: true, neftSupported: true },
   { code: 'HSBC', name: 'HSBC Bank India', shortName: 'HSBC', ifscPrefix: 'HSBC', popular: false, accentColor: '#DC2626', upiSupported: true, impsSupported: true, neftSupported: true },
@@ -82,10 +83,27 @@ async function lookupIfscLive(rawIfsc: string) {
     throw new AppError('IFSC lookup service temporarily unavailable. Please retry.', 503, 'IFSC_LOOKUP_UNAVAILABLE');
   }
   const d = (await res.json()) as Record<string, unknown>;
+  const bankCode = String(d.BANKCODE || ifsc.slice(0, 4)).toUpperCase();
+  const bankName = String(d.BANK || '');
+  const knownBank = BANKS.some((b) => b.code === bankCode || b.ifscPrefix === bankCode);
+  if (!knownBank && bankCode) {
+    const nowIso = new Date().toISOString();
+    void db.collection('bank_logo_review_queue').doc(bankCode).set(
+      {
+        bankCode,
+        bankName: bankName || bankCode,
+        ifscSample: String(d.IFSC || ifsc),
+        status: 'NEEDS_ADMIN_REVIEW',
+        lastSeenAt: nowIso,
+        lookupCount: admin.firestore.FieldValue.increment(1),
+      },
+      { merge: true }
+    ).catch(() => undefined);
+  }
   return {
     ifsc: String(d.IFSC || ifsc),
-    bank: String(d.BANK || ''),
-    bankCode: String(d.BANKCODE || ifsc.slice(0, 4)),
+    bank: bankName,
+    bankCode,
     branch: String(d.BRANCH || ''),
     address: String(d.ADDRESS || ''),
     city: String(d.CITY || ''),
@@ -318,6 +336,13 @@ export function createPhleboPayoutsCloudRouter(): Router {
       await db.collection('beneficiary_payout_profiles').doc(profileDocId('PHLEBOTOMIST', id)).set({ defaultMethod: method, updatedAt: new Date().toISOString() }, { merge: true });
       const data = await getBeneficiarySummary('PHLEBOTOMIST', id);
       res.json({ success: true, data, timestamp: new Date().toISOString() });
+    } catch (e) { next(e); }
+  });
+
+  r.get('/admin/finance/missing-bank-logos', requireAuth, requireRoles(UserRole.ADMIN), async (_req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const snap = await db.collection('bank_logo_review_queue').orderBy('lastSeenAt', 'desc').limit(100).get();
+      res.json({ success: true, data: snap.docs.map((d) => ({ id: d.id, ...d.data() })) });
     } catch (e) { next(e); }
   });
 
@@ -766,6 +791,13 @@ export function createLargeLabAndWalletCloudRouter(): Router {
         paymentMethod: req.body?.paymentMethod,
       });
       res.status(201).json({ success: true, data: result, message: result.message });
+    } catch (e) { next(e); }
+  });
+
+  r.get('/admin/finance/missing-bank-logos', requireAuth, requireRoles(UserRole.ADMIN), async (_req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const snap = await db.collection('bank_logo_review_queue').orderBy('lastSeenAt', 'desc').limit(100).get();
+      res.json({ success: true, data: snap.docs.map((d) => ({ id: d.id, ...d.data() })) });
     } catch (e) { next(e); }
   });
 

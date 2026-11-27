@@ -4,6 +4,7 @@ import {
   type PayoutErrorLogRecord,
   type PayoutLedgerRecord,
 } from '@diagnostic/shared';
+import { BankLogo } from '@diagnostic/shared/web/BankLogo';
 import { API_BASE_URL, auth } from '../../firebase';
 
 interface PhleboPayoutOverviewData {
@@ -236,8 +237,13 @@ export function AdminPhleboPayoutsPanel() {
             <strong>🔓 Audited Sensitive Reveal ({revealedInfo.phleboId}) — Auto-hides in 30s</strong>
             <button type="button" onClick={() => setRevealedInfo(null)} style={{ cursor: 'pointer', border: 'none', background: 'transparent', fontWeight: 700 }}>✕ Close</button>
           </div>
-          <div style={{ marginTop: '6px', fontSize: '0.88rem' }}>
-            {revealedInfo.accountNumber && <div>Account Number: <strong>{revealedInfo.accountNumber}</strong> | IFSC: <strong>{revealedInfo.ifsc}</strong> ({revealedInfo.bankName})</div>}
+          <div style={{ marginTop: '6px', fontSize: '0.88rem', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {revealedInfo.accountNumber && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <BankLogo ifsc={revealedInfo.ifsc} bankName={revealedInfo.bankName} size={28} />
+                <span>Account Number: <strong>{revealedInfo.accountNumber}</strong> | IFSC: <strong>{revealedInfo.ifsc}</strong> ({revealedInfo.bankName})</span>
+              </div>
+            )}
             {revealedInfo.upiId && <div>UPI ID: <strong>{revealedInfo.upiId}</strong></div>}
           </div>
         </div>

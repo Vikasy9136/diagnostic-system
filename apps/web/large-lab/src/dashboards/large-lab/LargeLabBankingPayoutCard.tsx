@@ -1,73 +1,29 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   filterSupportedBanks,
-  getBankBrandMeta,
   type BankDirectoryEntry,
   type IfscLookupResult,
   type PhleboPaymentMethodSummary,
 } from '@diagnostic/shared';
+import { BankLogo } from '@diagnostic/shared/web/BankLogo';
 import { API_BASE_URL, auth } from '../../firebase';
-
-// Bundle all centralized SVG bank logos from packages/shared/assets/banks/*/logo.svg
-const BANK_LOGO_MODULES = import.meta.glob(
-  '../../../../../packages/shared/assets/banks/*/logo.svg',
-  { eager: true, import: 'default' }
-) as Record<string, string>;
-
-function resolveBankLogoSrc(logoFolder?: string): string | null {
-  if (!logoFolder) return null;
-  const suffix = `/banks/${logoFolder}/logo.svg`;
-  for (const [path, url] of Object.entries(BANK_LOGO_MODULES)) {
-    if (path.endsWith(suffix)) return url;
-  }
-  return null;
-}
 
 function BankLogoIcon({
   codeOrIfscOrName,
-  size = 32,
+  size = 36,
 }: {
   codeOrIfscOrName?: string;
   size?: number;
 }) {
-  const meta = getBankBrandMeta(codeOrIfscOrName);
-  const logoSrc = resolveBankLogoSrc(meta.logoFolder);
-  if (logoSrc) {
-    return (
-      <img
-        src={logoSrc}
-        alt={meta.shortName}
-        style={{
-          width: `${size}px`,
-          height: `${size}px`,
-          borderRadius: '8px',
-          objectFit: 'contain',
-          background: '#FFFFFF',
-          border: '1px solid #E2E8F0',
-          padding: '2px',
-          flexShrink: 0,
-        }}
-      />
-    );
-  }
+  const raw = (codeOrIfscOrName || '').trim();
+  const isCodeOrIfsc = /^[A-Z]{4}/i.test(raw);
   return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: `${size}px`,
-        height: `${size}px`,
-        borderRadius: '8px',
-        background: meta.accentColor,
-        color: '#FFFFFF',
-        fontSize: '0.68rem',
-        fontWeight: 800,
-        flexShrink: 0,
-      }}
-    >
-      {meta.shortName}
-    </span>
+    <BankLogo
+      bankCode={isCodeOrIfsc ? raw.slice(0, 4).toUpperCase() : undefined}
+      ifsc={/^[A-Z]{4}0/i.test(raw) ? raw.toUpperCase() : undefined}
+      bankName={raw || undefined}
+      size={size}
+    />
   );
 }
 
