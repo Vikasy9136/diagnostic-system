@@ -98,6 +98,7 @@ export function createApp(): Application {
   app.use('/api/v1/inventory', inventoryRouter);
   app.use('/api/v1/phlebo-payouts', phleboPayoutsRouter);
   app.use('/api/v1/wallet', walletRouter);
+  app.use('/api/v1', walletRouter);
   app.use('/api', walletRouter);
   app.use('/api/v1/branding', brandingRouter);
   app.use('/api/v1/workflow', labWorkflowRouter);

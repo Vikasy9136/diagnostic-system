@@ -41,10 +41,10 @@ export function LargeLabSettlementsTab({
           <div>
             <h2 className="card-top-title">Receivables &amp; Lab Payouts ({settlements.length})</h2>
             <p style={{ fontSize: '0.8rem', color: '#64748B' }}>
-              Track customer payment confirmations, 30-min instant payout timers, and payouts sent to your Reference Hub
+              Track customer payment confirmations and payouts processed by Admin in 3–7 business days
             </p>
           </div>
-          <span className="sla-countdown-chip on-time">⚡ {windowMins}-Min Auto-Payout SLA</span>
+          <span className="sla-countdown-chip on-time">🗓️ Admin Payout: 3–7 Business Days</span>
         </div>
 
         <div className="kpi-row" style={{ marginBottom: '20px' }}>
@@ -83,7 +83,7 @@ export function LargeLabSettlementsTab({
                   <th>Source Lab</th>
                   <th>Customer Payment</th>
                   <th>Lab Share</th>
-                  <th>30-Min Payout SLA</th>
+                  <th>Payout Timeline</th>
                   <th>Payout Status</th>
                   <th>Reference</th>
                 </tr>

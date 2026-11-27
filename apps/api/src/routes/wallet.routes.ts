@@ -428,6 +428,20 @@ walletRouter.get(
 );
 
 walletRouter.get(
+  '/large-lab/wallet/transactions',
+  requireAuth,
+  requireRoles(UserRole.LARGE_LAB),
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const data = await listWalletTransactions(getLargeLabId(req));
+      res.json({ success: true, data, timestamp: new Date().toISOString() });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+walletRouter.get(
   '/large-lab/wallet/withdrawals',
   requireAuth,
   requireRoles(UserRole.LARGE_LAB),

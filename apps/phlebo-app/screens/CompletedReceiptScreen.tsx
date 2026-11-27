@@ -94,11 +94,10 @@ export function CompletedReceiptScreen({
 
         <View style={[styles.slaBannerCard, { marginTop: 16 }]}>
           <Text style={styles.slaBannerTitle}>
-            {windowMins}-Minute Instant Payout Guarantee
+            Payout Queued (3–7 Business Days)
           </Text>
           <Text style={styles.slaBannerSub}>
-            Zero monthly subscriptions. Your payout is automatically queued for release within{' '}
-            {windowMins} minutes of verified completion to your saved UPI/bank account.
+            Your earnings have been added to your wallet. Admin will process the payout to your saved Bank Account or UPI ID within 3–7 business days.
           </Text>
         </View>
 

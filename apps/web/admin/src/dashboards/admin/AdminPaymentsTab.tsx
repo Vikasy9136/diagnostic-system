@@ -76,14 +76,14 @@ export function AdminPaymentsTab({
       <div className="chart-card-modern">
         <div className="card-top-header" style={{ flexWrap: 'wrap', gap: '10px' }}>
           <div>
-            <h2 className="card-top-title">Payments &amp; 30-Min Instant Partner Payouts ({settlements.length})</h2>
+            <h2 className="card-top-title">Payments &amp; Partner Payouts ({settlements.length})</h2>
             <p style={{ fontSize: '0.8rem', color: '#64748B' }}>
-              Reconcile online customer collections and release 30-minute instant payouts to Reference Labs &amp; Field Phlebotomists
+              Review online customer collections and process payouts to Reference Labs &amp; Field Phlebotomists (3–7 business days)
             </p>
           </div>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
             <span className="sla-countdown-chip on-time">
-              ⚡ {commConfig.instantPayoutWindowMinutes ?? 30}-Min Auto-Payout SLA Active
+              🗓️ Admin Payout: 3–7 Business Days
             </span>
             <button
               type="button"
@@ -91,7 +91,7 @@ export function AdminPaymentsTab({
               disabled={runningInstantBatch}
               onClick={onRunInstantPayoutBatch}
             >
-              {runningInstantBatch ? 'Processing 30m Payouts...' : '⚡ Run 30-Min Auto-Payout Batch'}
+              {runningInstantBatch ? 'Processing Payouts...' : 'Process Pending Payouts'}
             </button>
           </div>
         </div>
@@ -141,7 +141,7 @@ export function AdminPaymentsTab({
                   <th>Platform Fee</th>
                   <th>Reference Lab Split</th>
                   <th>Phlebotomist Split</th>
-                  <th>30-Min Payout SLA</th>
+                  <th>Payout Timeline</th>
                   <th>Actions</th>
                 </tr>
               </thead>

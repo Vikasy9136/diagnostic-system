@@ -189,8 +189,8 @@ export function NotificationsPreferencesScreen({
               onChange: setDispatchAlerts,
             },
             {
-              label: 'Instant Payout & Settlement Alerts',
-              sub: 'Notify when 30-min payout or wallet credit completes',
+              label: 'Payout & Settlement Alerts',
+              sub: 'Notify when Admin processes your payout or wallet credit',
               value: payoutAlerts,
               onChange: setPayoutAlerts,
             },

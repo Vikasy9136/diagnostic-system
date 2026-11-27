@@ -17,7 +17,7 @@ export interface SmallLabPaymentsTabProps {
 }
 
 export function SmallLabPaymentsTab({
-  commConfig,
+  commConfig: _commConfig,
   metrics,
   settlements,
   payingSettlementId,
@@ -30,11 +30,10 @@ export function SmallLabPaymentsTab({
       <div className="privacy-shield-banner" style={{ marginBottom: '16px' }}>
         <div>
           <strong>
-            ⚡ Pay-Per-Order Checkout • {commConfig.instantPayoutWindowMinutes ?? 30}-Min Instant Partner Settlement
+            💳 Pay-Per-Order Checkout • Standard Partner Settlement (3–7 Business Days)
           </strong>
           <div style={{ fontSize: '0.8rem', marginTop: '2px' }}>
-            Pay per booking online via UPI / Card / NetBanking with zero fixed subscription charges. Completed orders
-            trigger partner &amp; courier payouts within 30 minutes.
+            Pay per booking online via UPI, Card, or NetBanking with no monthly subscription fees. Admin processes partner and courier payouts within 3–7 business days.
           </div>
         </div>
       </div>

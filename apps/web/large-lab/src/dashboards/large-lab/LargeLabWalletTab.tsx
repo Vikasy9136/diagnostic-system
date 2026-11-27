@@ -118,7 +118,7 @@ export function LargeLabWalletTab({ onOpenSettings }: LargeLabWalletTabProps) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', minWidth: 0, boxSizing: 'border-box' }}>
       {/* Header Banner */}
       <div
         className="card"
@@ -133,12 +133,12 @@ export function LargeLabWalletTab({ onOpenSettings }: LargeLabWalletTabProps) {
           gap: '16px',
         }}
       >
-        <div>
+        <div style={{ minWidth: 0, flex: '1 1 280px' }}>
           <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800 }}>
-            Large Lab Automatic Payout Wallet
+            Large Lab Wallet &amp; Payouts
           </h2>
           <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: '#CBD5E1' }}>
-            Wallet balance is automatically credited from verified B2B diagnostic bookings &amp; settlements. No manual balance entry required.
+            Your earnings are added automatically after completed bookings. Admin processes payouts in 3–7 business days.
           </p>
         </div>
         <button
@@ -171,61 +171,63 @@ export function LargeLabWalletTab({ onOpenSettings }: LargeLabWalletTabProps) {
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(175px, 1fr))',
           gap: '14px',
+          width: '100%',
+          minWidth: 0,
         }}
       >
-        <div className="card" style={{ padding: '16px', borderLeft: '4px solid #0D9488' }}>
+        <div className="card" style={{ padding: '16px', borderLeft: '4px solid #0D9488', minWidth: 0 }}>
           <div style={{ fontSize: '0.78rem', color: '#64748B', fontWeight: 700 }}>
             AVAILABLE BALANCE
           </div>
-          <div style={{ fontSize: '1.55rem', fontWeight: 800, color: '#0F766E', marginTop: '4px' }}>
+          <div style={{ fontSize: '1.45rem', fontWeight: 800, color: '#0F766E', marginTop: '4px' }}>
             {formatInr(availInr)}
           </div>
           <div style={{ fontSize: '0.75rem', color: '#64748B', marginTop: '4px' }}>
-            Min withdrawal: {formatInr(minInr)}
+            Minimum withdrawal: {formatInr(minInr)}
           </div>
         </div>
 
-        <div className="card" style={{ padding: '16px', borderLeft: '4px solid #D97706' }}>
+        <div className="card" style={{ padding: '16px', borderLeft: '4px solid #D97706', minWidth: 0 }}>
           <div style={{ fontSize: '0.78rem', color: '#64748B', fontWeight: 700 }}>
-            PENDING SETTLEMENT
+            PENDING PAYOUT
           </div>
-          <div style={{ fontSize: '1.55rem', fontWeight: 800, color: '#B45309', marginTop: '4px' }}>
+          <div style={{ fontSize: '1.45rem', fontWeight: 800, color: '#B45309', marginTop: '4px' }}>
             {formatInr(pendingInr)}
           </div>
           <div style={{ fontSize: '0.75rem', color: '#64748B', marginTop: '4px' }}>
-            Queued for Admin / RazorpayX payout
+            Admin processes payouts in 3–7 business days
           </div>
         </div>
 
-        <div className="card" style={{ padding: '16px', borderLeft: '4px solid #16A34A' }}>
+        <div className="card" style={{ padding: '16px', borderLeft: '4px solid #16A34A', minWidth: 0 }}>
           <div style={{ fontSize: '0.78rem', color: '#64748B', fontWeight: 700 }}>
-            TOTAL SETTLED
+            TOTAL PAID
           </div>
-          <div style={{ fontSize: '1.55rem', fontWeight: 800, color: '#15803D', marginTop: '4px' }}>
+          <div style={{ fontSize: '1.45rem', fontWeight: 800, color: '#15803D', marginTop: '4px' }}>
             {formatInr(settledInr)}
           </div>
           <div style={{ fontSize: '0.75rem', color: '#64748B', marginTop: '4px' }}>
-            Disbursed to linked Bank / UPI
+            Sent to your Bank or UPI account
           </div>
         </div>
 
-        <div className="card" style={{ padding: '16px', borderLeft: '4px solid #1E3A8A' }}>
+        <div className="card" style={{ padding: '16px', borderLeft: '4px solid #1E3A8A', minWidth: 0 }}>
           <div style={{ fontSize: '0.78rem', color: '#64748B', fontWeight: 700 }}>
-            TOTAL AUTO-EARNED
+            TOTAL EARNED
           </div>
-          <div style={{ fontSize: '1.55rem', fontWeight: 800, color: '#0F172A', marginTop: '4px' }}>
+          <div style={{ fontSize: '1.45rem', fontWeight: 800, color: '#0F172A', marginTop: '4px' }}>
             {formatInr(totalEarnedInr)}
           </div>
           <div style={{ fontSize: '0.75rem', color: '#64748B', marginTop: '4px' }}>
-            Auto-synced from completed tests
+            Added automatically from bookings
           </div>
         </div>
       </div>
 
       {/* Linked Payout Method & Withdrawal Request */}
-      <div className="card" style={{ padding: '20px' }}>
+      <div className="card" style={{ padding: '20px', minWidth: 0 }}>
         <div
           style={{
             display: 'flex',
@@ -236,16 +238,16 @@ export function LargeLabWalletTab({ onOpenSettings }: LargeLabWalletTabProps) {
             marginBottom: '14px',
           }}
         >
-          <div>
+          <div style={{ minWidth: 0, flex: '1 1 240px' }}>
             <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 800 }}>
-              Withdraw Auto-Credited Balance
+              Withdraw Balance
             </h3>
             <p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: '#64748B' }}>
-              Payouts settle to your verified Bank Account or UPI ID configured in Facility Settings.
+              Payouts are sent to your Bank Account or UPI ID saved in Banking &amp; Payouts within 3–7 business days.
             </p>
           </div>
           <button type="button" className="btn-secondary" onClick={onOpenSettings}>
-            ⚙️ Manage Bank &amp; UPI Settings
+            🏦 Manage Bank &amp; UPI Settings
           </button>
         </div>
 

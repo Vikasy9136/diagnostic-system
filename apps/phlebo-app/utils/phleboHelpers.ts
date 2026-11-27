@@ -258,62 +258,33 @@ export function stopContinuousPickupAlert(): void {
 
 export function getPhleboPayoutSlaBadge(
   row: Pick<EarningRow, 'order' | 'stl' | 'settled' | 'delivered' | 'customerPaid'>,
-  instantPayoutWindowMinutes: number,
-  nowTick: number
+  _instantPayoutWindowMinutes: number,
+  _nowTick: number
 ): { label: string; bg: string; color: string } {
-  const windowMins = Math.max(5, instantPayoutWindowMinutes || 30);
   if (row.settled) {
     return {
-      label: '✓ Instant Payout Settled',
+      label: '✓ Payout Paid',
       bg: '#DCFCE7',
       color: '#15803D',
     };
   }
   if (!row.delivered) {
     return {
-      label: `⏳ Eligible for ${windowMins}-min Instant Payout on drop`,
+      label: '⏳ Eligible for payout after sample drop (3–7 business days)',
       bg: '#F1F5F9',
       color: '#475569',
     };
   }
   if (!row.customerPaid) {
     return {
-      label: `💳 Collect online payment to trigger ${windowMins}-min payout`,
+      label: '💳 Collect online payment to queue payout',
       bg: '#FFEDD5',
       color: '#C2410C',
     };
   }
-  const baseIso =
-    row.stl?.completedAt ||
-    row.order.completedAt ||
-    row.order.actualDeliveredAt ||
-    row.order.updatedAt ||
-    row.order.createdAt;
-  const dueMs = row.stl?.payoutDueAt
-    ? new Date(row.stl.payoutDueAt).getTime()
-    : row.order.payoutDueAt
-    ? new Date(row.order.payoutDueAt).getTime()
-    : new Date(baseIso).getTime() + windowMins * 60000;
-  if (!Number.isFinite(dueMs)) {
-    return {
-      label: `⚡ ${windowMins}-Min Instant Payout Queued`,
-      bg: '#FEF3C7',
-      color: '#B45309',
-    };
-  }
-  const remSeconds = Math.max(0, Math.floor((dueMs - nowTick) / 1000));
-  if (remSeconds > 0) {
-    const mins = Math.floor(remSeconds / 60);
-    const secs = remSeconds % 60;
-    return {
-      label: `⚡ Payout Due in ${mins}m ${String(secs).padStart(2, '0')}s`,
-      bg: '#FEF3C7',
-      color: '#B45309',
-    };
-  }
   return {
-    label: `⚡ ${windowMins}-MIN PAYOUT DUE NOW`,
-    bg: '#DCFCE7',
-    color: '#15803D',
+    label: '⏳ Queued for Admin Payout (3–7 Business Days)',
+    bg: '#FEF3C7',
+    color: '#B45309',
   };
 }

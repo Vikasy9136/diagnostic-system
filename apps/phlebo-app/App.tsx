@@ -3824,8 +3824,7 @@ function PhleboAppContent() {
       showToast({
         variant: 'SUCCESS',
         title: `⚡ Delivered • ${order.orderNumber}`,
-        subtitle: `${formatInr(order.courierFeeInr || 0)} queued under ${commissionConfig.instantPayoutWindowMinutes || 30
-          }-min instant payout SLA.`,
+        subtitle: `${formatInr(order.courierFeeInr || 0)} added to wallet. Admin processes payouts in 3–7 business days.`,
       });
     } catch (err) {
       showDynamicAlert({

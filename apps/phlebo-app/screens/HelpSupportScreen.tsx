@@ -57,9 +57,9 @@ const FAQ_LIST: FaqItem[] = [
   {
     id: 'faq-4',
     category: 'Payouts',
-    question: 'When will my 30-minute instant courier payout be released?',
+    question: 'When will my payout be released?',
     answer:
-      'As soon as you enter the 5-digit Handover OTP at the Reference Lab desk and the lab accepts the batch, the 30-minute instant payout countdown activates. Funds are dispatched directly to your registered UPI ID or Bank account.',
+      'Once you complete the sample handover at the Reference Lab using the Handover OTP, your earnings are added to your wallet. Admin processes payouts to your saved Bank Account or UPI ID within 3–7 business days.',
   },
   {
     id: 'faq-5',

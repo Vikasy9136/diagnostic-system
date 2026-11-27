@@ -14,7 +14,6 @@ export interface BankingPayoutScreenProps {
 }
 
 export function BankingPayoutScreen({
-  instantPayoutWindowMinutes = 30,
   onBack,
 }: BankingPayoutScreenProps) {
   return (
@@ -53,7 +52,7 @@ export function BankingPayoutScreen({
               lineHeight: 17,
             }}
           >
-            All bank details, UPI IDs, and private QR codes are AES-256-GCM encrypted. Handover payouts release within {instantPayoutWindowMinutes} minutes to your preferred method.
+            Your bank details, UPI ID, and QR code are stored securely. Admin processes payouts to your preferred method within 3–7 business days.
           </Text>
         </View>
 
