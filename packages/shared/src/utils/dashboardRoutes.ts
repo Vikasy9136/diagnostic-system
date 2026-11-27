@@ -370,6 +370,13 @@ export const LARGE_LAB_ROUTES: Record<LargeLabTab, DashboardRouteMeta<LargeLabTa
     title: 'LabSetu | Automatic Payout Wallet',
     navLabel: 'Wallet & Payouts',
   },
+  banking: {
+    tab: 'banking',
+    path: '/dashboard/banking',
+    aliases: ['/banking', '/dashboard/payout-settings'],
+    title: 'LabSetu | Banking & Payout Settings',
+    navLabel: 'Banking & Payouts',
+  },
   analytics: {
     tab: 'analytics',
     path: '/dashboard/analytics',

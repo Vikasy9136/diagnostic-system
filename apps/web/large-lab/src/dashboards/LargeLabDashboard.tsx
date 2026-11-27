@@ -66,6 +66,7 @@ import {
 import {
   LargeLabAddBranchModal,
   LargeLabAnalyticsTab,
+  LargeLabBankingTab,
   LargeLabCentresTab,
   LargeLabIncomingTab,
   type LargeLabMetrics,
@@ -102,12 +103,12 @@ export function LargeLabDashboard({
   onSignOut,
   onShowAlert,
 }: LargeLabDashboardProps) {
-    const { activeTab, setActiveTab, getPathForTab } = useDashboardPageRouter<LargeLabTab>({
+  const { activeTab, setActiveTab, getPathForTab } = useDashboardPageRouter<LargeLabTab>({
     resolveTabFromPath: resolveLargeLabTab,
     resolvePathForTab: getLargeLabPath,
     resolveTitleForTab: getLargeLabTitle,
     defaultTab: 'dashboard',
-    
+
   });
   const [searchQuery, setSearchQuery] = useState('');
   const [deptFilter, setDeptFilter] = useState<string>('ALL');
@@ -699,6 +700,7 @@ export function LargeLabDashboard({
     { id: 'centres', icon: '📍', label: 'Collection Centres', path: getPathForTab('centres') },
     { id: 'settlements', icon: '💳', label: 'Settlements', path: getPathForTab('settlements') },
     { id: 'wallet', icon: '💰', label: 'Wallet & Payouts', path: getPathForTab('wallet') },
+    { id: 'banking', icon: '🏦', label: 'Banking & Payouts', path: getPathForTab('banking') },
     { id: 'analytics', icon: '📈', label: 'TAT & Analytics', path: getPathForTab('analytics') },
     { id: 'settings', icon: '⚙️', label: 'Facility Settings', path: getPathForTab('settings') },
   ];
@@ -856,7 +858,11 @@ export function LargeLabDashboard({
         )}
 
         {activeTab === 'wallet' && (
-          <LargeLabWalletTab onOpenSettings={() => setActiveTab('settings')} />
+          <LargeLabWalletTab onOpenSettings={() => setActiveTab('banking')} />
+        )}
+
+        {activeTab === 'banking' && (
+          <LargeLabBankingTab onOpenWallet={() => setActiveTab('wallet')} />
         )}
 
         {activeTab === 'analytics' && (
