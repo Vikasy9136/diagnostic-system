@@ -35,6 +35,7 @@
         "backgroundColor": "#0F766E"
       },
       "package": "com.diagnostic.phleboapp",
+      "googleServicesFile": "./google-services.json",
       "versionCode": 2,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
@@ -78,7 +79,8 @@
         }
       ],
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      "@react-native-google-signin/google-signin"
     ],
     "web": {
       "bundler": "metro",

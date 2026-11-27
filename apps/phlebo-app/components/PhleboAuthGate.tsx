@@ -46,6 +46,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { type DynamicAlertVariant } from './DynamicAlertModal';
+import { signInWithNativeGoogle, signOutNativeGoogle } from '../services/nativeGoogleAuth';
 import {
   BRAND_COLORS,
   BRAND_FONTS,
@@ -317,6 +318,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
 
   async function rejectRoleMismatch(email: string, assignedRole: UserRole): Promise<void> {
     mismatchTriggeredRef.current = true;
+    await signOutNativeGoogle();
     setRoleMismatch({ email, assignedRole });
     if (auth.currentUser) {
       await signOut(auth);
@@ -554,93 +556,33 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
   }, []);
 
   async function handleGoogleSignIn() {
+    if (authSubmitting) return;
     setInlineError(null);
     setInlineSuccess(null);
 
     if (Platform.OS !== 'web') {
       setAuthSubmitting(true);
       try {
-        const returnUrl = ExpoLinking.createURL('google-auth-callback');
-        const configuredPortal = (
-          PORTAL_URLS.PORTAL || 'https://labsetu-diagnostics.firebaseapp.com'
-        ).replace(/\/+$/, '');
-        const authOrigin =
-          configuredPortal.includes('localhost') ||
-          configuredPortal.includes('127.0.0.1') ||
-          configuredPortal.includes('labsetu-diagnostics.web.app')
-            ? 'https://labsetu-diagnostics.firebaseapp.com'
-            : configuredPortal;
-
-        const authUrl = `${authOrigin}/mobile-google-auth?redirect_uri=${encodeURIComponent(
-          returnUrl
-        )}&role=${encodeURIComponent(REQUIRED_ROLE)}`;
-
-        const result = await WebBrowser.openAuthSessionAsync(authUrl, returnUrl);
-
-        if (result.type === 'cancel' || result.type === 'dismiss') {
-          setInlineError('Google sign-in was cancelled before completing.');
+        const res = await signInWithNativeGoogle();
+        if (res.status === 'cancelled') {
+          setInlineError('Google sign-in was cancelled.');
           return;
         }
-
-        if (result.type === 'success' && result.url) {
-          const parsed = ExpoLinking.parse(result.url);
-          const params = (parsed.queryParams || {}) as Record<
-            string,
-            string | string[] | undefined
-          >;
-          const getParam = (key: string): string => {
-            const val = params[key];
-            return Array.isArray(val) ? String(val[0] || '') : String(val || '');
-          };
-
-          const code = getParam('code').trim();
-          const authErrorCode = getParam('authErrorCode').trim();
-          const authErrorMessage = getParam('authErrorMessage').trim();
-          const emailParam = getParam('email').trim();
-          const assignedRoleParam = getParam('assignedRole').trim() as UserRole;
-
-          if (authErrorCode === 'ROLE_MISMATCH' && assignedRoleParam) {
-            await rejectRoleMismatch(emailParam || 'This account', assignedRoleParam);
-            return;
-          }
-
-          if (authErrorMessage || authErrorCode) {
-            if (authErrorCode === 'USER_CANCELLED') {
-              setInlineError('Google sign-in was cancelled.');
-              return;
-            }
-            const msg = authErrorMessage || 'Could not complete Google sign-in.';
-            setInlineError(msg);
-            onShowAlert({
-              variant: 'error',
-              title:
-                authErrorCode === 'USER_NOT_PROVISIONED'
-                  ? 'Account Not Added Yet'
-                  : authErrorCode === 'ACCOUNT_SUSPENDED'
-                    ? 'Account Paused'
-                    : 'Google Sign-In Failed',
-              message: msg,
-            });
-            return;
-          }
-
-          if (code) {
-            const redeemRes = await postAuthJson('/auth/mobile-google-redeem', { code });
-            const redeemJson = await redeemRes.json().catch(() => null);
-            if (!redeemRes.ok || !redeemJson?.data?.customToken) {
-              const msg =
-                redeemJson?.error?.message ||
-                'Could not complete Google sign-in session. Please try again.';
-              setInlineError(msg);
-              onShowAlert({ variant: 'error', title: 'Google Sign-In Failed', message: msg });
-              return;
-            }
-            await signInWithCustomToken(auth, String(redeemJson.data.customToken));
-            return;
-          }
+        if (res.status === 'error' || !res.credential?.user) {
+          const msg = res.userMessage || 'Could not complete Google sign-in.';
+          setInlineError(msg);
+          onShowAlert({
+            variant: res.errorCode === 'OAUTH_CONFIGURATION_REQUIRED' ? 'warning' : 'error',
+            title:
+              res.errorCode === 'OAUTH_CONFIGURATION_REQUIRED'
+                ? 'Google Sign-In Setup Required'
+                : 'Google Sign-In Failed',
+            message: msg,
+          });
+          return;
         }
-
-        setInlineError('Google sign-in did not return a valid session. Please try again.');
+        // Explicitly verify role & profile before leaving auth gate
+        await verifyFirebaseUserRole(res.credential.user);
       } catch (err: unknown) {
         const msg =
           err instanceof Error ? err.message : 'Could not complete Google sign-in on device.';

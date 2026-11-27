@@ -111,6 +111,7 @@ import {
   PhleboAuthGate,
   type VerifiedPhleboSession,
 } from './components/PhleboAuthGate';
+import { signOutNativeGoogle } from './services/nativeGoogleAuth';
 import { FloatingDispatchOverlay } from './components/FloatingDispatchOverlay';
 import { PhleboDrawer } from './components/PhleboDrawer';
 import { FloatingIconSettingsModal } from './components/FloatingIconSettingsModal';
@@ -602,6 +603,7 @@ function PhleboAppContent() {
           if (auth.currentUser) {
             await signOut(auth);
           }
+          await signOutNativeGoogle();
           alertedBroadcastIdsRef.current.clear();
           lastBarcodeToastRef.current = {};
           setBroadcastForceOpen(false);
