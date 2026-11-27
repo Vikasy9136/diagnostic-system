@@ -78,6 +78,7 @@ export function BankPaymentDetailsCard() {
   const [savingUpi, setSavingUpi] = useState(false);
   const [uploadingQr, setUploadingQr] = useState(false);
   const [qrPreviewUri, setQrPreviewUri] = useState<string | null>(null);
+  const [qrLightboxOpen, setQrLightboxOpen] = useState(false);
 
   const refreshQrPreview = useCallback(async () => {
     try {
@@ -142,6 +143,8 @@ export function BankPaymentDetailsCard() {
       const asset = pick.assets[0];
       const mime = asset.mimeType || 'image/png';
       setUploadingQr(true);
+      const localPreview = `data:${mime};base64,${asset.base64}`;
+      setQrPreviewUri(localPreview);
       await uploadPrivateQrImage({ mimeType: mime, base64Data: asset.base64!, source: 'UPLOADED' });
       const fresh = await fetchMyPaymentMethods();
       setSummary(fresh);
@@ -438,38 +441,71 @@ export function BankPaymentDetailsCard() {
           </View>
 
           {/* 3. Private UPI QR Code Section */}
-          <View style={{ padding: 12, borderRadius: 10, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 12 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontSize: 13.5, fontWeight: '700', color: '#0F172A' }}>3. UPI QR Code</Text>
-              <View
-                style={{
-                  backgroundColor: summary?.qrCode?.available ? '#DCFCE7' : '#F1F5F9',
-                  paddingHorizontal: 8,
-                  paddingVertical: 3,
-                  borderRadius: 6,
-                }}
-              >
-                <Text style={{ fontSize: 11, fontWeight: '700', color: summary?.qrCode?.available ? '#15803D' : '#475569' }}>
-                  {summary?.qrCode?.available
-                    ? `${summary.qrCode.verificationStatus} • ${summary.qrCode.consistencyStatus}`
-                    : 'Not Uploaded'}
-                </Text>
-              </View>
+          <View style={{ padding: 12, borderRadius: 10, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 12, overflow: 'hidden' }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+              <Text style={{ fontSize: 13.5, fontWeight: '700', color: '#0F172A', flexShrink: 1 }}>3. UPI QR Code</Text>
+              {(() => {
+                const qrBadge = summary?.qrCode?.available
+                  ? statusBadgeStyle(summary.qrCode.verificationStatus)
+                  : { bg: '#F1F5F9', fg: '#475569', label: 'Not Uploaded' };
+                return (
+                  <View
+                    style={{
+                      backgroundColor: qrBadge.bg,
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                      borderRadius: 6,
+                      maxWidth: '100%',
+                      flexShrink: 1,
+                    }}
+                  >
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: qrBadge.fg }} numberOfLines={1}>
+                      {qrBadge.label}
+                    </Text>
+                  </View>
+                );
+              })()}
             </View>
-            {qrPreviewUri && (
+            {summary?.qrCode?.available && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 10 }}>
-                <Image
-                  source={{ uri: qrPreviewUri }}
-                  style={{ width: 92, height: 92, borderRadius: 8, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF' }}
-                  resizeMode="contain"
-                />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#1E293B' }}>Private Encrypted QR</Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    if (qrPreviewUri) setQrLightboxOpen(true);
+                    else void refreshQrPreview();
+                  }}
+                  activeOpacity={0.8}
+                  style={{
+                    width: 88,
+                    height: 88,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: '#CBD5E1',
+                    backgroundColor: '#FFFFFF',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    overflow: 'hidden',
+                  }}
+                >
+                  {qrPreviewUri ? (
+                    <Image
+                      source={{ uri: qrPreviewUri }}
+                      style={{ width: '100%', height: '100%' }}
+                      resizeMode="contain"
+                    />
+                  ) : (
+                    <Ionicons name="qr-code-outline" size={32} color="#64748B" />
+                  )}
+                </TouchableOpacity>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#1E293B' }}>Private Encrypted QR</Text>
                   {summary?.qrCode?.decodedUpiId && (
-                    <Text style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>
+                    <Text style={{ fontSize: 11, color: '#475569', marginTop: 2 }} numberOfLines={2}>
                       Payee: {summary.qrCode.decodedUpiId}
                     </Text>
                   )}
+                  <Text style={{ fontSize: 11, color: '#0D9488', fontWeight: '600', marginTop: 4 }}>
+                    {qrPreviewUri ? 'Tap QR to preview full size' : 'Tap to load QR preview'}
+                  </Text>
                 </View>
               </View>
             )}
@@ -728,6 +764,32 @@ export function BankPaymentDetailsCard() {
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* QR Full-Size Preview Modal */}
+      <Modal visible={qrLightboxOpen} transparent animationType="fade" onRequestClose={() => setQrLightboxOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(15,23,42,0.75)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <View style={{ width: '100%', maxWidth: 340, backgroundColor: '#FFFFFF', borderRadius: 18, padding: 18, alignItems: 'center' }}>
+            <View style={{ width: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={{ fontSize: 15, fontWeight: '800', color: '#0F172A' }}>UPI QR Preview</Text>
+              <TouchableOpacity onPress={() => setQrLightboxOpen(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="close" size={22} color="#475569" />
+              </TouchableOpacity>
+            </View>
+            {qrPreviewUri && (
+              <Image
+                source={{ uri: qrPreviewUri }}
+                style={{ width: 240, height: 240, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF' }}
+                resizeMode="contain"
+              />
+            )}
+            {summary?.qrCode?.decodedUpiId && (
+              <Text style={{ fontSize: 12, fontWeight: '600', color: '#475569', marginTop: 10, textAlign: 'center' }}>
+                {summary.qrCode.decodedUpiId}
+              </Text>
+            )}
+          </View>
+        </View>
       </Modal>
     </View>
   );

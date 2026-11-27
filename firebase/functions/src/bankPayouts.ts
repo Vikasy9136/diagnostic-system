@@ -432,8 +432,21 @@ async function handleGetQrForBeneficiary(type: 'PHLEBOTOMIST' | 'LARGE_LAB', id:
   const file = admin.storage().bucket().file(String(qr.storagePath));
   const [exists] = await file.exists();
   if (!exists) return { available: false };
-  const [signedUrl] = await file.getSignedUrl({ action: 'read', expires: Date.now() + 120000 });
-  return { available: true, signedUrl, ...qr };
+  let signedUrl: string | undefined;
+  try {
+    const [url] = await file.getSignedUrl({ action: 'read', expires: Date.now() + 120000 });
+    signedUrl = url;
+  } catch {
+    signedUrl = undefined;
+  }
+  let dataUrl: string | undefined;
+  try {
+    const [buf] = await file.download();
+    dataUrl = `data:${qr.mimeType || 'image/png'};base64,${buf.toString('base64')}`;
+  } catch {
+    dataUrl = undefined;
+  }
+  return { available: true, ...(signedUrl ? { signedUrl } : {}), ...(dataUrl ? { dataUrl } : {}), ...qr };
 }
 
 async function handleDeleteQrForBeneficiary(type: 'PHLEBOTOMIST' | 'LARGE_LAB', id: string) {
