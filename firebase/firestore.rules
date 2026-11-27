@@ -495,8 +495,14 @@ service cloud.firestore {
     // 12. PLATFORM GLOBAL SETTINGS (`settings/{settingId}`)
     // =========================================================================
     match /settings/{settingId} {
-      allow read: if settingId in ['support', 'features', 'commission'] || (isAuthenticated() && isAccountActive());
-      allow write: if isAdmin();
+      allow read: if settingId in ['support', 'features', 'commission', 'seasonalBranding'] || (isAuthenticated() && isAccountActive());
+      allow write: if isAdmin() || hasPermission('MANAGE_SETTINGS');
+    }
+
+    match /brandingAuditLogs/{logId} {
+      allow read: if isAdmin() || hasPermission('MANAGE_SETTINGS');
+      allow create: if isAdmin() || hasPermission('MANAGE_SETTINGS');
+      allow update, delete: if false;
     }
 
     match /agreements/{agreementId} {

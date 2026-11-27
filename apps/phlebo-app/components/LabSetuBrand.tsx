@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
 import Svg, {
   Circle,
   Defs,
@@ -9,6 +9,9 @@ import Svg, {
   Rect,
   Stop,
 } from 'react-native-svg';
+
+const MASTER_FULL_LOGO = require('../../../packages/shared/assets/brand/logo/labsetu-logo.png');
+const MASTER_ICON_ONLY = require('../../../packages/shared/assets/brand/icons/labsetu-icon-only.png');
 
 export const BRAND_FONTS = {
   regular: 'PlusJakartaSans_400Regular',
@@ -39,57 +42,20 @@ export const BRAND_COLORS = {
   border: '#E2E8F0',
 };
 
-export function LabSetuLogoMark({ size = 56 }: { size?: number }) {
+export function LabSetuLogoMark({
+  size = 56,
+  variant = 'icon',
+}: {
+  size?: number;
+  variant?: 'icon' | 'full';
+}) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 120 120">
-      <Defs>
-        <SvgLinearGradient id="navyGrad" x1="0" y1="0" x2="1" y2="1">
-          <Stop offset="0%" stopColor="#0A2A5E" />
-          <Stop offset="100%" stopColor="#0E4A8A" />
-        </SvgLinearGradient>
-        <SvgLinearGradient id="tealGrad" x1="0" y1="0" x2="1" y2="1">
-          <Stop offset="0%" stopColor="#14B8A6" />
-          <Stop offset="100%" stopColor="#0D9488" />
-        </SvgLinearGradient>
-      </Defs>
-
-      {/* Sweeping Teal + Navy Orbit Arc */}
-      <Path
-        d="M18 82 C 6 58, 22 24, 52 18 L 48 30 C 31 35, 22 57, 30 74 C 42 94, 82 94, 108 74 C 86 102, 34 106, 18 82 Z"
-        fill="url(#tealGrad)"
-      />
-
-      {/* Strong Deep Navy 'L' Frame */}
-      <Path
-        d="M36 22 H50 L44 68 H78 L74 82 H32 C26 82, 24 77, 25 71 Z"
-        fill="url(#navyGrad)"
-      />
-
-      {/* Mini Lab Clinic Canopy + Test Tubes inside L */}
-      <Path
-        d="M46 28 H84 L88 38 C88 42, 82 44, 79 41 C77 44, 71 44, 69 41 C66 44, 60 44, 58 41 C55 44, 49 44, 46 41 Z"
-        fill="#0D9488"
-      />
-      <Rect x="49" y="43" width="32" height="21" rx="3" fill="#FFFFFF" stroke="#0A2A5E" strokeWidth="2.5" />
-      <Rect x="54" y="48" width="4" height="12" rx="2" fill="#0D9488" />
-      <Rect x="62" y="48" width="4" height="12" rx="2" fill="#0A2A5E" />
-      <Rect x="70" y="48" width="4" height="12" rx="2" fill="#DC2626" />
-
-      {/* Speed dashes & Phlebo Courier Silhouette on right */}
-      <Rect x="77" y="49" width="7" height="2.4" rx="1.2" fill="#0A2A5E" />
-      <Rect x="79" y="54" width="5" height="2.4" rx="1.2" fill="#0D9488" />
-
-      <Circle cx="98" cy="36" r="6" fill="#0A2A5E" />
-      <Path d="M92 33 C94 28, 103 28, 106 34 H92 Z" fill="#0D9488" />
-      <Path d="M88 44 L101 44 L109 56 L104 59 L99 52 L96 70 L90 70 L91 56 L84 62 L81 58 Z" fill="#0A2A5E" />
-
-      {/* Medical Courier Bag with Blood Drop */}
-      <Rect x="81" y="46" width="12" height="14" rx="2.5" fill="#FFFFFF" stroke="#0A2A5E" strokeWidth="2" />
-      <Path
-        d="M87 49 C89.5 52.5, 90.5 54, 90.5 55.6 C90.5 57.5, 89 58.6, 87 58.6 C85 58.6, 83.5 57.5, 83.5 55.6 C83.5 54, 84.5 52.5, 87 49 Z"
-        fill="#DC2626"
-      />
-    </Svg>
+    <Image
+      source={variant === 'full' ? MASTER_FULL_LOGO : MASTER_ICON_ONLY}
+      style={{ width: size, height: size }}
+      resizeMode="contain"
+      accessibilityLabel={variant === 'full' ? 'LabSetu official logo' : 'LabSetu icon'}
+    />
   );
 }
 

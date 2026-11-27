@@ -32,7 +32,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0F766E"
+        "backgroundColor": "#FFFFFF"
       },
       "package": "com.diagnostic.phleboapp",
       "googleServicesFile": "./google-services.json",
@@ -64,11 +64,12 @@
       ],
       "expo-notifications",
       "./plugins/withFloatingDispatchOverlay",
+      "./plugins/withDynamicFestivalIcons",
       [
         "expo-splash-screen",
         {
           "image": "./assets/splash.png",
-          "backgroundColor": "#0F766E",
+          "backgroundColor": "#FFFFFF",
           "resizeMode": "contain"
         }
       ],

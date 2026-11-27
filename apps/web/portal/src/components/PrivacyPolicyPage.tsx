@@ -1,5 +1,6 @@
 import React from 'react';
 import { LABSETU_THEME, UserRole } from '@diagnostic/shared';
+import { LabSetuLogo } from '@diagnostic/shared/web/LabSetuLogo';
 import { ADMIN_LOGIN_EMAIL } from '../firebase';
 
 interface PrivacyPolicyPageProps {
@@ -19,11 +20,7 @@ export const PrivacyPolicyPage: React.FC<PrivacyPolicyPageProps> = ({
       <header className="landing-nav">
         <div className="landing-nav-inner">
           <div className="landing-brand" onClick={onBackToHome} role="button" tabIndex={0}>
-            <div className="landing-brand-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
-              </svg>
-            </div>
+            <LabSetuLogo variant="full" width={40} height={40} alt="LabSetu" />
             <div>
               <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#0F172A', letterSpacing: '-0.02em', lineHeight: 1.1 }}>
                 {LABSETU_THEME.brand.name}

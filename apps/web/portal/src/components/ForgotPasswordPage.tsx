@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { LABSETU_THEME, ROLE_LABELS, type UserRole } from '@diagnostic/shared';
+import { LabSetuLogo } from '@diagnostic/shared/web/LabSetuLogo';
 import { AuthApiRequestError, forgotPasswordApi } from '../services/firestoreService';
 import { type DynamicAlertVariant } from './DynamicAlertModal';
 
@@ -140,12 +141,7 @@ export function ForgotPasswordPage({
       <div className="auth-flow-center">
         <div className="admin-login-card">
           <div className="admin-login-banner">
-            <div className="brand-logo-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-              </svg>
-            </div>
+            <LabSetuLogo variant="dark" width={38} height={38} alt="LabSetu" />
             <div>
               <div style={{ fontSize: '1.15rem', fontWeight: 800 }}>
                 {LABSETU_THEME.brand.name} • Password Recovery

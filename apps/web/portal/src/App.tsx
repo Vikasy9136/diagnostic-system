@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ROLE_LABELS, UserRole } from '@diagnostic/shared';
+import { useSeasonalFavicon } from '@diagnostic/shared/web/useSeasonalFavicon';
 import { signOut } from 'firebase/auth';
-import { auth } from './firebase';
+import { auth, db } from './firebase';
 import { LandingPage } from './components/LandingPage';
 import { LoginPage, type VerifiedPortalSession } from './components/LoginPage';
 import { ForgotPasswordPage } from './components/ForgotPasswordPage';
@@ -170,6 +171,7 @@ function parseBrowserRoute(): {
 }
 
 export function App() {
+  useSeasonalFavicon(db);
   const initialRoute = parseBrowserRoute();
   const [routeView, setRouteView] = useState<RouteView>(initialRoute.view);
   const [selectedRole, setSelectedRole] = useState<UserRole>(initialRoute.role);

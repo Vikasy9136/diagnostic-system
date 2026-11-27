@@ -11,7 +11,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.js"
-    }
+    },
+    "./web/LabSetuLogo": "./web/LabSetuLogo.tsx",
+    "./web/useSeasonalFavicon": "./web/useSeasonalFavicon.ts",
+    "./assets/brand/*": "./assets/brand/*"
   },
   "scripts": {
     "build": "tsc",

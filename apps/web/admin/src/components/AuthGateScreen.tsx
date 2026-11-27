@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, type FormEvent } from 'react';
+import { LabSetuLogo } from '@diagnostic/shared/web/LabSetuLogo';
 import {
   type AdminTeamRole,
   type FounderRoleCode,
@@ -1092,12 +1093,7 @@ export function AuthGateScreen({
         <div className="auth-flow-center">
           <div className="admin-login-card">
             <div className="admin-login-banner">
-              <div className="brand-logo-icon">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
-                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                </svg>
-              </div>
+              <LabSetuLogo variant="dark" width={38} height={38} alt="LabSetu" />
               <div>
                 <div style={{ fontSize: '1.15rem', fontWeight: 800 }}>
                   {LABSETU_THEME.brand.name} • Password Recovery
@@ -1282,11 +1278,7 @@ export function AuthGateScreen({
         <div className="auth-flow-center">
           <div className="admin-login-card">
             <div className="admin-login-banner">
-              <div className="brand-logo-icon">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
-                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                </svg>
-              </div>
+              <LabSetuLogo variant="dark" width={38} height={38} alt="LabSetu" />
               <div>
                 <div style={{ fontSize: '1.15rem', fontWeight: 800 }}>
                   {LABSETU_THEME.brand.name} • Create New Password
@@ -1617,11 +1609,7 @@ export function AuthGateScreen({
     <div className="admin-login-shell">
       <div className="admin-login-card">
         <div className="admin-login-banner">
-          <div className="brand-logo-icon">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M10 2v7.31M14 2v7.31M8.5 2h7M14 9.3a6.5 6.5 0 1 1-4 0" />
-            </svg>
-          </div>
+          <LabSetuLogo variant="dark" width={38} height={38} alt="LabSetu" />
           <div>
             <div style={{ fontSize: '1.22rem', fontWeight: 800, letterSpacing: '-0.02em' }}>
               {LABSETU_THEME.brand.name} • {portalTitle}

@@ -31,6 +31,7 @@ import { mapsRouter } from './routes/maps.routes';
 import { inventoryRouter } from './routes/inventory.routes';
 import { phleboPayoutsRouter } from './routes/phleboPayouts.routes';
 import { walletRouter } from './routes/wallet.routes';
+import { brandingRouter } from './routes/branding.routes';
 import { optionalAuth } from './middleware/auth';
 import { AuthenticatedRequest } from './middleware/rbac';
 import { errorHandler, AppError } from './middleware/errorHandler';
@@ -97,6 +98,7 @@ export function createApp(): Application {
   app.use('/api/v1/phlebo-payouts', phleboPayoutsRouter);
   app.use('/api/v1/wallet', walletRouter);
   app.use('/api', walletRouter);
+  app.use('/api/v1/branding', brandingRouter);
 
   // 404 Not Found Handler
   app.use((req: Request, _res: Response, next: NextFunction) => {

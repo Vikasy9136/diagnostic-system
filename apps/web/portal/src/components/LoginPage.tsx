@@ -1,4 +1,5 @@
 import { useState, useEffect, type FormEvent } from 'react';
+import { LabSetuLogo } from '@diagnostic/shared/web/LabSetuLogo';
 import {
   type AdminTeamRole,
   type FounderRoleCode,
@@ -847,11 +848,7 @@ export function LoginPage({
         {/* Right Sign-In Card */}
         <div className="admin-login-card">
           <div className="admin-login-banner">
-            <div className="brand-logo-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M10 2v7.31M14 2v7.31M8.5 2h7M14 9.3a6.5 6.5 0 1 1-4 0" />
-              </svg>
-            </div>
+            <LabSetuLogo variant="dark" width={38} height={38} alt="LabSetu" />
             <div>
               <div style={{ fontSize: '1.15rem', fontWeight: 800 }}>
                 Sign In • {ROLE_LABELS[selectedRole]}

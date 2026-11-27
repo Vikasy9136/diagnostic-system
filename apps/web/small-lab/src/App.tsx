@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react';
 import { UserRole } from '@diagnostic/shared';
+import { useSeasonalFavicon } from '@diagnostic/shared/web/useSeasonalFavicon';
 import { signOut } from 'firebase/auth';
-import { auth } from './firebase';
+import { auth, db } from './firebase';
 import {
   AuthGateScreen,
   type VerifiedPortalSession,
@@ -15,6 +16,7 @@ import {
 import { SmallLabDashboard } from './dashboards/SmallLabDashboard';
 
 export default function App() {
+  useSeasonalFavicon(db);
   const [session, setSession] = useState<VerifiedPortalSession | null>(null);
   const [alertState, setAlertState] = useState<DynamicAlertState>(INITIAL_DYNAMIC_ALERT);
 

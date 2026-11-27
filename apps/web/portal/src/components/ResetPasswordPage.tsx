@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { LABSETU_THEME, ROLE_LABELS, UserRole } from '@diagnostic/shared';
+import { LabSetuLogo } from '@diagnostic/shared/web/LabSetuLogo';
 import {
   confirmPasswordReset,
   signOut,
@@ -250,11 +251,7 @@ export function ResetPasswordPage({
       <div className="auth-flow-center">
         <div className="admin-login-card">
           <div className="admin-login-banner">
-            <div className="brand-logo-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-              </svg>
-            </div>
+            <LabSetuLogo variant="dark" width={38} height={38} alt="LabSetu" />
             <div>
               <div style={{ fontSize: '1.15rem', fontWeight: 800 }}>
                 {LABSETU_THEME.brand.name} • Create New Password

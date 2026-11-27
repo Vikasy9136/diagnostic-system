@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { LABSETU_THEME, type PlatformNotification } from '@diagnostic/shared';
+import { LabSetuLogo } from '@diagnostic/shared/web/LabSetuLogo';
 import { type FormatLabelFn, type SidebarNavItem } from '../../dashboards/types';
 import { markNotificationRead } from '../../services/firestoreService';
 
@@ -138,11 +139,7 @@ export function DashboardShell<TTab extends string>({
       />
       <aside className={`sidebar-dark ${sidebarCollapsed ? 'collapsed' : ''} ${mobileNavOpen ? 'mobile-open' : ''}`}>
         <div className="brand-header">
-          <div className="brand-logo-icon">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="M10 2v7.31M14 2v7.31M8.5 2h7M14 9.3a6.5 6.5 0 1 1-4 0" />
-            </svg>
-          </div>
+          <LabSetuLogo variant="dark" width={28} height={28} alt="LabSetu" />
           <div className="brand-title-wrap">
             <span className="brand-title">{LABSETU_THEME.brand.name}</span>
             <span className="brand-subtitle">{brandSubtitle}</span>

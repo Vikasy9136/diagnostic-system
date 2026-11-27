@@ -77,6 +77,7 @@ import { createFinanceRouter } from './finance';
 import { createOpsRouter } from './ops';
 import { createMarketingRouter } from './marketing';
 import { createTechRouter } from './tech';
+import { createBrandingRouter } from './branding';
 
 const ALLOWED_WEB_ORIGINS = new Set([
   'https://labsetu-diagnostics.web.app',
@@ -1437,6 +1438,8 @@ export function createCloudApiApp(): Application {
   );
 
   // 404 Not Found Handler
+  app.use('/api/v1/branding', createBrandingRouter());
+
   app.use((req: Request, _res: Response, next: NextFunction) => {
     next(new AppError(`Endpoint not found: ${req.method} ${req.originalUrl}`, 404, 'NOT_FOUND'));
   });

@@ -7,6 +7,7 @@ import {
   type PlatformSlaConfig,
   type SupportContactsConfig,
 } from '@diagnostic/shared';
+import { BrandSeasonalIconsPanel } from './BrandSeasonalIconsPanel';
 
 export interface AdminSettingsTabProps {
   profileEmail: string;
@@ -608,7 +609,10 @@ export function AdminSettingsTab({
         </div>
       )}
 
-      {/* 5. Live Test Notification Check */}
+      {/* 5. Brand & Seasonal Icons Manager */}
+      <BrandSeasonalIconsPanel actorEmail={profileEmail} />
+
+      {/* 6. Live Test Notification Check */}
       <div className="chart-card-modern" style={{ gridColumn: 'span 2' }}>
         <h2 className="card-top-title">Document Upload &amp; Email Check</h2>
         <div style={{ marginTop: '16px' }}>

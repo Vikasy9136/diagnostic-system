@@ -1,4 +1,5 @@
 import { LABSETU_THEME, ROLE_LABELS, UserRole } from '@diagnostic/shared';
+import { LabSetuLogo } from '@diagnostic/shared/web/LabSetuLogo';
 import { ADMIN_LOGIN_EMAIL } from '../firebase';
 
 interface LandingPageProps {
@@ -60,11 +61,7 @@ export function LandingPage({ onGoToLogin, onGoToPrivacy, onGoToTerms }: Landing
       <nav className="landing-nav">
         <div className="landing-nav-inner">
           <div className="landing-brand" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-            <div className="landing-brand-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M10 2v7.31M14 2v7.31M8.5 2h7M14 9.3a6.5 6.5 0 1 1-4 0" />
-              </svg>
-            </div>
+            <LabSetuLogo variant="full" width={42} height={42} alt="LabSetu" />
             <div>
               <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0F172A', lineHeight: 1.1 }}>
                 {LABSETU_THEME.brand.name}

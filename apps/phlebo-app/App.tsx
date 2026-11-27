@@ -112,6 +112,7 @@ import {
   type VerifiedPhleboSession,
 } from './components/PhleboAuthGate';
 import { signOutNativeGoogle } from './services/nativeGoogleAuth';
+import { syncDynamicFestivalBranding } from './services/dynamicBranding';
 import { FloatingDispatchOverlay } from './components/FloatingDispatchOverlay';
 import { PhleboDrawer } from './components/PhleboDrawer';
 import { FloatingIconSettingsModal } from './components/FloatingIconSettingsModal';
@@ -405,10 +406,12 @@ function PhleboAppContent() {
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
 
   useEffect(() => {
+    void syncDynamicFestivalBranding(true);
     const sub = AppState.addEventListener('change', (nextState) => {
       setAppState(nextState);
       if (nextState === 'active') {
-        // App brought to foreground: immediately dismiss any outside-app floating WindowManager modal
+        // App brought to foreground: refresh seasonal launcher icon & dismiss overlay
+        void syncDynamicFestivalBranding(false);
         void dismissIncomingPickupOverlay();
         // Check if currently ringing order expired while app was in background
         if (activeRingingOrderIdRef.current) {

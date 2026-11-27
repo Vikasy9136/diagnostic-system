@@ -184,6 +184,15 @@ service firebase.storage {
       allow read, write: if false;
     }
 
+    // Seasonal Brand Icons uploaded by Admin: brand-icons/{fileName}
+    match /brand-icons/{fileName} {
+      allow read: if true;
+      allow write: if (isAdmin() || hasPermission('MANAGE_SETTINGS'))
+        && request.resource != null
+        && request.resource.size <= 2 * 1024 * 1024
+        && request.resource.contentType.matches('image/(png|jpeg|webp|x-icon|vnd\\.microsoft\\.icon)');
+    }
+
     // Deny all other unrestricted access by default
     match /{allPaths=**} {
       allow read, write: if false;
