@@ -67,6 +67,7 @@ export function AdminOnboardingModal({
   const [name, setName] = useState('');
   const [labId, setLabId] = useState('');
   const [phleboId, setPhleboId] = useState('');
+  const [staffId, setStaffId] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -177,6 +178,15 @@ export function AdminOnboardingModal({
           })
         : ''
     );
+    setStaffId(
+      presetRole === UserRole.ADMIN
+        ? computeNextAssignedIdForRole({
+            role: UserRole.ADMIN,
+            isEmployee: false,
+            existingCodes: allExistingAssignedCodes,
+          })
+        : ''
+    );
     setExteriorPhotoUrl('');
     setLivePhotoUrl('');
     setInteriorPhotoUrl('');
@@ -234,12 +244,15 @@ export function AdminOnboardingModal({
         })
       );
     }
-    return computeNextAssignedIdForRole({
-      role: UserRole.ADMIN,
-      isEmployee: adminSubRole === 'DEPARTMENT_EMPLOYEE',
-      existingCodes: allExistingAssignedCodes,
-    });
-  }, [role, centerType, adminSubRole, labId, phleboId, allExistingAssignedCodes]);
+    return (
+      staffId.trim() ||
+      computeNextAssignedIdForRole({
+        role: UserRole.ADMIN,
+        isEmployee: adminSubRole === 'DEPARTMENT_EMPLOYEE',
+        existingCodes: allExistingAssignedCodes,
+      })
+    );
+  }, [role, centerType, adminSubRole, labId, phleboId, staffId, allExistingAssignedCodes]);
 
   const userLocCoverage = useMemo(
     () => evaluatePointServiceCoverage(serviceZones, Number(lat), Number(lng), pincode, city),
@@ -568,7 +581,9 @@ Instructions: Download, print/sign with official signature, and upload scan/PDF 
           : undefined;
       const resolvedPhleboId =
         role === UserRole.PHLEBOTOMIST ? phleboId.trim() || autoSeqCode : undefined;
-      const resolvedUserCode = resolvedLabId || resolvedPhleboId || autoSeqCode;
+      const resolvedStaffId =
+        role === UserRole.ADMIN ? staffId.trim() || autoSeqCode : undefined;
+      const resolvedUserCode = resolvedLabId || resolvedPhleboId || resolvedStaffId || autoSeqCode;
 
       const payload: CreateManagedUserPayload = {
         email: email.trim().toLowerCase(),
@@ -703,6 +718,68 @@ Instructions: Download, print/sign with official signature, and upload scan/PDF 
           </select>
         </div>
 
+        {/* Admin Staff Sub-Role & Visible Dashboard Selector */}
+        {role === UserRole.ADMIN && (
+          <div className="form-group">
+            <label className="form-label">Admin Staff Role &amp; Dashboard Access *</label>
+            <select
+              className="form-select"
+              value={adminSubRole}
+              onChange={(e) => {
+                const nextSub = e.target.value as AdminTeamRole;
+                setAdminSubRole(nextSub);
+                setStaffId(
+                  computeNextAssignedIdForRole({
+                    role: UserRole.ADMIN,
+                    isEmployee: nextSub === 'DEPARTMENT_EMPLOYEE',
+                    existingCodes: allExistingAssignedCodes,
+                  })
+                );
+              }}
+            >
+              <option value="OPS_DISPATCH">Operations &amp; Dispatch Lead (Ops Command + Bookings + Labs + Phlebos)</option>
+              <option value="OPERATIONS_PARTNERSHIPS_HEAD">Operations &amp; Partnerships Head (Ops + Lab Partnerships)</option>
+              <option value="FINANCE_BUSINESS_HEAD">Finance &amp; Business Head (Finance Ops + Payments + Commissions)</option>
+              <option value="FINANCE_B2B">Finance &amp; Billing Executive (Payments + Settlements)</option>
+              <option value="MARKETING_GROWTH_HEAD">Marketing &amp; Growth Head (Marketing Growth + Labs)</option>
+              <option value="MARKETING_EXECUTIVE">Marketing &amp; Field Acquisition Executive (Leads + Campaigns)</option>
+              <option value="PRODUCT_TECHNOLOGY_HEAD">Product &amp; Tech Head (System Health + Error Logs + Tech)</option>
+              <option value="CATALOG_LABS">Catalog &amp; Labs Coordinator (Labs + Test Catalog)</option>
+              <option value="DEPARTMENT_EMPLOYEE">Department Employee (Custom Scoped Permissions Only)</option>
+              {_isSuperAdmin && (
+                <option value="SUPER_ADMIN">Super Admin (Full Platform Control + Executive Dashboard)</option>
+              )}
+            </select>
+            <div
+              style={{
+                marginTop: '8px',
+                padding: '10px 12px',
+                borderRadius: '10px',
+                background: '#F0FDFA',
+                border: '1px solid #99F6E4',
+                fontSize: '0.78rem',
+                color: '#0F766E',
+                lineHeight: 1.45,
+              }}
+            >
+              <strong>Visible Dashboard:</strong>{' '}
+              {adminSubRole === 'FINANCE_BUSINESS_HEAD' || adminSubRole === 'FINANCE_B2B'
+                ? 'Finance & Business Workspace (Payments, Settlements, Commissions). Executive Super Admin Dashboard & Settings remain hidden.'
+                : adminSubRole === 'OPS_DISPATCH' || adminSubRole === 'OPERATIONS_PARTNERSHIPS_HEAD'
+                ? 'Operations Command Center (Bookings, Labs, Phlebotomists, Samples, Service Zones). Finance & Settings remain hidden.'
+                : adminSubRole === 'MARKETING_GROWTH_HEAD' || adminSubRole === 'MARKETING_EXECUTIVE'
+                ? 'Marketing & Growth Workspace (Leads, Campaigns, Partner Network). Finance, Ops & Settings remain hidden.'
+                : adminSubRole === 'PRODUCT_TECHNOLOGY_HEAD'
+                ? 'Product & Tech Workspace (System Health, Error Logs, QA). Finance & Settings remain hidden.'
+                : adminSubRole === 'CATALOG_LABS'
+                ? 'Labs & Test Catalog Workspace (Partner Labs + Master Test Catalog). Finance, Executive Dashboard & Settings remain hidden.'
+                : adminSubRole === 'SUPER_ADMIN'
+                ? 'Full Executive Command Center across all departments, Staff, and Platform Settings.'
+                : 'Only tabs matching explicit employee permissions granted in Employees / RBAC. Executive Dashboard & Settings are hidden.'}
+            </div>
+          </div>
+        )}
+
         {/* Large Lab Center Type */}
         {role === UserRole.LARGE_LAB && (
           <div className="form-group">
@@ -796,7 +873,13 @@ Instructions: Download, print/sign with official signature, and upload scan/PDF 
             </label>
             <input
               className="form-input"
-              placeholder={role === UserRole.PHLEBOTOMIST ? 'e.g. Ramesh Kumar' : 'e.g. Apex Diagnostics Center'}
+              placeholder={
+                role === UserRole.PHLEBOTOMIST
+                  ? 'e.g. Ramesh Kumar'
+                  : role === UserRole.ADMIN
+                  ? 'e.g. Priya Sharma'
+                  : 'e.g. Apex Diagnostics Center'
+              }
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
@@ -828,11 +911,19 @@ Instructions: Download, print/sign with official signature, and upload scan/PDF 
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <input
               className="form-input"
-              value={role === UserRole.PHLEBOTOMIST ? phleboId : labId}
+              value={
+                role === UserRole.PHLEBOTOMIST
+                  ? phleboId
+                  : role === UserRole.ADMIN
+                  ? staffId
+                  : labId
+              }
               placeholder={`Auto-assigned: ${previewRoleCode}`}
               onChange={(e) => {
                 if (role === UserRole.PHLEBOTOMIST) {
                   setPhleboId(e.target.value.toUpperCase());
+                } else if (role === UserRole.ADMIN) {
+                  setStaffId(e.target.value.toUpperCase());
                 } else {
                   setLabId(e.target.value.toUpperCase());
                 }

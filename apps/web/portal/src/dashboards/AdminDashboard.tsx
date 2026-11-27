@@ -203,12 +203,7 @@ export function AdminDashboard({
       (tab: AdminTab): boolean => {
         switch (tab) {
           case 'dashboard':
-            return hasAnyPerm(
-              'VIEW_SUPER_ADMIN_DASHBOARD',
-              'VIEW_OPERATIONS_DASHBOARD',
-              'VIEW_FINANCE_DASHBOARD',
-              'VIEW_TECH_DASHBOARD'
-            );
+            return hasAnyPerm('VIEW_SUPER_ADMIN_DASHBOARD', 'FULL_PLATFORM_CONTROL');
           case 'org-structure':
             return hasAnyPerm(
               'VIEW_SUPER_ADMIN_DASHBOARD',
@@ -330,7 +325,7 @@ export function AdminDashboard({
           case 'support-sop-faq':
             return true;
           case 'settings':
-            return true;
+            return hasAnyPerm('MANAGE_SETTINGS', 'FULL_PLATFORM_CONTROL');
           default:
             return false;
         }

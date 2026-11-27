@@ -62,10 +62,17 @@ body,
 .sidebar-dark.collapsed .sidebar-section-label,
 .sidebar-dark.collapsed .sidebar-footer-card > div:last-child,
 .sidebar-dark.collapsed .sidebar-nav-item a > span:nth-child(2),
+.sidebar-dark.collapsed .sidebar-nav-item a > span:nth-child(3),
 .sidebar-dark.collapsed .sidebar-nav-item .nav-badge-teal,
 .sidebar-dark.collapsed .sidebar-nav-item .nav-badge-green,
-.sidebar-dark.collapsed .sidebar-nav-item .nav-badge-red {
-  display: none;
+.sidebar-dark.collapsed .sidebar-nav-item .nav-badge-red,
+.sidebar-dark.collapsed .sidebar-submenu {
+  display: none !important;
+}
+
+.sidebar-dark.collapsed .brand-header {
+  justify-content: center;
+  padding: 0 0 20px 0;
 }
 
 .sidebar-nav-item {
@@ -414,4 +421,164 @@ body,
     width: calc(100vw - 16px) !important;
     max-width: 100% !important;
   }
+}
+
+/* ==========================================================================
+   INTERACTIVE MAP PICKER & LOCALITY HUB PILLS
+   ========================================================================== */
+.map-picker-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.map-search-container {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.map-search-input-wrap {
+  position: relative;
+  flex: 1 1 240px;
+  display: flex;
+  align-items: center;
+}
+
+.map-search-input {
+  width: 100%;
+  padding: 9px 34px 9px 12px;
+  border-radius: 10px;
+  border: 1px solid #CBD5E1;
+  background: #FFFFFF;
+  font-size: 0.84rem;
+  color: #0F172A;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.map-search-input:focus {
+  border-color: #0D9488;
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.14);
+}
+
+.map-search-clear-btn {
+  position: absolute;
+  right: 8px;
+  background: #F1F5F9;
+  border: none;
+  border-radius: 999px;
+  width: 20px;
+  height: 20px;
+  font-size: 0.7rem;
+  color: #475569;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.map-gps-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 13px;
+  border-radius: 10px;
+  border: 1px solid #CBD5E1;
+  background: #FFFFFF;
+  color: #0F172A;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.map-gps-btn:hover:not(:disabled) {
+  background: #F0FDFA;
+  border-color: #0D9488;
+  color: #0F766E;
+}
+
+.map-presets-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.map-presets-label {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #475569;
+  margin-right: 4px;
+}
+
+.map-preset-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid #CBD5E1;
+  background: #F8FAFC;
+  color: #1E293B;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.map-preset-pill:hover {
+  background: #F0FDFA;
+  border-color: #0D9488;
+  color: #0F766E;
+}
+
+.map-search-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 1200;
+  background: #FFFFFF;
+  border: 1px solid #CBD5E1;
+  border-radius: 12px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.map-search-result-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #F1F5F9;
+}
+
+.map-search-result-item:hover {
+  background: #F0FDFA;
+}
+
+.map-search-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: #F1F5F9;
+  color: #334155;
+  font-size: 0.78rem;
+}
+
+.map-search-status-bar button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #64748B;
+  font-weight: 700;
 }
