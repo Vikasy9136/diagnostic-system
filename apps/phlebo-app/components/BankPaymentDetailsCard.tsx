@@ -35,6 +35,7 @@ import {
   uploadPrivateQrImage,
 } from '../services/walletService';
 import { styles } from '../styles/phleboStyles';
+import { BRAND_FONTS } from './LabSetuBrand';
 
 function statusBadgeStyle(status?: string): { bg: string; fg: string; label: string } {
   if (status === 'VERIFIED') return { bg: '#DCFCE7', fg: '#15803D', label: 'Verified' };
@@ -682,10 +683,11 @@ export function BankPaymentDetailsCard() {
             </View>
 
             <TextInput
-              style={[styles.fieldInput, { marginBottom: 12 }]}
+              style={[styles.fieldInput, { marginBottom: 12, fontFamily: BRAND_FONTS.medium }]}
               value={bankSearch}
               onChangeText={setBankSearch}
-              placeholder="Search bank name or IFSC prefix (e.g. SBI, HDFC)..."
+              placeholder="Search bank name, alias or IFSC (e.g. SBI, BOB, HDFC)..."
+              placeholderTextColor="#94A3B8"
             />
 
             <ScrollView keyboardShouldPersistTaps="handled">

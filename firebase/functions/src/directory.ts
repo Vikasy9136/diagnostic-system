@@ -1983,24 +1983,38 @@ export async function verifyEmailOtp(
     );
   }
 
-  const otpSnap = await db.collection('email_otps').doc(normalized).get();
-  const record = otpSnap.exists ? (otpSnap.data() as StoredOtpRecord) : undefined;
+  const otpRef = db.collection('email_otps').doc(normalized);
+  const txResult = await db.runTransaction(async (tx) => {
+    const otpSnap = await tx.get(otpRef);
+    const record = otpSnap.exists ? (otpSnap.data() as StoredOtpRecord) : undefined;
 
-  if (!record || record.used) {
-    throw new AppError('This code is invalid or already used. Please request a new OTP.', 400, 'OTP_INVALID');
-  }
-  if (Date.now() > record.expiresAt) {
-    throw new AppError('This OTP has expired. Please request a new code.', 400, 'OTP_EXPIRED');
-  }
-  if (record.attempts >= 5) {
-    throw new AppError('Too many incorrect attempts. Please request a new OTP.', 429, 'OTP_LOCKED');
-  }
+    if (!record || record.used) {
+      return { ok: false as const, code: 'OTP_INVALID' as const };
+    }
+    if (Date.now() > record.expiresAt) {
+      return { ok: false as const, code: 'OTP_EXPIRED' as const };
+    }
+    if (record.attempts >= 5) {
+      return { ok: false as const, code: 'OTP_LOCKED' as const };
+    }
+    if (hashOtp(normalized, otp) !== record.otpHash) {
+      tx.set(otpRef, { attempts: record.attempts + 1 }, { merge: true });
+      return { ok: false as const, code: 'OTP_MISMATCH' as const };
+    }
+    tx.set(otpRef, { used: true, verifiedAt: new Date().toISOString() }, { merge: true });
+    return { ok: true as const };
+  });
 
-  if (hashOtp(normalized, otp) !== record.otpHash) {
-    await db
-      .collection('email_otps')
-      .doc(normalized)
-      .set({ attempts: record.attempts + 1 }, { merge: true });
+  if (!txResult.ok) {
+    if (txResult.code === 'OTP_INVALID') {
+      throw new AppError('This code is invalid or already used. Please request a new OTP.', 400, 'OTP_INVALID');
+    }
+    if (txResult.code === 'OTP_EXPIRED') {
+      throw new AppError('This OTP has expired. Please request a new code.', 400, 'OTP_EXPIRED');
+    }
+    if (txResult.code === 'OTP_LOCKED') {
+      throw new AppError('Too many incorrect attempts. Please request a new OTP.', 429, 'OTP_LOCKED');
+    }
     await recordLoginHistory({
       uid: profile.id,
       email: normalized,
@@ -2015,8 +2029,6 @@ export async function verifyEmailOtp(
     });
     throw new AppError('Incorrect OTP code. Please check your email and try again.', 401, 'OTP_MISMATCH');
   }
-
-  await db.collection('email_otps').doc(normalized).set({ used: true }, { merge: true });
 
   const resolvedLabId = await resolveLabIdForEmailIfMissing(profile.role, normalized, profile.labId);
   const resolvedPhleboId = await resolvePhleboIdForEmailIfMissing(

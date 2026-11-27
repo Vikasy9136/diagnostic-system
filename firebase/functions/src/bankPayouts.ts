@@ -107,18 +107,25 @@ async function getBeneficiarySummary(type: 'PHLEBOTOMIST' | 'LARGE_LAB', id: str
   const snap = await db.collection('beneficiary_payout_profiles').doc(profileDocId(type, id)).get();
   if (snap.exists) {
     const data = snap.data() as Record<string, any>;
+    const bankAccount = data.bankAccount
+      ? {
+          ...data.bankAccount,
+          ifsc: data.bankAccount.ifsc || data.bankAccount.ifscCode,
+          ifscCode: data.bankAccount.ifscCode || data.bankAccount.ifsc,
+        }
+      : undefined;
     return {
       defaultMethod: data.defaultMethod || 'NONE',
-      bankAccount: data.bankAccount,
+      bankAccount,
       upiAccount: data.upiAccount,
       qrCode: data.qrCode,
-      bankLast4: data.bankAccount?.last4,
-      maskedAccountNumber: data.bankAccount?.maskedAccountNumber,
-      ifscCode: data.bankAccount?.ifscCode,
-      bankName: data.bankAccount?.bankName,
-      branchName: data.bankAccount?.branchName,
-      accountHolderName: data.bankAccount?.accountHolderName,
-      bankVerificationStatus: data.bankAccount?.verificationStatus || 'UNVERIFIED',
+      bankLast4: bankAccount?.last4,
+      maskedAccountNumber: bankAccount?.maskedAccountNumber,
+      ifscCode: bankAccount?.ifscCode,
+      bankName: bankAccount?.bankName,
+      branchName: bankAccount?.branchName,
+      accountHolderName: bankAccount?.accountHolderName,
+      bankVerificationStatus: bankAccount?.verificationStatus || 'UNVERIFIED',
       maskedUpiId: data.upiAccount?.maskedUpiId,
       upiVerificationStatus: data.upiAccount?.verificationStatus || 'UNVERIFIED',
       updatedAt: data.updatedAt || new Date().toISOString(),
@@ -159,6 +166,7 @@ async function saveBank(params: {
     accountHolderName: holder,
     maskedAccountNumber: maskAcct(acct),
     last4: acct.slice(-4),
+    ifsc: ifscInfo.ifsc,
     ifscCode: ifscInfo.ifsc,
     bankCode: params.selectedBankCode || ifscInfo.bankCode || ifscInfo.ifsc.slice(0, 4),
     bankName: ifscInfo.bank,
@@ -316,6 +324,104 @@ export function createPhleboPayoutsCloudRouter(): Router {
   return r;
 }
 
+function detectImageMimeFromMagicBytes(buf: Buffer): 'image/png' | 'image/jpeg' | 'image/webp' | null {
+  if (buf.length < 12) return null;
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+  return null;
+}
+
+function decryptSecret(enc?: { iv?: string; tag?: string; ciphertext?: string }): string | null {
+  if (!enc?.iv || !enc?.tag || !enc?.ciphertext) return null;
+  try {
+    const decipher = crypto.createDecipheriv('aes-256-gcm', getEncKey(), Buffer.from(enc.iv, 'base64'));
+    decipher.setAuthTag(Buffer.from(enc.tag, 'base64'));
+    return Buffer.concat([decipher.update(Buffer.from(enc.ciphertext, 'base64')), decipher.final()]).toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+async function handleSaveQrForBeneficiary(params: {
+  type: 'PHLEBOTOMIST' | 'LARGE_LAB';
+  id: string;
+  base64Data: string;
+  source?: string;
+  decodedUpiUri?: string;
+}) {
+  const rawB64 = String(params.base64Data || '').replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '').trim();
+  if (!rawB64) throw new AppError('QR image data is required.', 400, 'BAD_REQUEST');
+  const buf = Buffer.from(rawB64, 'base64');
+  if (buf.length < 64 || buf.length > 5 * 1024 * 1024) {
+    throw new AppError('QR image must be between 64 bytes and 5 MB.', 400, 'INVALID_FILE_SIZE');
+  }
+  const detectedMime = detectImageMimeFromMagicBytes(buf);
+  if (!detectedMime) {
+    throw new AppError('Unsupported QR image format. Only PNG, JPEG, or WebP images are allowed.', 400, 'UNSUPPORTED_FILE_TYPE');
+  }
+
+  const ext = detectedMime === 'image/jpeg' ? 'jpg' : detectedMime === 'image/webp' ? 'webp' : 'png';
+  const folder = params.type === 'PHLEBOTOMIST' ? 'private-phlebo-qr' : 'private-large-lab-qr';
+  const storagePath = `${folder}/${params.id}/upi-qr.${ext}`;
+  await admin.storage().bucket().file(storagePath).save(buf, { contentType: detectedMime, public: false });
+
+  const docRef = db.collection('beneficiary_payout_profiles').doc(profileDocId(params.type, params.id));
+  const curSnap = await docRef.get();
+  const curData = (curSnap.data() as Record<string, any>) || {};
+  const savedUpi = decryptSecret(curData.upiAccount?.encryptedUpi)?.toLowerCase();
+
+  let decodedUpiId: string | undefined;
+  let consistencyStatus: 'MATCHED' | 'VPA_MISMATCH' | 'UNVERIFIED' = 'UNVERIFIED';
+  if (params.decodedUpiUri && params.decodedUpiUri.toLowerCase().startsWith('upi://pay')) {
+    const qIdx = params.decodedUpiUri.indexOf('?');
+    if (qIdx >= 0) {
+      const sp = new URLSearchParams(params.decodedUpiUri.slice(qIdx + 1));
+      decodedUpiId = sp.get('pa')?.trim().toLowerCase() || undefined;
+    }
+  }
+  if (decodedUpiId && savedUpi) {
+    consistencyStatus = decodedUpiId === savedUpi ? 'MATCHED' : 'VPA_MISMATCH';
+  }
+
+  const now = new Date().toISOString();
+  const verificationStatus = consistencyStatus === 'VPA_MISMATCH' ? 'FAILED' : 'PENDING_VERIFICATION';
+  const qrRecord = {
+    available: true,
+    storagePath,
+    mimeType: detectedMime,
+    source: params.source === 'GENERATED_FROM_UPI' ? 'GENERATED_FROM_UPI' : 'UPLOADED',
+    ...(decodedUpiId ? { decodedUpiId } : {}),
+    consistencyStatus,
+    verificationStatus,
+    updatedAt: now,
+  };
+  await docRef.set({ qrCode: qrRecord, updatedAt: now }, { merge: true });
+  return qrRecord;
+}
+
+async function handleGetQrForBeneficiary(type: 'PHLEBOTOMIST' | 'LARGE_LAB', id: string) {
+  const snap = await db.collection('beneficiary_payout_profiles').doc(profileDocId(type, id)).get();
+  const qr = snap.exists ? (snap.data() as Record<string, any>)?.qrCode : undefined;
+  if (!qr?.available || !qr?.storagePath) return { available: false };
+  const file = admin.storage().bucket().file(String(qr.storagePath));
+  const [exists] = await file.exists();
+  if (!exists) return { available: false };
+  const [signedUrl] = await file.getSignedUrl({ action: 'read', expires: Date.now() + 120000 });
+  return { available: true, signedUrl, ...qr };
+}
+
+async function handleDeleteQrForBeneficiary(type: 'PHLEBOTOMIST' | 'LARGE_LAB', id: string) {
+  const docRef = db.collection('beneficiary_payout_profiles').doc(profileDocId(type, id));
+  const snap = await docRef.get();
+  const qr = snap.exists ? (snap.data() as Record<string, any>)?.qrCode : undefined;
+  if (qr?.storagePath) {
+    await admin.storage().bucket().file(String(qr.storagePath)).delete({ ignoreNotFound: true });
+  }
+  await docRef.set({ qrCode: { available: false, updatedAt: new Date().toISOString() } }, { merge: true });
+  return { available: false };
+}
+
 export function createLargeLabAndWalletCloudRouter(): Router {
   const r = Router();
   r.get('/large-lab/payout-profile', requireAuth, requireRoles(UserRole.LARGE_LAB, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
@@ -367,39 +473,84 @@ export function createLargeLabAndWalletCloudRouter(): Router {
     } catch (e) { next(e); }
   });
 
-  r.post('/v1/wallet/phlebo/qr', requireAuth, requireRoles(UserRole.PHLEBOTOMIST, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  r.post('/large-lab/payout-profile/qr', requireAuth, requireRoles(UserRole.LARGE_LAB, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
-      const id = req.user?.phlebotomistId || req.user?.uid || '';
-      const rawB64 = String(req.body?.base64Data || '').replace(/^data:image\/[a-zA-Z+]+;base64,/, '');
-      const mimeType = String(req.body?.mimeType || 'image/png');
-      const path = `private-phlebo-qr/${id}/upi-qr.png`;
-      await admin.storage().bucket().file(path).save(Buffer.from(rawB64, 'base64'), { contentType: mimeType, public: false });
-      const now = new Date().toISOString();
-      await db.collection('beneficiary_payout_profiles').doc(profileDocId('PHLEBOTOMIST', id)).set({
-        qrCode: { available: true, storagePath: path, mimeType, source: req.body?.source || 'UPLOADED', verificationStatus: 'PENDING_VERIFICATION', updatedAt: now },
-        updatedAt: now,
-      }, { merge: true });
-      res.json({ success: true, data: { available: true }, timestamp: now });
+      const id = req.user?.labId || req.user?.uid || '';
+      const data = await handleSaveQrForBeneficiary({ type: 'LARGE_LAB', id, base64Data: String(req.body?.base64Data || ''), source: req.body?.source, decodedUpiUri: req.body?.decodedUpiUri });
+      res.json({ success: true, data, timestamp: new Date().toISOString() });
     } catch (e) { next(e); }
   });
 
-  r.get('/v1/wallet/phlebo/qr', requireAuth, requireRoles(UserRole.PHLEBOTOMIST, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  r.get('/large-lab/payout-profile/qr', requireAuth, requireRoles(UserRole.LARGE_LAB, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
-      const id = req.user?.phlebotomistId || req.user?.uid || '';
-      const file = admin.storage().bucket().file(`private-phlebo-qr/${id}/upi-qr.png`);
-      const [exists] = await file.exists();
-      if (!exists) return res.json({ success: true, data: { available: false } });
-      const [signedUrl] = await file.getSignedUrl({ action: 'read', expires: Date.now() + 120000 });
-      res.json({ success: true, data: { available: true, signedUrl } });
+      const id = req.user?.labId || req.user?.uid || '';
+      const data = await handleGetQrForBeneficiary('LARGE_LAB', id);
+      res.json({ success: true, data });
     } catch (e) { next(e); }
   });
 
-  r.delete('/v1/wallet/phlebo/qr', requireAuth, requireRoles(UserRole.PHLEBOTOMIST, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  r.delete('/large-lab/payout-profile/qr', requireAuth, requireRoles(UserRole.LARGE_LAB, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const id = req.user?.labId || req.user?.uid || '';
+      const data = await handleDeleteQrForBeneficiary('LARGE_LAB', id);
+      res.json({ success: true, data });
+    } catch (e) { next(e); }
+  });
+
+  // Phlebo QR routes matching apps/phlebo-app/services/walletService.ts (/api/phlebo/payout-profile/qr)
+  r.post('/phlebo/payout-profile/qr', requireAuth, requireRoles(UserRole.PHLEBOTOMIST, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
       const id = req.user?.phlebotomistId || req.user?.uid || '';
-      await admin.storage().bucket().file(`private-phlebo-qr/${id}/upi-qr.png`).delete({ ignoreNotFound: true });
-      await db.collection('beneficiary_payout_profiles').doc(profileDocId('PHLEBOTOMIST', id)).set({ qrCode: { available: false, updatedAt: new Date().toISOString() } }, { merge: true });
-      res.json({ success: true, data: { available: false } });
+      const data = await handleSaveQrForBeneficiary({ type: 'PHLEBOTOMIST', id, base64Data: String(req.body?.base64Data || ''), source: req.body?.source, decodedUpiUri: req.body?.decodedUpiUri });
+      res.json({ success: true, data, timestamp: new Date().toISOString() });
+    } catch (e) { next(e); }
+  });
+
+  r.get('/phlebo/payout-profile/qr', requireAuth, requireRoles(UserRole.PHLEBOTOMIST, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const id = req.user?.phlebotomistId || req.user?.uid || '';
+      const data = await handleGetQrForBeneficiary('PHLEBOTOMIST', id);
+      res.json({ success: true, data });
+    } catch (e) { next(e); }
+  });
+
+  r.delete('/phlebo/payout-profile/qr', requireAuth, requireRoles(UserRole.PHLEBOTOMIST, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const id = req.user?.phlebotomistId || req.user?.uid || '';
+      const data = await handleDeleteQrForBeneficiary('PHLEBOTOMIST', id);
+      res.json({ success: true, data });
+    } catch (e) { next(e); }
+  });
+
+  // Phlebo wallet read routes (/api/phlebo/wallet*)
+  r.get('/phlebo/wallet', requireAuth, requireRoles(UserRole.PHLEBOTOMIST, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const id = req.user?.phlebotomistId || req.user?.uid || '';
+      const [wSnap, cfgSnap] = await Promise.all([
+        db.collection('wallets').doc(id).get(),
+        db.collection('settings').doc('withdrawalConfig').get(),
+      ]);
+      const wallet = wSnap.exists ? { id: wSnap.id, ...wSnap.data() } : { id, phleboId: id, availableBalancePaise: 0, pendingWithdrawalPaise: 0, withdrawalEligibleBalancePaise: 0, totalEarnedPaise: 0, totalWithdrawnPaise: 0, thisWeekEarningsPaise: 0, thisMonthEarningsPaise: 0 };
+      const config = cfgSnap.exists ? cfgSnap.data() : { minWithdrawalPaise: 10000, cycleDays: 7, platformFeePct: 10 };
+      res.json({ success: true, data: { wallet, config } });
+    } catch (e) { next(e); }
+  });
+
+  r.get('/phlebo/wallet/transactions', requireAuth, requireRoles(UserRole.PHLEBOTOMIST, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const id = req.user?.phlebotomistId || req.user?.uid || '';
+      const snap = await db.collection('walletTransactions').where('phleboId', '==', id).get();
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a: any, b: any) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      res.json({ success: true, data: list });
+    } catch (e) { next(e); }
+  });
+
+  r.get('/phlebo/wallet/withdrawals', requireAuth, requireRoles(UserRole.PHLEBOTOMIST, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const id = req.user?.phlebotomistId || req.user?.uid || '';
+      const snap = await db.collection('withdrawalRequests').where('phleboId', '==', id).get();
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a: any, b: any) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      res.json({ success: true, data: list });
     } catch (e) { next(e); }
   });
 

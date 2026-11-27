@@ -5,7 +5,57 @@ export interface BankBrandMeta {
   shortName: string;
   accentColor: string;
   bgTint: string;
+  logoFolder: string;
+  logoAssetPath: string;
 }
+
+const BANK_FOLDER_MAP: Record<string, string> = {
+  SBIN: 'sbi',
+  HDFC: 'hdfc',
+  ICIC: 'icici',
+  UTIB: 'axis',
+  KKBK: 'kotak',
+  PUNB: 'pnb',
+  BARB: 'bob',
+  CNRB: 'canara',
+  UBIN: 'union-bank',
+  IBKL: 'idbi',
+  INDB: 'indusind',
+  YESB: 'yes-bank',
+  FDRL: 'federal-bank',
+  IDFB: 'idfc-first',
+  AUBL: 'au-small-finance',
+  BKID: 'bank-of-india',
+  IDIB: 'indian-bank',
+  CBIN: 'central-bank',
+  UCBA: 'uco-bank',
+  MAHB: 'bank-of-maharashtra',
+  IOBA: 'indian-overseas-bank',
+};
+
+const BANK_ALIASES: Record<string, string[]> = {
+  SBIN: ['sbi', 'state bank', 'state bank of india'],
+  HDFC: ['hdfc', 'hdfc bank'],
+  ICIC: ['icici', 'icici bank'],
+  UTIB: ['axis', 'axis bank', 'uti'],
+  KKBK: ['kotak', 'kotak mahindra'],
+  PUNB: ['pnb', 'punjab national'],
+  BARB: ['bob', 'bank of baroda', 'baroda'],
+  CNRB: ['canara'],
+  UBIN: ['union', 'union bank'],
+  IBKL: ['idbi'],
+  INDB: ['indusind'],
+  YESB: ['yes', 'yes bank'],
+  FDRL: ['federal'],
+  IDFB: ['idfc', 'idfc first'],
+  AUBL: ['au', 'au small finance'],
+  BKID: ['boi', 'bank of india'],
+  IDIB: ['indian bank'],
+  CBIN: ['cbi', 'central bank'],
+  UCBA: ['uco'],
+  MAHB: ['bom', 'maharashtra'],
+  IOBA: ['iob', 'indian overseas'],
+};
 
 export const SUPPORTED_BANKS_DIRECTORY: BankDirectoryEntry[] = [
   { code: 'SBIN', name: 'State Bank of India', shortName: 'SBI', ifscPrefix: 'SBIN', popular: true, accentColor: '#1D4ED8', upiSupported: true, impsSupported: true, neftSupported: true },
@@ -17,6 +67,8 @@ export const SUPPORTED_BANKS_DIRECTORY: BankDirectoryEntry[] = [
   { code: 'BARB', name: 'Bank of Baroda', shortName: 'BOB', ifscPrefix: 'BARB', popular: true, accentColor: '#F97316', upiSupported: true, impsSupported: true, neftSupported: true },
   { code: 'CNRB', name: 'Canara Bank', shortName: 'CANARA', ifscPrefix: 'CNRB', popular: true, accentColor: '#0284C7', upiSupported: true, impsSupported: true, neftSupported: true },
   { code: 'IDFB', name: 'IDFC FIRST Bank', shortName: 'IDFC', ifscPrefix: 'IDFB', popular: true, accentColor: '#991B1B', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'IBKL', name: 'IDBI Bank', shortName: 'IDBI', ifscPrefix: 'IBKL', popular: false, accentColor: '#0F766E', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'MAHB', name: 'Bank of Maharashtra', shortName: 'BOM', ifscPrefix: 'MAHB', popular: false, accentColor: '#1D4ED8', upiSupported: true, impsSupported: true, neftSupported: true },
   { code: 'UBIN', name: 'Union Bank of India', shortName: 'UNION', ifscPrefix: 'UBIN', popular: false, accentColor: '#1D4ED8', upiSupported: true, impsSupported: true, neftSupported: true },
   { code: 'IDIB', name: 'Indian Bank', shortName: 'INDIAN', ifscPrefix: 'IDIB', popular: false, accentColor: '#0369A1', upiSupported: true, impsSupported: true, neftSupported: true },
   { code: 'INDB', name: 'IndusInd Bank', shortName: 'INDUS', ifscPrefix: 'INDB', popular: false, accentColor: '#7F1D1D', upiSupported: true, impsSupported: true, neftSupported: true },
@@ -52,7 +104,8 @@ export function filterSupportedBanks(query?: string): {
           b.name.toLowerCase().includes(q) ||
           b.shortName.toLowerCase().includes(q) ||
           b.code.toLowerCase().includes(q) ||
-          b.ifscPrefix.toLowerCase().includes(q)
+          b.ifscPrefix.toLowerCase().includes(q) ||
+          (BANK_ALIASES[b.code] || []).some((alias) => alias.includes(q) || q.includes(alias))
       )
     : SUPPORTED_BANKS_DIRECTORY;
   return {
@@ -66,11 +119,14 @@ export function getBankBrandMeta(bankCodeOrIfscOrName?: string): BankBrandMeta {
   const prefix = raw.toUpperCase().slice(0, 4);
   const byCode = SUPPORTED_BANKS_DIRECTORY.find((b) => b.code === prefix || b.ifscPrefix === prefix);
   if (byCode) {
+    const folder = BANK_FOLDER_MAP[byCode.code] || 'other-banks';
     return {
       code: byCode.code,
       shortName: byCode.shortName,
       accentColor: byCode.accentColor,
       bgTint: '#F8FAFC',
+      logoFolder: folder,
+      logoAssetPath: `packages/shared/assets/banks/${folder}/logo.svg`,
     };
   }
   const lower = raw.toLowerCase();
@@ -79,15 +135,19 @@ export function getBankBrandMeta(bankCodeOrIfscOrName?: string): BankBrandMeta {
         (b) =>
           b.name.toLowerCase().includes(lower) ||
           lower.includes(b.shortName.toLowerCase()) ||
-          lower.includes(b.name.toLowerCase())
+          lower.includes(b.name.toLowerCase()) ||
+          (BANK_ALIASES[b.code] || []).some((alias) => lower.includes(alias))
       )
     : undefined;
   if (byName) {
+    const folder = BANK_FOLDER_MAP[byName.code] || 'other-banks';
     return {
       code: byName.code,
       shortName: byName.shortName,
       accentColor: byName.accentColor,
       bgTint: '#F8FAFC',
+      logoFolder: folder,
+      logoAssetPath: `packages/shared/assets/banks/${folder}/logo.svg`,
     };
   }
   return {
@@ -95,6 +155,8 @@ export function getBankBrandMeta(bankCodeOrIfscOrName?: string): BankBrandMeta {
     shortName: prefix || 'BANK',
     accentColor: '#0D9488',
     bgTint: '#F0FDFA',
+    logoFolder: 'other-banks',
+    logoAssetPath: 'packages/shared/assets/banks/other-banks/logo.svg',
   };
 }
 

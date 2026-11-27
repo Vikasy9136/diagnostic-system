@@ -621,6 +621,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
         onShowAlert({ variant: 'error', title: 'Google Sign-In Failed', message: msg });
       }
     } finally {
+      otpVerifyInFlightRef.current = false;
       setAuthSubmitting(false);
     }
   }
@@ -717,6 +718,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
       setInlineError(fallbackMsg);
       onShowAlert({ variant: 'error', title: 'Sign In Unsuccessful', message: fallbackMsg });
     } finally {
+      otpVerifyInFlightRef.current = false;
       setAuthSubmitting(false);
     }
   }
@@ -827,6 +829,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
         message: msg,
       });
     } finally {
+      otpVerifyInFlightRef.current = false;
       setAuthSubmitting(false);
     }
   }
@@ -956,11 +959,15 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
       setInlineError(msg);
       onShowAlert({ variant: 'warning', title: 'Email Service Unavailable', message: msg });
     } finally {
+      otpVerifyInFlightRef.current = false;
       setAuthSubmitting(false);
     }
   }
 
+  const otpVerifyInFlightRef = React.useRef(false);
+
   async function handleVerifyOtp() {
+    if (otpVerifyInFlightRef.current) return;
     setInlineError(null);
     setInlineSuccess(null);
     const cleanInput = otpEmail.trim();
@@ -970,6 +977,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
       return;
     }
 
+    otpVerifyInFlightRef.current = true;
     setAuthSubmitting(true);
     try {
       const res = await postAuthJson('/auth/otp/verify', {
@@ -1026,6 +1034,7 @@ export function PhleboAuthGate({ onShowAlert, onAuthenticated }: PhleboAuthGateP
         message: msg,
       });
     } finally {
+      otpVerifyInFlightRef.current = false;
       setAuthSubmitting(false);
     }
   }
