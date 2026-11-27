@@ -1,10 +1,75 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
+  filterSupportedBanks,
   getBankBrandMeta,
+  type BankDirectoryEntry,
   type IfscLookupResult,
   type PhleboPaymentMethodSummary,
 } from '@diagnostic/shared';
 import { API_BASE_URL, auth } from '../../firebase';
+
+// Bundle all centralized SVG bank logos from packages/shared/assets/banks/*/logo.svg
+const BANK_LOGO_MODULES = import.meta.glob(
+  '../../../../../packages/shared/assets/banks/*/logo.svg',
+  { eager: true, import: 'default' }
+) as Record<string, string>;
+
+function resolveBankLogoSrc(logoFolder?: string): string | null {
+  if (!logoFolder) return null;
+  const suffix = `/banks/${logoFolder}/logo.svg`;
+  for (const [path, url] of Object.entries(BANK_LOGO_MODULES)) {
+    if (path.endsWith(suffix)) return url;
+  }
+  return null;
+}
+
+function BankLogoIcon({
+  codeOrIfscOrName,
+  size = 32,
+}: {
+  codeOrIfscOrName?: string;
+  size?: number;
+}) {
+  const meta = getBankBrandMeta(codeOrIfscOrName);
+  const logoSrc = resolveBankLogoSrc(meta.logoFolder);
+  if (logoSrc) {
+    return (
+      <img
+        src={logoSrc}
+        alt={meta.shortName}
+        style={{
+          width: `${size}px`,
+          height: `${size}px`,
+          borderRadius: '8px',
+          objectFit: 'contain',
+          background: '#FFFFFF',
+          border: '1px solid #E2E8F0',
+          padding: '2px',
+          flexShrink: 0,
+        }}
+      />
+    );
+  }
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: `${size}px`,
+        height: `${size}px`,
+        borderRadius: '8px',
+        background: meta.accentColor,
+        color: '#FFFFFF',
+        fontSize: '0.68rem',
+        fontWeight: 800,
+        flexShrink: 0,
+      }}
+    >
+      {meta.shortName}
+    </span>
+  );
+}
 
 async function callLargeLabFinanceApi<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = auth.currentUser ? await auth.currentUser.getIdToken() : '';
@@ -41,6 +106,9 @@ export function LargeLabBankingPayoutCard() {
   const [statusMsg, setStatusMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
   // Bank form
+  const [bankPickerOpen, setBankPickerOpen] = useState(false);
+  const [bankSearch, setBankSearch] = useState('');
+  const [selectedBank, setSelectedBank] = useState<BankDirectoryEntry | null>(null);
   const [holderName, setHolderName] = useState('');
   const [ifscInput, setIfscInput] = useState('');
   const [ifscInfo, setIfscInfo] = useState<IfscLookupResult | null>(null);
@@ -48,6 +116,8 @@ export function LargeLabBankingPayoutCard() {
   const [acctNum, setAcctNum] = useState('');
   const [confirmAcctNum, setConfirmAcctNum] = useState('');
   const [savingBank, setSavingBank] = useState(false);
+
+  const filteredBanks = useMemo(() => filterSupportedBanks(bankSearch), [bankSearch]);
 
   // UPI form
   const [upiInput, setUpiInput] = useState('');
@@ -99,6 +169,8 @@ export function LargeLabBankingPayoutCard() {
         throw new Error(json.message || 'IFSC not found');
       }
       setIfscInfo(json.data);
+      const matched = filterSupportedBanks(json.data.bankCode || json.data.bank || '').all[0];
+      if (matched) setSelectedBank(matched);
     } catch (err) {
       setIfscInfo(null);
       setStatusMsg({ type: 'err', text: err instanceof Error ? err.message : 'IFSC lookup failed.' });
@@ -120,7 +192,7 @@ export function LargeLabBankingPayoutCard() {
           accountNumber: acctNum.replace(/\s+/g, ''),
           confirmAccountNumber: confirmAcctNum.replace(/\s+/g, ''),
           ifscCode: ifscInput.trim().toUpperCase(),
-          selectedBankCode: ifscInfo?.bankCode,
+          selectedBankCode: selectedBank?.code || ifscInfo?.bankCode,
           makeDefault: true,
         }),
       });
@@ -224,7 +296,6 @@ export function LargeLabBankingPayoutCard() {
     }
   }
 
-  const bankMeta = getBankBrandMeta(summary?.bankAccount?.bankCode || summary?.bankAccount?.ifsc);
   const bankStatus = statusPill(summary?.bankAccount?.verificationStatus);
   const upiStatus = statusPill(summary?.upiAccount?.verificationStatus);
   const qrStatus = statusPill(summary?.qrCode?.verificationStatus);
@@ -283,18 +354,14 @@ export function LargeLabBankingPayoutCard() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 {summary?.bankAccount && (
-                  <span
-                    style={{
-                      padding: '4px 8px',
-                      borderRadius: '8px',
-                      background: bankMeta.accentColor,
-                      color: '#FFFFFF',
-                      fontWeight: 800,
-                      fontSize: '0.72rem',
-                    }}
-                  >
-                    {bankMeta.shortName}
-                  </span>
+                  <BankLogoIcon
+                    codeOrIfscOrName={
+                      summary.bankAccount.bankCode ||
+                      summary.bankAccount.ifsc ||
+                      summary.bankAccount.bankName
+                    }
+                    size={32}
+                  />
                 )}
                 <strong style={{ fontSize: '0.92rem' }}>1. Bank Account</strong>
               </div>
@@ -325,6 +392,47 @@ export function LargeLabBankingPayoutCard() {
 
             {activeEditor === 'BANK' && (
               <form onSubmit={(e) => void handleSaveBank(e)} style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #CBD5E1', display: 'grid', gap: '10px' }}>
+                {/* Dynamic Bank Selector Button with Real Bank Logo */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBankSearch('');
+                    setBankPickerOpen(true);
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '10px',
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: '10px',
+                    border: '1.5px solid #CBD5E1',
+                    background: '#FFFFFF',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                    {selectedBank ? (
+                      <BankLogoIcon codeOrIfscOrName={selectedBank.code} size={30} />
+                    ) : (
+                      <span style={{ fontSize: '1.25rem' }}>🏦</span>
+                    )}
+                    <div>
+                      <div style={{ fontSize: '0.86rem', fontWeight: 700, color: '#0F172A' }}>
+                        {selectedBank ? selectedBank.name : 'Select Your Bank'}
+                      </div>
+                      <div style={{ fontSize: '0.74rem', color: '#64748B' }}>
+                        {selectedBank ? `IFSC starts with ${selectedBank.ifscPrefix}0...` : 'Search SBI, HDFC, ICICI, Axis, Kotak, BOB & 30+ banks'}
+                      </div>
+                    </div>
+                  </div>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#0D9488' }}>
+                    {selectedBank ? 'Change' : 'Choose ▾'}
+                  </span>
+                </button>
+
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '8px' }}>
                   <input
                     className="form-input"
@@ -482,6 +590,156 @@ export function LargeLabBankingPayoutCard() {
             </div>
           </div>
 
+        </div>
+      )}
+
+      {/* Searchable Bank Selector Modal with Real Bank Logos */}
+      {bankPickerOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.65)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            padding: '16px',
+          }}
+          onClick={() => setBankPickerOpen(false)}
+        >
+          <div
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: '16px',
+              width: '100%',
+              maxWidth: '520px',
+              maxHeight: '85vh',
+              display: 'flex',
+              flexDirection: 'column',
+              padding: '20px',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.28)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>
+                Select Bank
+              </h3>
+              <button
+                type="button"
+                onClick={() => setBankPickerOpen(false)}
+                style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: '#64748B' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <input
+              type="text"
+              className="form-input"
+              autoFocus
+              placeholder="Search bank name or alias (e.g. SBI, HDFC, ICICI, BOB, Kotak)..."
+              value={bankSearch}
+              onChange={(e) => setBankSearch(e.target.value)}
+              style={{ marginBottom: '12px' }}
+            />
+
+            <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {filteredBanks.popular.length > 0 && !bankSearch.trim() && (
+                <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', marginTop: '4px', marginBottom: '2px' }}>
+                  Popular Banks
+                </div>
+              )}
+              {(bankSearch.trim() ? filteredBanks.all : filteredBanks.popular).map((b) => (
+                <button
+                  key={b.code}
+                  type="button"
+                  onClick={() => {
+                    setSelectedBank(b);
+                    if (!ifscInput.trim() || !ifscInput.startsWith(b.ifscPrefix)) {
+                      setIfscInput(b.ifscPrefix);
+                      setIfscInfo(null);
+                    }
+                    setBankPickerOpen(false);
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '10px',
+                    padding: '10px 12px',
+                    borderRadius: '10px',
+                    border: selectedBank?.code === b.code ? '1.5px solid #0D9488' : '1px solid #E2E8F0',
+                    background: selectedBank?.code === b.code ? '#F0FDFA' : '#FFFFFF',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <BankLogoIcon codeOrIfscOrName={b.code} size={30} />
+                    <div>
+                      <div style={{ fontSize: '0.86rem', fontWeight: 700, color: '#0F172A' }}>{b.name}</div>
+                      <div style={{ fontSize: '0.72rem', color: '#64748B' }}>IFSC prefix: {b.ifscPrefix}</div>
+                    </div>
+                  </div>
+                  {selectedBank?.code === b.code && (
+                    <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#0D9488' }}>✓</span>
+                  )}
+                </button>
+              ))}
+
+              {!bankSearch.trim() && filteredBanks.all.length > filteredBanks.popular.length && (
+                <>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', marginTop: '10px', marginBottom: '2px' }}>
+                    All Supported Banks
+                  </div>
+                  {filteredBanks.all
+                    .filter((b) => !b.popular)
+                    .map((b) => (
+                      <button
+                        key={b.code}
+                        type="button"
+                        onClick={() => {
+                          setSelectedBank(b);
+                          if (!ifscInput.trim() || !ifscInput.startsWith(b.ifscPrefix)) {
+                            setIfscInput(b.ifscPrefix);
+                            setIfscInfo(null);
+                          }
+                          setBankPickerOpen(false);
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '10px',
+                          padding: '10px 12px',
+                          borderRadius: '10px',
+                          border: selectedBank?.code === b.code ? '1.5px solid #0D9488' : '1px solid #E2E8F0',
+                          background: selectedBank?.code === b.code ? '#F0FDFA' : '#FFFFFF',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <BankLogoIcon codeOrIfscOrName={b.code} size={30} />
+                          <div>
+                            <div style={{ fontSize: '0.86rem', fontWeight: 700, color: '#0F172A' }}>{b.name}</div>
+                            <div style={{ fontSize: '0.72rem', color: '#64748B' }}>IFSC prefix: {b.ifscPrefix}</div>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                </>
+              )}
+
+              {filteredBanks.all.length === 0 && (
+                <div style={{ padding: '20px', textAlign: 'center', fontSize: '0.84rem', color: '#64748B' }}>
+                  No matching bank found. You can still enter your 11-character IFSC code directly.
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
