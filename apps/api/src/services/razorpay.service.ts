@@ -15,7 +15,7 @@ import { AppError } from '../middleware/errorHandler';
 import { sendPlatformNotification } from './notification.service';
 import { DEV_DATA_STORE } from './devStore';
 import { recordAuditLog } from '../middleware/rbac';
-import { handleTransferOrPayoutWebhookEvent } from './payoutEngine.service';
+import { handleTransferOrPayoutWebhookEvent, initiatePhleboPayout } from './payoutEngine.service';
 
 export interface CreateOrderParams {
   amount?: number | string;
@@ -345,8 +345,9 @@ export async function verifyPayment(params: VerifyPaymentParams) {
 
   const expectedBuf = Buffer.from(expectedSignature, 'utf8');
   const providedBuf = Buffer.from(signature, 'utf8');
+  const isSimAllowed = config.env !== 'production' && orderId.startsWith('order_sim_');
   const isSignatureValid =
-    orderId.startsWith('order_sim_') ||
+    isSimAllowed ||
     (expectedBuf.length === providedBuf.length && crypto.timingSafeEqual(expectedBuf, providedBuf));
 
   if (!isSignatureValid) {
@@ -393,16 +394,40 @@ export async function verifyPayment(params: VerifyPaymentParams) {
 
   let resolvedMethod = params.paymentMethod;
   let fetchedAmountInr = 0;
-  try {
-    const paymentDetails = await client.payments.fetch(paymentId);
+  let fetchedAmountPaise = 0;
+  if (!isSimAllowed) {
+    let paymentDetails: {
+      status?: string;
+      currency?: string;
+      order_id?: string;
+      method?: string;
+      amount?: number;
+    };
+    try {
+      paymentDetails = (await client.payments.fetch(paymentId)) as typeof paymentDetails;
+    } catch (err) {
+      throw mapRazorpayError(err, 'Unable to verify payment capture status with Razorpay.');
+    }
+    if (String(paymentDetails?.status || '').toLowerCase() !== 'captured') {
+      throw new AppError(
+        `Payment ${paymentId} is not captured yet (status: ${paymentDetails?.status || 'unknown'}).`,
+        400,
+        'PAYMENT_NOT_CAPTURED'
+      );
+    }
+    if (String(paymentDetails?.currency || '').toUpperCase() !== 'INR') {
+      throw new AppError('Payment currency mismatch (expected INR).', 400, 'CURRENCY_MISMATCH');
+    }
+    if (paymentDetails?.order_id && paymentDetails.order_id !== orderId) {
+      throw new AppError('Payment order_id mismatch.', 400, 'ORDER_MISMATCH');
+    }
     if (paymentDetails?.method) {
       resolvedMethod = String(paymentDetails.method).toUpperCase();
     }
     if (typeof paymentDetails?.amount === 'number') {
-      fetchedAmountInr = Math.round(paymentDetails.amount) / 100;
+      fetchedAmountPaise = Math.round(paymentDetails.amount);
+      fetchedAmountInr = fetchedAmountPaise / 100;
     }
-  } catch {
-    // Non-fatal
   }
 
   const now = new Date().toISOString();
@@ -1221,7 +1246,15 @@ export async function releasePayout(input: {
     }
     const labNetPayout = Math.max(0, labGross - labOffset);
 
-    const refId = input.referenceId?.trim() || `LABPAY-${Date.now().toString().slice(-6)}`;
+    const manualRef = input.referenceId?.trim() || '';
+    if (manualRef.length < 6) {
+      throw new AppError(
+        'Cannot mark Reference Lab payout PAID without a verified external UTR/reference (min 6 chars) or active Razorpay Route/RazorpayX.',
+        400,
+        'PROVIDER_OR_UTR_REQUIRED'
+      );
+    }
+    const refId = manualRef;
     const mode = input.mode || 'NEFT';
     const payoutId = `POUT-LAB-${Date.now().toString().slice(-6)}`;
     const destSummary = 'Verified Partner Account';
@@ -1240,7 +1273,7 @@ export async function releasePayout(input: {
       mode,
       referenceId: refId,
       destinationSummary: destSummary,
-      status: 'PROCESSED',
+      status: 'MANUAL_RECONCILED',
       processedByEmail: input.adminEmail,
       createdAt: now,
     };
@@ -1340,68 +1373,72 @@ export async function releasePayout(input: {
         phleboOffset = Math.min(phleboPendingFee, phleboGross);
       }
       const phleboNetPayout = Math.max(0, phleboGross - phleboOffset);
+      const manualRef = input.referenceId?.trim() || '';
 
-      const refId = input.referenceId?.trim() || `CURPAY-${Date.now().toString().slice(-6)}`;
-      const mode = input.mode || 'UPI';
-      const payoutId = `POUT-CUR-${Date.now().toString().slice(-6)}`;
-      const destSummary = 'Courier Payout Account';
-      const payoutDoc = {
-        id: payoutId,
-        settlementId: input.settlementId,
-        orderId: String(stl.orderId || orderNumber),
-        orderNumber,
-        recipientRole: 'PHLEBOTOMIST',
-        recipientId: phleboId,
-        recipientName: phleboName || phleboId,
-        amountInr: phleboNetPayout,
-        grossAmountInr: phleboGross,
-        deductedPlatformFeeOffsetInr: phleboOffset,
-        netPayoutInr: phleboNetPayout,
-        mode,
-        referenceId: refId,
-        destinationSummary: destSummary,
-        status: 'PROCESSED',
-        processedByEmail: input.adminEmail,
-        createdAt: now,
-      };
-      await db.collection('payouts').doc(payoutId).set(deepCleanFirestorePayload(payoutDoc));
-      if (phleboOffset > 0 && phleboId) {
-        const remainingFee = Math.max(0, phleboPendingFee - phleboOffset);
-        await db.collection('phlebotomists').doc(phleboId).set({
-          pendingPlatformFeeDueInr: remainingFee,
-          ...(remainingFee === 0 ? { unsettledCashSince: null, serviceSuspended: false, suspensionReason: null } : {}),
-          updatedAt: now,
-        }, { merge: true });
-      }
-      payouts.push(payoutDoc);
-      nextPhleboStatus = 'PAID';
-      phleboRef = refId;
-      phleboPaidAt = now;
-
-      await sendPlatformNotification({
-        title: `Courier Payout Sent: ₹${phleboNetPayout.toLocaleString('en-IN')} (${orderNumber})`,
-        message: phleboOffset > 0
-          ? `Your delivery payout for ${orderNumber}: Gross ₹${phleboGross}, deducted ₹${phleboOffset} platform fee offset, net ₹${phleboNetPayout} released via ${mode} (${destSummary}). Ref: ${refId}.`
-          : `Your delivery payout for ${orderNumber} was released via ${mode} (${destSummary}). Ref: ${refId}.`,
-        category: NotificationCategory.PAYOUT_SETTLED,
-        priority: NotificationPriority.NORMAL,
-        recipientEmail: phData.email ? String(phData.email) : undefined,
-        recipientRole: UserRole.PHLEBOTOMIST,
-        orderId: String(stl.orderId || orderNumber),
-        templateType: 'PAYMENT_RECEIPT',
-        metadata: {
+      if (manualRef.length >= 6) {
+        const mode = input.mode || 'UPI';
+        const payoutId = `POUT-CUR-${Date.now().toString().slice(-6)}`;
+        const destSummary = 'Manual External UTR Reconciliation';
+        const payoutDoc = {
+          id: payoutId,
+          settlementId: input.settlementId,
+          orderId: String(stl.orderId || orderNumber),
           orderNumber,
+          recipientRole: 'PHLEBOTOMIST',
+          recipientId: phleboId,
+          recipientName: phleboName || phleboId,
           amountInr: phleboNetPayout,
           grossAmountInr: phleboGross,
           deductedPlatformFeeOffsetInr: phleboOffset,
-          referenceId: refId,
-          paymentMethod: mode,
-          recipientName: phleboName || phleboId,
-          phleboName: phleboName || phleboId,
+          netPayoutInr: phleboNetPayout,
+          mode,
+          referenceId: manualRef,
           destinationSummary: destSummary,
-        },
-        channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
-      });
+          status: 'MANUAL_RECONCILED',
+          processedByEmail: input.adminEmail,
+          createdAt: now,
+        };
+        await db.collection('payouts').doc(payoutId).set(deepCleanFirestorePayload(payoutDoc));
+        payouts.push(payoutDoc);
+        nextPhleboStatus = 'PAID';
+        phleboRef = manualRef;
+        phleboPaidAt = now;
+      } else {
+        // Route through real Payout Engine (never synthesize fake CURPAY-* or mark PAID without provider!)
+        const ordSnap = stl.orderId ? await db.collection('orders').doc(String(stl.orderId)).get() : null;
+        const ordData = (ordSnap?.data() as Record<string, unknown> | undefined) || {};
+        const ledger = await initiatePhleboPayout({
+          bookingId: String(stl.orderId || orderNumber),
+          orderNumber,
+          settlementId: input.settlementId,
+          phleboId,
+          phleboName: phleboName || phleboId,
+          phleboEmail: phData.email ? String(phData.email) : undefined,
+          phleboPhone: phData.phone ? String(phData.phone) : undefined,
+          phleboActive: phData.isActive !== false,
+          phleboSuspended: Boolean(phData.serviceSuspended),
+          grossEarningInr: phleboGross,
+          platformFeeInr: phleboOffset,
+          paymentStatus: String(stl.paymentStatus || 'PAID'),
+          paymentCaptured: true,
+          sourcePaymentId: stl.razorpayPaymentId ? String(stl.razorpayPaymentId) : undefined,
+          orderStatus: String(ordData.status || 'DELIVERED_TO_LARGE_LAB'),
+          handoverCompleted: true,
+          actorEmail: input.adminEmail,
+        });
+        payouts.push(ledger as unknown as Record<string, unknown>);
+        nextPhleboStatus =
+          ledger.status === 'SETTLED' || ledger.status === 'PROCESSED'
+            ? 'PAID'
+            : ledger.status === 'INITIATED' || ledger.status === 'PROCESSING'
+              ? 'PROCESSING'
+              : ledger.status === 'FAILED' || ledger.status === 'REVERSED'
+                ? 'FAILED'
+                : 'PENDING';
+        if (ledger.providerPayoutId || ledger.providerTransferId || ledger.utrNumber) {
+          phleboRef = ledger.utrNumber || ledger.providerPayoutId || ledger.providerTransferId;
+        }
+      }
     }
   }
 

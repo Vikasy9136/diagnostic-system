@@ -9,6 +9,7 @@ import {
   type PhlebotomistProfile,
 } from '@diagnostic/shared';
 import { BRAND_COLORS } from '../components/LabSetuBrand';
+import { WalletScreen } from './WalletScreen';
 import { fetchMyPayoutLedger, type MyPayoutsResponse } from '../services/phleboPayoutService';
 import { COLORS, styles } from '../styles/phleboStyles';
 import { type EarningRow, type PhleboMetrics } from '../types/phleboTypes';
@@ -39,6 +40,7 @@ export function EarningsScreen({
   const maxCount = Math.max(1, ...metrics.weeklyBars.map((b) => b.count));
   const windowMins = instantPayoutWindowMinutes || 30;
   const [ledgerData, setLedgerData] = useState<MyPayoutsResponse | null>(null);
+  const [activeSubTab, setActiveSubTab] = useState<'WALLET' | 'TRIPS'>('WALLET');
 
   useEffect(() => {
     void fetchMyPayoutLedger()
@@ -177,6 +179,29 @@ export function EarningsScreen({
       </LinearGradient>
 
       <View style={[styles.bodyContainer, { paddingTop: rs(52) }]}>
+        <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+          <TouchableOpacity
+            style={[activeSubTab === 'WALLET' ? styles.btnPrimary : styles.btnSecondary, { flex: 1, paddingVertical: 10 }]}
+            onPress={() => setActiveSubTab('WALLET')}
+          >
+            <Text style={activeSubTab === 'WALLET' ? styles.btnPrimaryText : styles.btnSecondaryText}>
+              💰 Wallet &amp; Withdraw
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[activeSubTab === 'TRIPS' ? styles.btnPrimary : styles.btnSecondary, { flex: 1, paddingVertical: 10 }]}
+            onPress={() => setActiveSubTab('TRIPS')}
+          >
+            <Text style={activeSubTab === 'TRIPS' ? styles.btnPrimaryText : styles.btnSecondaryText}>
+              📊 Trip Earnings
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {activeSubTab === 'WALLET' ? (
+          <WalletScreen onGoToProfile={onGoToProfile} />
+        ) : (
+        <>
         <View style={[styles.slaBannerCard, { marginBottom: 14 }]}>
           <Text style={styles.slaBannerTitle}>
             Payout Summary &amp; Bank Status
@@ -251,6 +276,7 @@ export function EarningsScreen({
         ) : (
           earningRows.map((row) => {
             const { order, payoutRef, customerPaid, amountInr, settled, delivered } = row;
+            const isSyntheticRef = Boolean(payoutRef && /^(CURPAY|LABPAY)-/i.test(String(payoutRef)));
             const slaBadge = getPhleboPayoutSlaBadge(
               row,
               instantPayoutWindowMinutes,
@@ -264,10 +290,12 @@ export function EarningsScreen({
                     {order.smallLabName} → {order.targetLabName}
                   </Text>
                   <Text style={styles.tripLedgerBase}>
-                    {settled
-                      ? `Paid Out${payoutRef ? ` • Ref: ${payoutRef}` : ''}`
+                    {isSyntheticRef
+                      ? `Unverified Local Record (${payoutRef}) • Reconciliation Required`
+                      : settled
+                      ? `Confirmed Payout${payoutRef ? ` • Ref: ${payoutRef}` : ''}`
                       : delivered && customerPaid
-                      ? 'Delivered & Paid Online • Ready for Payout'
+                      ? 'Delivered & Paid Online • Pending Payout'
                       : delivered
                       ? 'Delivered • Awaiting Customer Payment'
                       : formatOrderStatus(order.status)}
@@ -319,20 +347,33 @@ export function EarningsScreen({
             </Text>
           </View>
         ) : (
-          payouts.map((p) => (
-            <View key={p.id} style={styles.tripLedgerRow}>
-              <View style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
-                <Text style={styles.tripLedgerId}>
-                  {p.orderNumber} • {p.mode}
-                </Text>
-                <Text style={styles.tripLedgerLab}>{p.destinationSummary}</Text>
-                <Text style={styles.tripLedgerBase}>
-                  Ref: {p.referenceId} • {new Date(p.createdAt).toLocaleDateString('en-IN')}
-                </Text>
+          payouts.map((p) => {
+            const isSynthetic = Boolean(p.referenceId && /^(CURPAY|LABPAY)-/i.test(String(p.referenceId)));
+            const hasGateway = Boolean((p as unknown as { gatewayPayoutId?: string }).gatewayPayoutId);
+            const badgeLabel = isSynthetic
+              ? 'Unverified Local Record (Needs Reconciliation)'
+              : hasGateway
+                ? 'Razorpay Payout'
+                : 'Manual / Pending';
+            return (
+              <View key={p.id} style={styles.tripLedgerRow}>
+                <View style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
+                  <Text style={styles.tripLedgerId}>
+                    {p.orderNumber} • {p.mode}
+                  </Text>
+                  <Text style={styles.tripLedgerLab}>
+                    {badgeLabel} • {p.destinationSummary}
+                  </Text>
+                  <Text style={styles.tripLedgerBase}>
+                    Ref: {p.referenceId} • {new Date(p.createdAt).toLocaleDateString('en-IN')}
+                  </Text>
+                </View>
+                <Text style={styles.tripLedgerFee}>{formatInr(p.amountInr)}</Text>
               </View>
-              <Text style={styles.tripLedgerFee}>{formatInr(p.amountInr)}</Text>
-            </View>
-          ))
+            );
+          })
+        )}
+        </>
         )}
       </View>
     </ScrollView>

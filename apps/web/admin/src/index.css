@@ -2982,3 +2982,72 @@ body {
   border: none !important;
 }
 
+
+/* ==========================================================================
+   PHASE 13: COMPREHENSIVE RESPONSIVE PORTAL LAYER (320px -> 1920px+)
+   ========================================================================== */
+html,
+body,
+#root {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.dashboard-layout,
+.main-content,
+.content-area,
+.chart-card-modern,
+.kpi-card-modern {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.data-table-container {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.modern-data-table {
+  width: 100%;
+  min-width: 640px;
+}
+
+@media (max-width: 1024px) {
+  .kpi-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  .chart-card-modern[style*="span 2"] {
+    grid-column: span 1 !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .dashboard-layout {
+    flex-direction: column;
+  }
+  .main-content {
+    width: 100% !important;
+    margin-left: 0 !important;
+  }
+  .content-area {
+    padding: 12px !important;
+  }
+  .form-input,
+  .btn-primary,
+  .btn-secondary {
+    min-height: 42px;
+  }
+}
+
+@media (max-width: 480px) {
+  .kpi-row {
+    grid-template-columns: 1fr !important;
+  }
+  .btn-primary,
+  .btn-secondary {
+    width: 100%;
+    justify-content: center;
+  }
+}

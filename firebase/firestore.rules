@@ -225,9 +225,26 @@ service cloud.firestore {
 
     // =========================================================================
     // 3. PHLEBOTOMISTS FLEET (`phlebotomists/{phleboId}`)
+    // Strictly restricted: only self, Super Admin, or authorised Phlebo/Finance Admins.
+    // Small Labs, Large Labs, other Phlebos & unauthorised staff are DENIED.
+    // Phlebo self-updates cannot modify payoutProfile, fees, suspension, or KYC.
     // =========================================================================
     match /phlebotomists/{phleboId} {
-      allow read: if isAuthenticated() && isAccountActive();
+      allow read: if isAuthenticated() && isAccountActive() && (
+        isSuperAdmin()
+        || hasAnyPermission([
+          'MANAGE_PHLEBO_NETWORK',
+          'MANAGE_VERIFICATION',
+          'VIEW_FINANCE_DASHBOARD',
+          'CONFIGURE_COMMISSIONS_PAYOUTS'
+        ])
+        || (isPhlebotomist() && (
+          phleboId == request.auth.uid
+          || (getPhlebotomistId() != null && getPhlebotomistId() == phleboId)
+          || resource.data.email == normalizedEmail()
+          || (request.auth.token.get('email', '') != '' && resource.data.email == request.auth.token.email)
+        ))
+      );
       allow create: if isAdmin()
         || hasAnyPermission(['MANAGE_PHLEBO_NETWORK', 'MANAGE_ONBOARDING', 'MANAGE_VERIFICATION'])
         || (isAuthenticated() && (phleboId == request.auth.uid || request.resource.data.email == normalizedEmail()));
@@ -235,12 +252,23 @@ service cloud.firestore {
       allow update: if isAdmin()
         || hasAnyPermission(['MANAGE_PHLEBO_NETWORK', 'MANAGE_VERIFICATION', 'MANAGE_BOOKINGS_DISPATCH', 'MANAGE_OPERATIONAL_QUALITY'])
         || (isAuthenticated()
+          && isPhlebotomist()
           && (
             phleboId == request.auth.uid
             || (getPhlebotomistId() != null && getPhlebotomistId() == phleboId)
             || resource.data.email == normalizedEmail()
             || (request.auth.token.get('email', '') != '' && resource.data.email == request.auth.token.email)
-          ));
+          )
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'payoutProfile',
+            'pendingPlatformFeeDueInr',
+            'unsettledCashSince',
+            'serviceSuspended',
+            'suspensionReason',
+            'verified',
+            'kycVerified',
+            'isActive'
+          ]));
     }
 
     // =========================================================================
@@ -692,6 +720,45 @@ service cloud.firestore {
 
     match /payout_error_logs/{errId} {
       allow read: if isSuperAdmin() || hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'CONFIGURE_COMMISSIONS_PAYOUTS', 'MANAGE_RECONCILIATION']);
+      allow write: if false;
+    }
+
+    // =========================================================================
+    // 18C. PHLEBO WALLET, IMMUTABLE LEDGER & MANUAL WITHDRAWAL COLLECTIONS
+    // =========================================================================
+    match /wallets/{phleboId} {
+      allow read: if isSuperAdmin()
+        || hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'CONFIGURE_COMMISSIONS_PAYOUTS', 'VIEW_FINANCIAL_REPORTS'])
+        || (isPhlebotomist() && (phleboId == request.auth.uid || getPhlebotomistId() == phleboId));
+      allow write: if false;
+    }
+
+    match /walletTransactions/{txId} {
+      allow read: if isSuperAdmin()
+        || hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'CONFIGURE_COMMISSIONS_PAYOUTS', 'VIEW_FINANCIAL_REPORTS'])
+        || (isPhlebotomist() && getPhlebotomistId() != null && resource.data.phleboId == getPhlebotomistId());
+      allow write: if false;
+    }
+
+    match /withdrawalRequests/{requestId} {
+      allow read: if isSuperAdmin()
+        || hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'CONFIGURE_COMMISSIONS_PAYOUTS', 'MANAGE_RECONCILIATION'])
+        || (isPhlebotomist() && getPhlebotomistId() != null && resource.data.phleboId == getPhlebotomistId());
+      allow write: if false;
+    }
+
+    match /payoutProfiles/{phleboId} {
+      allow read, write: if false;
+    }
+
+    match /manualSettlements/{settlementId} {
+      allow read: if isSuperAdmin()
+        || hasAnyPermission(['VIEW_FINANCE_DASHBOARD', 'CONFIGURE_COMMISSIONS_PAYOUTS', 'MANAGE_RECONCILIATION', 'VIEW_FINANCIAL_REPORTS']);
+      allow write: if false;
+    }
+
+    match /financialAuditLogs/{auditId} {
+      allow read: if isSuperAdmin() || hasPermission('VIEW_AUDIT_LOGS');
       allow write: if false;
     }
 

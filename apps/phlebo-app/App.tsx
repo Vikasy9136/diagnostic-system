@@ -2460,18 +2460,23 @@ function PhleboAppContent() {
           order.paymentMethod === 'CASH' ||
           order.paymentMethod === 'DIRECT_LAB_SETTLEMENT' ||
           order.collectedByRole === 'PHLEBOTOMIST';
-        const settled =
-          stl?.phleboPayoutStatus === 'PAID' ||
-          stl?.status === 'SETTLED' ||
-          order.paymentMethod === 'CASH' ||
-          order.paymentMethod === 'DIRECT_LAB_SETTLEMENT' ||
-          order.collectedByRole === 'PHLEBOTOMIST' ||
-          customerPaid ||
-          Boolean(payout);
         const payoutRef =
           stl?.phleboPayoutRef ||
           payout?.referenceId ||
           (order.paymentMethod === 'CASH' ? 'CASH' : undefined);
+        const isSyntheticUnverified = Boolean(
+          payoutRef && /^(CURPAY|LABPAY)-/i.test(String(payoutRef))
+        );
+        const payoutStatusStr = String(payout?.status || '');
+        const hasAuthoritativePayout =
+          !isSyntheticUnverified &&
+          (payoutStatusStr === 'SETTLED' ||
+            payoutStatusStr === 'PROCESSED' ||
+            payoutStatusStr === 'MANUAL_RECONCILED' ||
+            (stl?.phleboPayoutStatus === 'PAID' && Boolean(payoutRef)) ||
+            order.paymentMethod === 'CASH' ||
+            order.paymentMethod === 'DIRECT_LAB_SETTLEMENT');
+        const settled = hasAuthoritativePayout;
         const delivered =
           order.status === OrderStatus.DELIVERED_TO_LAB ||
           order.status === OrderStatus.UNDER_ANALYSIS ||
@@ -4401,12 +4406,6 @@ function PhleboAppContent() {
         preferredMethod: payoutMethod,
         accountHolderName: holder,
         ...(payoutBankName ? { bankName: payoutBankName.trim() } : {}),
-        ...(upi ? { upiId: upi } : {}),
-        ...(rawAcc.length >= 6
-          ? { bankAccountNumber: rawAcc }
-          : myPhleboProfile?.payoutProfile?.bankAccountNumber
-            ? { bankAccountNumber: myPhleboProfile.payoutProfile.bankAccountNumber }
-            : {}),
         ...(last4 ? { bankAccountLast4: last4 } : {}),
         ...(ifsc ? { ifscCode: ifsc } : {}),
         updatedAt: now,

@@ -9,6 +9,7 @@ import {
 import { EmptyStateBox, SlaCountdownBadge } from '../../components/shared';
 import { type AdminMetrics } from './adminTypes';
 import { AdminPhleboPayoutsPanel } from './AdminPhleboPayoutsPanel';
+import { AdminPhleboWithdrawalsTab } from './AdminPhleboWithdrawalsTab';
 
 export interface AdminPaymentsTabProps {
   settlements: SettlementRecord[];
@@ -38,11 +39,18 @@ export function AdminPaymentsTab({
   onOpenPayoutModal,
   onMarkSettlementSettled,
 }: AdminPaymentsTabProps) {
-  const [subTab, setSubTab] = useState<'SETTLEMENTS' | 'PHLEBO_PAYOUTS'>('SETTLEMENTS');
+  const [subTab, setSubTab] = useState<'SETTLEMENTS' | 'PHLEBO_WITHDRAWALS' | 'PHLEBO_PAYOUTS'>('PHLEBO_WITHDRAWALS');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          className={subTab === 'PHLEBO_WITHDRAWALS' ? 'btn-primary' : 'btn-secondary'}
+          onClick={() => setSubTab('PHLEBO_WITHDRAWALS')}
+        >
+          💰 Phlebo Withdrawals (7-Day Manual Settlement)
+        </button>
         <button
           type="button"
           className={subTab === 'SETTLEMENTS' ? 'btn-primary' : 'btn-secondary'}
@@ -55,11 +63,13 @@ export function AdminPaymentsTab({
           className={subTab === 'PHLEBO_PAYOUTS' ? 'btn-primary' : 'btn-secondary'}
           onClick={() => setSubTab('PHLEBO_PAYOUTS')}
         >
-          💸 Phlebo Payouts &amp; Error Monitor
+          💸 Payout Ledger &amp; Error Monitor
         </button>
       </div>
 
-      {subTab === 'PHLEBO_PAYOUTS' ? (
+      {subTab === 'PHLEBO_WITHDRAWALS' ? (
+        <AdminPhleboWithdrawalsTab />
+      ) : subTab === 'PHLEBO_PAYOUTS' ? (
         <AdminPhleboPayoutsPanel />
       ) : (
       <>

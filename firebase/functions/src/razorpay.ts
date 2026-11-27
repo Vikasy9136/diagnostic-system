@@ -381,16 +381,38 @@ export async function verifyRazorpayPayment(input: VerifyRazorpayPaymentInput) {
 
   let resolvedMethod = input.paymentMethod;
   let fetchedAmountInr = 0;
-  try {
-    const paymentDetails = await client.payments.fetch(paymentId);
+  {
+    let paymentDetails: {
+      status?: string;
+      currency?: string;
+      order_id?: string;
+      method?: string;
+      amount?: number;
+    };
+    try {
+      paymentDetails = (await client.payments.fetch(paymentId)) as typeof paymentDetails;
+    } catch (err) {
+      throw mapRazorpaySdkError(err, 'Unable to verify payment capture status with Razorpay.');
+    }
+    if (String(paymentDetails?.status || '').toLowerCase() !== 'captured') {
+      throw new AppError(
+        `Payment ${paymentId} is not captured yet (status: ${paymentDetails?.status || 'unknown'}).`,
+        400,
+        'PAYMENT_NOT_CAPTURED'
+      );
+    }
+    if (String(paymentDetails?.currency || '').toUpperCase() !== 'INR') {
+      throw new AppError('Payment currency mismatch (expected INR).', 400, 'CURRENCY_MISMATCH');
+    }
+    if (paymentDetails?.order_id && paymentDetails.order_id !== orderId) {
+      throw new AppError('Payment order_id mismatch.', 400, 'ORDER_MISMATCH');
+    }
     if (paymentDetails?.method) {
       resolvedMethod = String(paymentDetails.method).toUpperCase();
     }
     if (typeof paymentDetails?.amount === 'number') {
       fetchedAmountInr = Math.round(paymentDetails.amount) / 100;
     }
-  } catch {
-    // Non-fatal
   }
 
   const now = new Date().toISOString();
@@ -1251,8 +1273,7 @@ export async function releaseSettlementPayout(input: ReleasePayoutInput) {
     }
     const labNetPayout = Math.max(0, labGross - labOffset);
 
-    const refId =
-      input.referenceId?.trim() || `LABPAY-${Date.now().toString().slice(-6)}`;
+    const manualRef = input.referenceId?.trim() || '';
     const xResult = await tryExecuteRazorpayXPayout({
       amountInr: labNetPayout,
       recipientName: payoutProfile.accountHolderName || targetLabName,
@@ -1261,9 +1282,18 @@ export async function releaseSettlementPayout(input: ReleasePayoutInput) {
       upiId: payoutProfile.upiId,
       bankAccountNumber: payoutProfile.bankAccountNumber,
       ifscCode: payoutProfile.ifscCode,
-      referenceId: refId,
+      referenceId: manualRef || `XLAB-${Date.now().toString().slice(-6)}`,
     });
 
+    if (!xResult?.gatewayPayoutId && manualRef.length < 6) {
+      throw new AppError(
+        'RazorpayX is not configured (RAZORPAYX_ACCOUNT_NUMBER missing). Provide a verified external UTR (min 6 chars) to record manual settlement.',
+        400,
+        'RAZORPAYX_NOT_ENABLED'
+      );
+    }
+
+    const refId = xResult?.gatewayPayoutId || manualRef;
     const payoutMode = xResult?.modeUsed || input.mode || (payoutProfile.upiId ? 'UPI' : 'NEFT');
     const payoutId = `POUT-LAB-${Date.now().toString().slice(-6)}`;
     const payoutDoc = {
@@ -1282,7 +1312,7 @@ export async function releaseSettlementPayout(input: ReleasePayoutInput) {
       referenceId: refId,
       destinationSummary: destSummary,
       ...(xResult?.gatewayPayoutId ? { gatewayPayoutId: xResult.gatewayPayoutId } : {}),
-      status: 'PROCESSED',
+      status: xResult?.gatewayPayoutId ? 'INITIATED' : 'MANUAL_RECONCILED',
       processedByEmail: input.adminEmail,
       ...(input.notes ? { notes: input.notes } : {}),
       createdAt: now,
@@ -1299,15 +1329,19 @@ export async function releaseSettlementPayout(input: ReleasePayoutInput) {
     }
     createdPayouts.push(payoutDoc);
 
-    nextLabStatus = 'PAID';
+    nextLabStatus = xResult?.gatewayPayoutId ? 'PROCESSING' : 'PAID';
     labRef = refId;
-    labPaidAt = now;
+    if (!xResult?.gatewayPayoutId) {
+      labPaidAt = now;
+    }
 
     await sendPlatformNotification({
-      title: `Payout Released: ₹${labNetPayout.toLocaleString('en-IN')} (${orderNumber})`,
-      message: labOffset > 0
-        ? `Reference Hub payout for ${orderNumber}: Gross ₹${labGross}, deducted ₹${labOffset} platform fee offset, net ₹${labNetPayout} sent via ${payoutMode} to ${destSummary}. Reference: ${refId}.`
-        : `Reference Hub payout for ${orderNumber} sent via ${payoutMode} to ${destSummary}. Reference: ${refId}.`,
+      title: xResult?.gatewayPayoutId
+        ? `Payout Initiated: ₹${labNetPayout.toLocaleString('en-IN')} (${orderNumber})`
+        : `Manual Settlement Recorded: ₹${labNetPayout.toLocaleString('en-IN')} (${orderNumber})`,
+      message: xResult?.gatewayPayoutId
+        ? `Reference Hub payout for ${orderNumber} initiated via RazorpayX (${xResult.gatewayPayoutId}). Final bank credit awaits webhook confirmation.`
+        : `Reference Hub payout for ${orderNumber} manually reconciled with UTR ${refId}.`,
       category: NotificationCategory.PAYOUT_SETTLED,
       priority: NotificationPriority.NORMAL,
       recipientEmail: labData.email ? String(labData.email) : undefined,
@@ -1395,8 +1429,7 @@ export async function releaseSettlementPayout(input: ReleasePayoutInput) {
       ? `Bank ••••${payoutProfile.bankAccountLast4} (${payoutProfile.ifscCode || 'IFSC'})`
       : 'Courier Payout Account';
 
-    const refId =
-      input.referenceId?.trim() || `CURPAY-${Date.now().toString().slice(-6)}`;
+    const manualRef = input.referenceId?.trim() || '';
     const xResult = await tryExecuteRazorpayXPayout({
       amountInr: phleboNetPayout,
       recipientName: payoutProfile.accountHolderName || resolvedName,
@@ -1405,9 +1438,18 @@ export async function releaseSettlementPayout(input: ReleasePayoutInput) {
       upiId: payoutProfile.upiId,
       bankAccountNumber: payoutProfile.bankAccountNumber,
       ifscCode: payoutProfile.ifscCode,
-      referenceId: refId,
+      referenceId: manualRef || `XCUR-${Date.now().toString().slice(-6)}`,
     });
 
+    if (!xResult?.gatewayPayoutId && manualRef.length < 6) {
+      throw new AppError(
+        'RazorpayX is not configured (RAZORPAYX_ACCOUNT_NUMBER missing). Provide a verified external UTR (min 6 chars) to record manual settlement.',
+        400,
+        'RAZORPAYX_NOT_ENABLED'
+      );
+    }
+
+    const refId = xResult?.gatewayPayoutId || manualRef;
     const payoutMode = xResult?.modeUsed || input.mode || (payoutProfile.upiId ? 'UPI' : 'IMPS');
     const payoutId = `POUT-CUR-${Date.now().toString().slice(-6)}`;
     const payoutDoc = {
@@ -1426,7 +1468,7 @@ export async function releaseSettlementPayout(input: ReleasePayoutInput) {
       referenceId: refId,
       destinationSummary: destSummary,
       ...(xResult?.gatewayPayoutId ? { gatewayPayoutId: xResult.gatewayPayoutId } : {}),
-      status: 'PROCESSED',
+      status: xResult?.gatewayPayoutId ? 'INITIATED' : 'MANUAL_RECONCILED',
       processedByEmail: input.adminEmail,
       ...(input.notes ? { notes: input.notes } : {}),
       createdAt: now,
@@ -1443,15 +1485,19 @@ export async function releaseSettlementPayout(input: ReleasePayoutInput) {
     }
     createdPayouts.push(payoutDoc);
 
-    nextPhleboStatus = 'PAID';
+    nextPhleboStatus = xResult?.gatewayPayoutId ? 'PROCESSING' : 'PAID';
     phleboRef = refId;
-    phleboPaidAt = now;
+    if (!xResult?.gatewayPayoutId) {
+      phleboPaidAt = now;
+    }
 
     await sendPlatformNotification({
-      title: `Courier Payout Sent: ₹${phleboNetPayout.toLocaleString('en-IN')} (${orderNumber})`,
-      message: phleboOffset > 0
-        ? `Your delivery payout for ${orderNumber}: Gross ₹${phleboGross}, deducted ₹${phleboOffset} platform fee offset, net ₹${phleboNetPayout} released via ${payoutMode} (${destSummary}). Ref: ${refId}.`
-        : `Your delivery payout for ${orderNumber} was released via ${payoutMode} (${destSummary}). Ref: ${refId}.`,
+      title: xResult?.gatewayPayoutId
+        ? `Courier Payout Initiated: ₹${phleboNetPayout.toLocaleString('en-IN')} (${orderNumber})`
+        : `Manual Courier Settlement Recorded: ₹${phleboNetPayout.toLocaleString('en-IN')} (${orderNumber})`,
+      message: xResult?.gatewayPayoutId
+        ? `Your delivery payout for ${orderNumber} was initiated via RazorpayX (${xResult.gatewayPayoutId}). Bank credit awaits webhook confirmation.`
+        : `Your delivery payout for ${orderNumber} was manually reconciled with UTR ${refId}.`,
       category: NotificationCategory.PAYOUT_SETTLED,
       priority: NotificationPriority.NORMAL,
       recipientEmail: phData.email ? String(phData.email) : undefined,

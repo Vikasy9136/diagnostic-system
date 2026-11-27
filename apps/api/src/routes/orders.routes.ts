@@ -24,6 +24,7 @@ import { initializeFirebase } from '../config/firebase';
 import { config } from '../config/env';
 import { sendPlatformNotification } from '../services/notification.service';
 import { dualList } from '../services/dualCollection';
+import { creditBookingEarningAtomically } from '../services/wallet.service';
 
 export const ordersRouter = Router();
 
@@ -398,6 +399,21 @@ ordersRouter.patch('/:id', requireAuth, async (req: AuthenticatedRequest, res: R
         for (const stlDoc of linkedStls.docs) {
           if (stlDoc.id !== directStlId || !directStlSnap.exists) {
             await stlDoc.ref.set(instantPatch, { merge: true });
+          }
+        }
+        if (merged.phlebotomistId && Number(merged.courierFeeInr || 0) > 0) {
+          try {
+            await creditBookingEarningAtomically({
+              bookingId: orderId,
+              orderNumber: merged.orderNumber || orderId,
+              phleboId: merged.phlebotomistId,
+              phleboName: merged.phlebotomistName,
+              grossEarningInr: Number(merged.courierFeeInr || 0),
+              handoverConfirmed: true,
+              otpOrLabConfirmed: true,
+            });
+          } catch (walletErr) {
+            console.warn(`[orders] Non-fatal wallet auto-credit skip for ${orderId}:`, walletErr);
           }
         }
       }

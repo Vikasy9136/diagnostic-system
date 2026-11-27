@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import {
   type BankDirectoryEntry,
   type IfscLookupResult,
@@ -22,6 +23,7 @@ import {
   saveMyUpiAccount,
   setMyDefaultPayoutMethod,
 } from '../services/phleboPayoutService';
+import { uploadPrivateQrImage } from '../services/walletService';
 import { styles } from '../styles/phleboStyles';
 
 function statusBadgeStyle(status?: string): { bg: string; fg: string; label: string } {
@@ -64,6 +66,37 @@ export function BankPaymentDetailsCard() {
   const [upiInput, setUpiInput] = useState('');
   const [confirmUpiInput, setConfirmUpiInput] = useState('');
   const [savingUpi, setSavingUpi] = useState(false);
+  const [uploadingQr, setUploadingQr] = useState(false);
+
+  const handleUploadQr = async () => {
+    setStatusBanner(null);
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        setStatusBanner({ type: 'err', text: 'Photo library permission is required to upload UPI QR.' });
+        return;
+      }
+      const pick = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        quality: 0.85,
+        base64: true,
+      });
+      if (pick.canceled || !pick.assets?.[0]?.base64) return;
+      const asset = pick.assets[0];
+      const mime = asset.mimeType || 'image/png';
+      setUploadingQr(true);
+      await uploadPrivateQrImage({ mimeType: mime, base64Data: asset.base64! });
+      setStatusBanner({
+        type: 'ok',
+        text: 'UPI QR uploaded to private encrypted storage (accessible only to authorised Finance Admins).',
+      });
+    } catch (err) {
+      setStatusBanner({ type: 'err', text: err instanceof Error ? err.message : 'QR upload failed.' });
+    } finally {
+      setUploadingQr(false);
+    }
+  };
 
   const loadSummary = useCallback(async () => {
     setLoading(true);
@@ -315,14 +348,23 @@ export function BankPaymentDetailsCard() {
             ) : (
               <Text style={{ fontSize: 12, color: '#64748B', marginTop: 4 }}>No UPI ID added yet.</Text>
             )}
-            <TouchableOpacity
-              onPress={() => setActiveEditor(activeEditor === 'UPI' ? 'NONE' : 'UPI')}
-              style={{ marginTop: 8 }}
-            >
-              <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#0D9488' }}>
-                {activeEditor === 'UPI' ? 'Close UPI Form' : summary?.upiAccount ? '✎ Update UPI ID' : '+ Add UPI ID'}
-              </Text>
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: 16, marginTop: 8, flexWrap: 'wrap' }}>
+              <TouchableOpacity
+                onPress={() => setActiveEditor(activeEditor === 'UPI' ? 'NONE' : 'UPI')}
+              >
+                <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#0D9488' }}>
+                  {activeEditor === 'UPI' ? 'Close UPI Form' : summary?.upiAccount ? '✎ Update UPI ID' : '+ Add UPI ID'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                disabled={uploadingQr}
+                onPress={() => void handleUploadQr()}
+              >
+                <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#0369A1' }}>
+                  {uploadingQr ? 'Uploading QR...' : '📷 Upload Private UPI QR'}
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* Bank Editor */}

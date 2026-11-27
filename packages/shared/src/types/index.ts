@@ -11,3 +11,4 @@ export * from './routes.js';
 export * from './inventory.js';
 export * from './chat.js';
 export * from './payout.js';
+export * from './wallet.js';
