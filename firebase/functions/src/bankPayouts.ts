@@ -432,6 +432,44 @@ export function createLargeLabAndWalletCloudRouter(): Router {
     } catch (e) { next(e); }
   });
 
+  // Unified POST /large-lab/payout-profile matching apps/api/src/routes/wallet.routes.ts
+  r.post('/large-lab/payout-profile', requireAuth, requireRoles(UserRole.LARGE_LAB, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const id = req.user?.labId || req.user?.uid || '';
+      const actionType = String(req.body?.type || '').toUpperCase();
+      if (actionType === 'BANK_ACCOUNT') {
+        const data = await saveBank({
+          type: 'LARGE_LAB',
+          id,
+          accountHolderName: String(req.body?.accountHolderName || ''),
+          accountNumber: String(req.body?.accountNumber || ''),
+          confirmAccountNumber: String(req.body?.confirmAccountNumber || ''),
+          ifscCode: String(req.body?.ifscCode || ''),
+          selectedBankCode: req.body?.selectedBankCode ? String(req.body.selectedBankCode) : undefined,
+          makeDefault: req.body?.makeDefault !== false,
+        });
+        return res.json({ success: true, data, message: 'Bank account saved.', timestamp: new Date().toISOString() });
+      }
+      if (actionType === 'UPI') {
+        const data = await saveUpi({
+          type: 'LARGE_LAB',
+          id,
+          upiId: String(req.body?.upiId || ''),
+          confirmUpiId: String(req.body?.confirmUpiId || ''),
+          makeDefault: req.body?.makeDefault !== false,
+        });
+        return res.json({ success: true, data, message: 'UPI ID saved.', timestamp: new Date().toISOString() });
+      }
+      if (actionType === 'SET_DEFAULT') {
+        const method = req.body?.defaultMethod === 'UPI' ? 'UPI' : 'BANK_ACCOUNT';
+        await db.collection('beneficiary_payout_profiles').doc(profileDocId('LARGE_LAB', id)).set({ defaultMethod: method, updatedAt: new Date().toISOString() }, { merge: true });
+        const data = await getBeneficiarySummary('LARGE_LAB', id);
+        return res.json({ success: true, data, message: `Default payout method updated to ${method}.`, timestamp: new Date().toISOString() });
+      }
+      throw new AppError('Invalid payout profile action type. Expected BANK_ACCOUNT, UPI, or SET_DEFAULT.', 400, 'INVALID_ACTION_TYPE');
+    } catch (e) { return next(e); }
+  });
+
   r.put('/large-lab/payout-profile/bank', requireAuth, requireRoles(UserRole.LARGE_LAB, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
       const id = req.user?.labId || req.user?.uid || '';

@@ -83,9 +83,9 @@ async function callLargeLabFinanceApi<T>(path: string, init: RequestInit = {}): 
       ...(init.headers || {}),
     },
   });
-  const json = (await res.json()) as { success?: boolean; data?: T; message?: string };
+  const json = (await res.json()) as { success?: boolean; data?: T; message?: string; error?: { message?: string } };
   if (!res.ok || !json.success) {
-    throw new Error(json.message || `Request failed (${res.status})`);
+    throw new Error(json?.error?.message || json.message || `Request failed (${res.status})`);
   }
   return json.data as T;
 }
