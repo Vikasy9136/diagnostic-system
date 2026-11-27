@@ -3,7 +3,9 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   ScrollView,
   Text,
   TextInput,
@@ -14,6 +16,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import {
   type BankDirectoryEntry,
+  filterSupportedBanks,
   getBankBrandMeta,
   type IfscLookupResult,
   type PhleboPaymentMethodSummary,
@@ -54,8 +57,8 @@ export function BankPaymentDetailsCard() {
   // Bank selector modal state
   const [bankPickerOpen, setBankPickerOpen] = useState(false);
   const [bankSearch, setBankSearch] = useState('');
-  const [popularBanks, setPopularBanks] = useState<BankDirectoryEntry[]>([]);
-  const [allBanks, setAllBanks] = useState<BankDirectoryEntry[]>([]);
+  const [popularBanks, setPopularBanks] = useState<BankDirectoryEntry[]>(() => filterSupportedBanks().popular);
+  const [allBanks, setAllBanks] = useState<BankDirectoryEntry[]>(() => filterSupportedBanks().all);
   const [selectedBank, setSelectedBank] = useState<BankDirectoryEntry | null>(null);
 
   // Bank form state
@@ -171,12 +174,17 @@ export function BankPaymentDetailsCard() {
   }, [loadSummary]);
 
   const loadBanks = useCallback(async (q?: string) => {
+    const local = filterSupportedBanks(q);
+    setPopularBanks(local.popular);
+    setAllBanks(local.all);
     try {
       const res = await fetchBankDirectory(q);
-      setPopularBanks(res.popular);
-      setAllBanks(res.all);
+      if (res?.all?.length) {
+        setPopularBanks(res.popular);
+        setAllBanks(res.all);
+      }
     } catch {
-      // Handled gracefully
+      // Local shared bank directory already populated
     }
   }, []);
 
@@ -198,6 +206,10 @@ export function BankPaymentDetailsCard() {
     try {
       const res = await lookupIfscFromBackend(code);
       setIfscDetails(res);
+      const matched = filterSupportedBanks().all.find(
+        (b) => b.code === (res.bankCode || code.slice(0, 4)) || b.ifscPrefix === code.slice(0, 4)
+      );
+      if (matched) setSelectedBank(matched);
     } catch (err) {
       setIfscError(err instanceof Error ? err.message : 'IFSC lookup failed. Tap retry.');
     } finally {
@@ -491,9 +503,27 @@ export function BankPaymentDetailsCard() {
                 onPress={() => setBankPickerOpen(true)}
                 style={[styles.fieldInput, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }]}
               >
-                <Text style={{ fontSize: 13.5, color: selectedBank ? '#0F172A' : '#94A3B8', fontWeight: '600' }}>
-                  {selectedBank ? selectedBank.name : 'Tap to search & select bank'}
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                  {selectedBank ? (
+                    <View
+                      style={{
+                        paddingHorizontal: 7,
+                        paddingVertical: 3,
+                        borderRadius: 6,
+                        backgroundColor: selectedBank.accentColor,
+                      }}
+                    >
+                      <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#FFFFFF' }}>
+                        {selectedBank.shortName}
+                      </Text>
+                    </View>
+                  ) : (
+                    <MaterialCommunityIcons name="bank-outline" size={18} color="#94A3B8" />
+                  )}
+                  <Text style={{ fontSize: 13.5, color: selectedBank ? '#0F172A' : '#94A3B8', fontWeight: '600', flex: 1 }} numberOfLines={1}>
+                    {selectedBank ? selectedBank.name : 'Tap to search & select bank'}
+                  </Text>
+                </View>
                 <Ionicons name="chevron-down" size={18} color="#64748B" />
               </TouchableOpacity>
 
@@ -529,16 +559,30 @@ export function BankPaymentDetailsCard() {
               )}
 
               {ifscDetails && (
-                <View style={{ padding: 10, borderRadius: 8, backgroundColor: '#F0FDFA', borderWidth: 1, borderColor: '#99F6E4', marginBottom: 10 }}>
-                  <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#0F766E' }}>
-                    ✓ {ifscDetails.bank} — {ifscDetails.branch}
-                  </Text>
-                  <Text style={{ fontSize: 11.5, color: '#115E59', marginTop: 2 }}>
-                    {ifscDetails.address}
-                  </Text>
-                  <Text style={{ fontSize: 11.5, color: '#115E59', marginTop: 2 }}>
-                    {[ifscDetails.city, ifscDetails.district, ifscDetails.state].filter(Boolean).join(', ')}
-                  </Text>
+                <View style={{ padding: 10, borderRadius: 8, backgroundColor: '#F0FDFA', borderWidth: 1, borderColor: '#99F6E4', marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <View
+                    style={{
+                      paddingHorizontal: 8,
+                      paddingVertical: 5,
+                      borderRadius: 6,
+                      backgroundColor: getBankBrandMeta(ifscDetails.bankCode || ifscDetails.ifsc).accentColor,
+                    }}
+                  >
+                    <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#FFFFFF' }}>
+                      {getBankBrandMeta(ifscDetails.bankCode || ifscDetails.ifsc).shortName}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#0F766E' }}>
+                      ✓ {ifscDetails.bank} — {ifscDetails.branch}
+                    </Text>
+                    <Text style={{ fontSize: 11.5, color: '#115E59', marginTop: 2 }}>
+                      {ifscDetails.address}
+                    </Text>
+                    <Text style={{ fontSize: 11.5, color: '#115E59', marginTop: 2 }}>
+                      {[ifscDetails.city, ifscDetails.district, ifscDetails.state].filter(Boolean).join(', ')}
+                    </Text>
+                  </View>
                 </View>
               )}
 
@@ -623,10 +667,13 @@ export function BankPaymentDetailsCard() {
         </>
       )}
 
-      {/* Searchable Bank Directory Modal */}
+      {/* Searchable Bank Directory Modal (Keyboard-safe) */}
       <Modal visible={bankPickerOpen} animationType="slide" transparent onRequestClose={() => setBankPickerOpen(false)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'flex-end' }}>
-          <View style={{ backgroundColor: '#FFFFFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '82%', padding: 16 }}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'flex-end' }}
+        >
+          <View style={{ backgroundColor: '#FFFFFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '85%', padding: 16 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>Select Your Bank</Text>
               <TouchableOpacity onPress={() => setBankPickerOpen(false)}>
@@ -656,8 +703,8 @@ export function BankPaymentDetailsCard() {
                       }}
                       style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderColor: '#F1F5F9' }}
                     >
-                      <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: b.accentColor, alignItems: 'center', justifyContent: 'center' }}>
-                        <MaterialCommunityIcons name="bank" size={18} color="#FFFFFF" />
+                      <View style={{ minWidth: 46, height: 32, paddingHorizontal: 6, borderRadius: 8, backgroundColor: b.accentColor, alignItems: 'center', justifyContent: 'center' }}>
+                        <Text style={{ fontSize: 10, fontWeight: '800', color: '#FFFFFF' }}>{b.shortName}</Text>
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={{ fontSize: 13.5, fontWeight: '700', color: '#0F172A' }}>{b.name}</Text>
@@ -680,8 +727,8 @@ export function BankPaymentDetailsCard() {
                   }}
                   style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderColor: '#F1F5F9' }}
                 >
-                  <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: b.accentColor, alignItems: 'center', justifyContent: 'center' }}>
-                    <MaterialCommunityIcons name="bank-outline" size={18} color="#FFFFFF" />
+                  <View style={{ minWidth: 46, height: 32, paddingHorizontal: 6, borderRadius: 8, backgroundColor: b.accentColor, alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#FFFFFF' }}>{b.shortName}</Text>
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 13.5, fontWeight: '600', color: '#0F172A' }}>{b.name}</Text>
@@ -691,7 +738,7 @@ export function BankPaymentDetailsCard() {
               ))}
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );

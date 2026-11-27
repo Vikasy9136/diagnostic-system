@@ -26,9 +26,14 @@ async function callPhleboPayoutApi<T>(path: string, init: RequestInit = {}): Pro
           ...(init.headers || {}),
         },
       });
-      const json = (await res.json()) as { success?: boolean; data?: T; message?: string };
-      if (!res.ok || !json.success) {
-        throw new Error(json.message || `Request failed (${res.status})`);
+      const json = (await res.json().catch(() => null)) as {
+        success?: boolean;
+        data?: T;
+        message?: string;
+        error?: { message?: string };
+      } | null;
+      if (!res.ok || !json?.success) {
+        throw new Error(json?.error?.message || json?.message || `Request failed (${res.status})`);
       }
       return json.data as T;
     } catch (err) {

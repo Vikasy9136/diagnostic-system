@@ -1,3 +1,5 @@
+import { type BankDirectoryEntry } from '../types/payout.js';
+
 export interface BankBrandMeta {
   code: string;
   shortName: string;
@@ -5,34 +7,92 @@ export interface BankBrandMeta {
   bgTint: string;
 }
 
-const BANK_BRAND_MAP: Record<string, BankBrandMeta> = {
-  SBIN: { code: 'SBIN', shortName: 'SBI', accentColor: '#1D4ED8', bgTint: '#EFF6FF' },
-  HDFC: { code: 'HDFC', shortName: 'HDFC', accentColor: '#1E3A8A', bgTint: '#EFF6FF' },
-  ICIC: { code: 'ICIC', shortName: 'ICICI', accentColor: '#EA580C', bgTint: '#FFF7ED' },
-  UTIB: { code: 'UTIB', shortName: 'AXIS', accentColor: '#9F1239', bgTint: '#FFF1F2' },
-  KKBK: { code: 'KKBK', shortName: 'KOTAK', accentColor: '#DC2626', bgTint: '#FEF2F2' },
-  PUNB: { code: 'PUNB', shortName: 'PNB', accentColor: '#B91C1C', bgTint: '#FEF2F2' },
-  BARB: { code: 'BARB', shortName: 'BOB', accentColor: '#F97316', bgTint: '#FFF7ED' },
-  CNRB: { code: 'CNRB', shortName: 'CANARA', accentColor: '#0284C7', bgTint: '#F0F9FF' },
-  UBIN: { code: 'UBIN', shortName: 'UNION', accentColor: '#1D4ED8', bgTint: '#EFF6FF' },
-  IDIB: { code: 'IDIB', shortName: 'INDIAN', accentColor: '#0369A1', bgTint: '#F0F9FF' },
-  IDFB: { code: 'IDFB', shortName: 'IDFC', accentColor: '#991B1B', bgTint: '#FEF2F2' },
-  INDB: { code: 'INDB', shortName: 'INDUS', accentColor: '#7F1D1D', bgTint: '#FEF2F2' },
-  YESB: { code: 'YESB', shortName: 'YES', accentColor: '#1E40AF', bgTint: '#EFF6FF' },
-  FDRL: { code: 'FDRL', shortName: 'FEDERAL', accentColor: '#1D4ED8', bgTint: '#EFF6FF' },
-  AUBL: { code: 'AUBL', shortName: 'AU', accentColor: '#6D28D9', bgTint: '#F5F3FF' },
-  BDBL: { code: 'BDBL', shortName: 'BANDHAN', accentColor: '#BE123C', bgTint: '#FFF1F2' },
-  BKID: { code: 'BKID', shortName: 'BOI', accentColor: '#0284C7', bgTint: '#F0F9FF' },
-};
+export const SUPPORTED_BANKS_DIRECTORY: BankDirectoryEntry[] = [
+  { code: 'SBIN', name: 'State Bank of India', shortName: 'SBI', ifscPrefix: 'SBIN', popular: true, accentColor: '#1D4ED8', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'HDFC', name: 'HDFC Bank', shortName: 'HDFC', ifscPrefix: 'HDFC', popular: true, accentColor: '#1E3A8A', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'ICIC', name: 'ICICI Bank', shortName: 'ICICI', ifscPrefix: 'ICIC', popular: true, accentColor: '#EA580C', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'UTIB', name: 'Axis Bank', shortName: 'AXIS', ifscPrefix: 'UTIB', popular: true, accentColor: '#9F1239', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'KKBK', name: 'Kotak Mahindra Bank', shortName: 'KOTAK', ifscPrefix: 'KKBK', popular: true, accentColor: '#DC2626', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'PUNB', name: 'Punjab National Bank', shortName: 'PNB', ifscPrefix: 'PUNB', popular: true, accentColor: '#B91C1C', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'BARB', name: 'Bank of Baroda', shortName: 'BOB', ifscPrefix: 'BARB', popular: true, accentColor: '#F97316', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'CNRB', name: 'Canara Bank', shortName: 'CANARA', ifscPrefix: 'CNRB', popular: true, accentColor: '#0284C7', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'IDFB', name: 'IDFC FIRST Bank', shortName: 'IDFC', ifscPrefix: 'IDFB', popular: true, accentColor: '#991B1B', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'UBIN', name: 'Union Bank of India', shortName: 'UNION', ifscPrefix: 'UBIN', popular: false, accentColor: '#1D4ED8', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'IDIB', name: 'Indian Bank', shortName: 'INDIAN', ifscPrefix: 'IDIB', popular: false, accentColor: '#0369A1', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'INDB', name: 'IndusInd Bank', shortName: 'INDUS', ifscPrefix: 'INDB', popular: false, accentColor: '#7F1D1D', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'YESB', name: 'Yes Bank', shortName: 'YES', ifscPrefix: 'YESB', popular: false, accentColor: '#1E40AF', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'FDRL', name: 'Federal Bank', shortName: 'FEDERAL', ifscPrefix: 'FDRL', popular: false, accentColor: '#1D4ED8', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'AUBL', name: 'AU Small Finance Bank', shortName: 'AU', ifscPrefix: 'AUBL', popular: false, accentColor: '#6D28D9', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'BDBL', name: 'Bandhan Bank', shortName: 'BANDHAN', ifscPrefix: 'BDBL', popular: false, accentColor: '#BE123C', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'BKID', name: 'Bank of India', shortName: 'BOI', ifscPrefix: 'BKID', popular: false, accentColor: '#0284C7', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'CBIN', name: 'Central Bank of India', shortName: 'CBI', ifscPrefix: 'CBIN', popular: false, accentColor: '#1E3A8A', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'IOBA', name: 'Indian Overseas Bank', shortName: 'IOB', ifscPrefix: 'IOBA', popular: false, accentColor: '#0369A1', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'RATN', name: 'RBL Bank', shortName: 'RBL', ifscPrefix: 'RATN', popular: false, accentColor: '#1E3A8A', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'SIBL', name: 'South Indian Bank', shortName: 'SIB', ifscPrefix: 'SIBL', popular: false, accentColor: '#B91C1C', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'UCBA', name: 'UCO Bank', shortName: 'UCO', ifscPrefix: 'UCBA', popular: false, accentColor: '#0284C7', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'KARB', name: 'Karnataka Bank', shortName: 'KARNATAKA', ifscPrefix: 'KARB', popular: false, accentColor: '#7C2D12', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'KVBL', name: 'Karur Vysya Bank', shortName: 'KVB', ifscPrefix: 'KVBL', popular: false, accentColor: '#15803D', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'CIUB', name: 'City Union Bank', shortName: 'CUB', ifscPrefix: 'CIUB', popular: false, accentColor: '#047857', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'DBSS', name: 'DBS Bank India', shortName: 'DBS', ifscPrefix: 'DBSS', popular: false, accentColor: '#DC2626', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'SCBL', name: 'Standard Chartered Bank', shortName: 'SCB', ifscPrefix: 'SCBL', popular: false, accentColor: '#0F766E', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'HSBC', name: 'HSBC Bank India', shortName: 'HSBC', ifscPrefix: 'HSBC', popular: false, accentColor: '#DC2626', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'AIRP', name: 'Airtel Payments Bank', shortName: 'AIRTEL', ifscPrefix: 'AIRP', popular: false, accentColor: '#DC2626', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'JIOP', name: 'Jio Payments Bank', shortName: 'JIO', ifscPrefix: 'JIOP', popular: false, accentColor: '#1D4ED8', upiSupported: true, impsSupported: true, neftSupported: true },
+  { code: 'PYTM', name: 'Paytm Payments Bank', shortName: 'PAYTM', ifscPrefix: 'PYTM', popular: false, accentColor: '#0284C7', upiSupported: false, impsSupported: true, neftSupported: true },
+];
 
-export function getBankBrandMeta(bankCodeOrIfsc?: string): BankBrandMeta {
-  const code = (bankCodeOrIfsc || '').trim().toUpperCase().slice(0, 4);
-  if (code && BANK_BRAND_MAP[code]) {
-    return BANK_BRAND_MAP[code];
+export function filterSupportedBanks(query?: string): {
+  popular: BankDirectoryEntry[];
+  all: BankDirectoryEntry[];
+} {
+  const q = (query || '').trim().toLowerCase();
+  const filtered = q
+    ? SUPPORTED_BANKS_DIRECTORY.filter(
+        (b) =>
+          b.name.toLowerCase().includes(q) ||
+          b.shortName.toLowerCase().includes(q) ||
+          b.code.toLowerCase().includes(q) ||
+          b.ifscPrefix.toLowerCase().includes(q)
+      )
+    : SUPPORTED_BANKS_DIRECTORY;
+  return {
+    popular: filtered.filter((b) => b.popular),
+    all: [...filtered].sort((a, b) => a.name.localeCompare(b.name)),
+  };
+}
+
+export function getBankBrandMeta(bankCodeOrIfscOrName?: string): BankBrandMeta {
+  const raw = (bankCodeOrIfscOrName || '').trim();
+  const prefix = raw.toUpperCase().slice(0, 4);
+  const byCode = SUPPORTED_BANKS_DIRECTORY.find((b) => b.code === prefix || b.ifscPrefix === prefix);
+  if (byCode) {
+    return {
+      code: byCode.code,
+      shortName: byCode.shortName,
+      accentColor: byCode.accentColor,
+      bgTint: '#F8FAFC',
+    };
+  }
+  const lower = raw.toLowerCase();
+  const byName = lower
+    ? SUPPORTED_BANKS_DIRECTORY.find(
+        (b) =>
+          b.name.toLowerCase().includes(lower) ||
+          lower.includes(b.shortName.toLowerCase()) ||
+          lower.includes(b.name.toLowerCase())
+      )
+    : undefined;
+  if (byName) {
+    return {
+      code: byName.code,
+      shortName: byName.shortName,
+      accentColor: byName.accentColor,
+      bgTint: '#F8FAFC',
+    };
   }
   return {
-    code: code || 'BANK',
-    shortName: code || 'BANK',
+    code: prefix || 'BANK',
+    shortName: prefix || 'BANK',
     accentColor: '#0D9488',
     bgTint: '#F0FDFA',
   };
