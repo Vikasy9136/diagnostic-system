@@ -586,15 +586,127 @@ export function createLargeLabAndWalletCloudRouter(): Router {
   });
 
   // Phlebo wallet read routes (/api/phlebo/wallet*)
+  async function syncAndGetPhleboWallet(id: string) {
+    const [wSnap, cfgSnap, ordersSnap, payoutsSnap, settlementsSnap, wdSnap] = await Promise.all([
+      db.collection('wallets').doc(id).get(),
+      db.collection('settings').doc('withdrawalConfig').get(),
+      db.collection('orders').where('phlebotomistId', '==', id).get().catch(() => ({ docs: [] as any[] })),
+      db.collection('payouts').where('phleboId', '==', id).get().catch(() => ({ docs: [] as any[] })),
+      db.collection('settlements').where('phleboId', '==', id).get().catch(() => ({ docs: [] as any[] })),
+      db.collection('withdrawalRequests').where('phleboId', '==', id).get().catch(() => ({ docs: [] as any[] })),
+    ]);
+
+    const payoutByOrder = new Map<string, any>();
+    for (const d of payoutsSnap.docs) {
+      const p = d.data() || {};
+      if (p.orderId) payoutByOrder.set(String(p.orderId), p);
+      if (p.orderNumber) payoutByOrder.set(String(p.orderNumber), p);
+    }
+    const stlByOrder = new Map<string, any>();
+    for (const d of settlementsSnap.docs) {
+      const s = d.data() || {};
+      if (s.orderId) stlByOrder.set(String(s.orderId), s);
+      if (s.orderNumber) stlByOrder.set(String(s.orderNumber), s);
+    }
+
+    const DELIVERED_STATUSES = new Set(['DELIVERED_TO_LAB', 'UNDER_ANALYSIS', 'REPORT_READY', 'COMPLETED', 'CLOSED']);
+    const now = new Date();
+    const weekAgoMs = now.getTime() - 7 * 86400000;
+    const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+    let totalEarnedPaise = 0;
+    let settledDirectPaise = 0;
+    let thisWeekEarningsPaise = 0;
+    let thisMonthEarningsPaise = 0;
+    const syncedCredits: Array<{ id: string; phleboId: string; type: string; direction: string; amountPaise: number; description: string; referenceId?: string; createdAt: string }> = [];
+
+    for (const d of ordersSnap.docs) {
+      const o = d.data() || {};
+      const status = String(o.status || '');
+      if (!DELIVERED_STATUSES.has(status)) continue;
+      const stl = stlByOrder.get(d.id) || stlByOrder.get(String(o.orderNumber || ''));
+      const payout = payoutByOrder.get(d.id) || payoutByOrder.get(String(o.orderNumber || ''));
+      const amountInr = Number(stl?.phleboPayoutInr ?? payout?.amountInr ?? o.phleboPayoutInr ?? o.courierFeeInr ?? 0);
+      if (!Number.isFinite(amountInr) || amountInr <= 0) continue;
+
+      const amtPaise = Math.round(amountInr * 100);
+      totalEarnedPaise += amtPaise;
+
+      const updatedAt = String(o.updatedAt || o.createdAt || '');
+      if (updatedAt && new Date(updatedAt).getTime() >= weekAgoMs) thisWeekEarningsPaise += amtPaise;
+      if (updatedAt.startsWith(monthPrefix)) thisMonthEarningsPaise += amtPaise;
+
+      const payoutRef = stl?.phleboPayoutRef || payout?.referenceId || (o.paymentMethod === 'CASH' ? 'CASH' : undefined);
+      const isSynthetic = Boolean(payoutRef && /^(CURPAY|LABPAY)-/i.test(String(payoutRef)));
+      const pStatus = String(payout?.status || '');
+      const isSettledDirect =
+        !isSynthetic &&
+        (pStatus === 'SETTLED' ||
+          pStatus === 'PROCESSED' ||
+          pStatus === 'MANUAL_RECONCILED' ||
+          (stl?.phleboPayoutStatus === 'PAID' && Boolean(payoutRef)) ||
+          o.paymentMethod === 'CASH' ||
+          o.paymentMethod === 'DIRECT_LAB_SETTLEMENT');
+
+      if (isSettledDirect) {
+        settledDirectPaise += amtPaise;
+      } else {
+        syncedCredits.push({
+          id: `AUTO-${d.id}`,
+          phleboId: id,
+          type: 'TRIP_EARNING_CREDIT',
+          direction: 'CREDIT',
+          amountPaise: amtPaise,
+          description: `Trip earning • ${o.orderNumber || d.id}`,
+          referenceId: o.orderNumber || d.id,
+          createdAt: updatedAt || now.toISOString(),
+        });
+      }
+    }
+
+    let pendingWithdrawalPaise = 0;
+    let withdrawnViaRequestsPaise = 0;
+    for (const d of wdSnap.docs) {
+      const wd = d.data() || {};
+      const st = String(wd.status || '');
+      const amt = Number(wd.requestedAmountPaise || 0);
+      if (['PENDING_ADMIN_SETTLEMENT', 'UNDER_REVIEW', 'ON_HOLD', 'PROCESSING_MANUALLY', 'NEEDS_REVIEW'].includes(st)) {
+        pendingWithdrawalPaise += amt;
+      } else if (st === 'SETTLED' || st === 'PAID') {
+        withdrawnViaRequestsPaise += amt;
+      }
+    }
+
+    const existing = wSnap.exists ? wSnap.data()! : {};
+    const computedAvail = Math.max(0, totalEarnedPaise - settledDirectPaise - pendingWithdrawalPaise - withdrawnViaRequestsPaise);
+    const mergedWallet = {
+      ...existing,
+      id,
+      phleboId: id,
+      availableBalancePaise: totalEarnedPaise > 0 ? computedAvail : Number(existing.availableBalancePaise || 0),
+      withdrawalEligibleBalancePaise: totalEarnedPaise > 0 ? computedAvail : Number(existing.withdrawalEligibleBalancePaise || existing.availableBalancePaise || 0),
+      pendingWithdrawalPaise: pendingWithdrawalPaise || Number(existing.pendingWithdrawalPaise || 0),
+      totalEarnedPaise: Math.max(totalEarnedPaise, Number(existing.totalEarnedPaise || 0)),
+      totalWithdrawnPaise: Math.max(settledDirectPaise + withdrawnViaRequestsPaise, Number(existing.totalWithdrawnPaise || 0)),
+      totalSettledPaise: Math.max(settledDirectPaise + withdrawnViaRequestsPaise, Number(existing.totalSettledPaise || existing.totalWithdrawnPaise || 0)),
+      onHoldBalancePaise: Number(existing.onHoldBalancePaise || 0),
+      thisWeekEarningsPaise: Math.max(thisWeekEarningsPaise, Number(existing.thisWeekEarningsPaise || 0)),
+      thisMonthEarningsPaise: Math.max(thisMonthEarningsPaise, Number(existing.thisMonthEarningsPaise || 0)),
+      updatedAt: now.toISOString(),
+    };
+
+    if (totalEarnedPaise > 0) {
+      await db.collection('wallets').doc(id).set(mergedWallet, { merge: true }).catch(() => undefined);
+    }
+
+    const config = cfgSnap.exists ? cfgSnap.data() : { minWithdrawalPaise: 10000, cycleDays: 7, platformFeePct: 10 };
+    return { wallet: mergedWallet, config, syncedCredits };
+  }
+
   r.get('/phlebo/wallet', requireAuth, requireRoles(UserRole.PHLEBOTOMIST, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
       const id = req.user?.phlebotomistId || req.user?.uid || '';
-      const [wSnap, cfgSnap] = await Promise.all([
-        db.collection('wallets').doc(id).get(),
-        db.collection('settings').doc('withdrawalConfig').get(),
-      ]);
-      const wallet = wSnap.exists ? { id: wSnap.id, ...wSnap.data() } : { id, phleboId: id, availableBalancePaise: 0, pendingWithdrawalPaise: 0, withdrawalEligibleBalancePaise: 0, totalEarnedPaise: 0, totalWithdrawnPaise: 0, thisWeekEarningsPaise: 0, thisMonthEarningsPaise: 0 };
-      const config = cfgSnap.exists ? cfgSnap.data() : { minWithdrawalPaise: 10000, cycleDays: 7, platformFeePct: 10 };
+      const { wallet, config } = await syncAndGetPhleboWallet(id);
       res.json({ success: true, data: { wallet, config } });
     } catch (e) { next(e); }
   });
@@ -602,8 +714,16 @@ export function createLargeLabAndWalletCloudRouter(): Router {
   r.get('/phlebo/wallet/transactions', requireAuth, requireRoles(UserRole.PHLEBOTOMIST, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
       const id = req.user?.phlebotomistId || req.user?.uid || '';
-      const snap = await db.collection('walletTransactions').where('phleboId', '==', id).get();
-      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a: any, b: any) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      const [snap, synced] = await Promise.all([
+        db.collection('walletTransactions').where('phleboId', '==', id).get(),
+        syncAndGetPhleboWallet(id).catch(() => ({ syncedCredits: [] as any[] })),
+      ]);
+      const stored = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const storedRefs = new Set(stored.map((t: any) => t.referenceId).filter(Boolean));
+      const missingCredits = (synced.syncedCredits || []).filter((c: any) => !storedRefs.has(c.referenceId));
+      const list = [...stored, ...missingCredits].sort((a: any, b: any) =>
+        String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
+      );
       res.json({ success: true, data: list });
     } catch (e) { next(e); }
   });

@@ -3,11 +3,10 @@ import {
   ActivityIndicator,
   Modal,
   ScrollView,
-  Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { BrandText as Text, BrandTextInput as TextInput } from '../components/LabSetuBrand';
 import { Ionicons } from '@expo/vector-icons';
 import {
   formatInr,

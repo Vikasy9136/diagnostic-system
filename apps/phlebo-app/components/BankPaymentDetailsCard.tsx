@@ -7,11 +7,10 @@ import {
   Modal,
   Platform,
   ScrollView,
-  Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { BRAND_FONTS, BrandText as Text, BrandTextInput as TextInput } from './LabSetuBrand';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import {
@@ -36,7 +35,6 @@ import {
 } from '../services/walletService';
 import { BankLogo } from '@diagnostic/shared/native/BankLogo';
 import { styles } from '../styles/phleboStyles';
-import { BRAND_FONTS } from './LabSetuBrand';
 
 function statusBadgeStyle(status?: string): { bg: string; fg: string; label: string } {
   if (status === 'VERIFIED') return { bg: '#DCFCE7', fg: '#15803D', label: 'Verified' };

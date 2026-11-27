@@ -1,5 +1,5 @@
 import React from 'react';
-import { Image, StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, TextInput, View, type TextInputProps, type TextProps } from 'react-native';
 import Svg, {
   Circle,
   Defs,
@@ -277,4 +277,25 @@ const waveStyles = StyleSheet.create({
     zIndex: 0,
   },
 });
+
+function resolveBrandFont(weight?: string | number): string {
+  const w = String(weight || '');
+  if (w === '800' || w === '900') return BRAND_FONTS.extraBold;
+  if (w === '700' || w === 'bold') return BRAND_FONTS.bold;
+  if (w === '600') return BRAND_FONTS.semiBold;
+  if (w === '500') return BRAND_FONTS.medium;
+  return BRAND_FONTS.regular;
+}
+
+export function BrandText({ style, ...props }: TextProps) {
+  const flat = StyleSheet.flatten(style) || {};
+  const fontFamily = flat.fontFamily || resolveBrandFont(flat.fontWeight);
+  return <Text {...props} style={[{ fontFamily }, style]} />;
+}
+
+export function BrandTextInput({ style, ...props }: TextInputProps) {
+  const flat = StyleSheet.flatten(style) || {};
+  const fontFamily = flat.fontFamily || resolveBrandFont(flat.fontWeight);
+  return <TextInput {...props} style={[{ fontFamily }, style]} />;
+}
 
