@@ -1,5 +1,9 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { pairMobileScannerApi, pushScannedBarcodeApi } from '../services/inventoryApiService';
+import {
+  pairMobileScannerApi,
+  pushScannedBarcodeApi,
+  type ScannerMode,
+} from '../services/inventoryApiService';
 
 type PermissionState =
   | 'INITIAL'
@@ -12,13 +16,25 @@ type PermissionState =
   | 'UNSUPPORTED'
   | 'NO_CAMERA';
 
+interface MobileScanQueueItem {
+  eventId: string;
+  barcode: string;
+  symbology: string;
+  time: string;
+  syncStatus: 'SYNCING' | 'PENDING_SYNC' | 'SYNCED' | 'DUPLICATE' | 'EXPIRED' | 'ERROR';
+  itemName?: string | null;
+  recordStatusText?: string;
+}
+
 export function MobileScannerPage() {
   const [sessionId, setSessionId] = useState('');
   const [pairingToken, setPairingToken] = useState('');
   const [contextTitle, setContextTitle] = useState('Central Warehouse');
+  const [scannerMode, setScannerMode] = useState<ScannerMode>('ONE_SCAN');
 
-  const [connectionStatus, setConnectionStatus] = useState<'PAIRING' | 'CONNECTED' | 'ERROR'>('PAIRING');
+  const [connectionStatus, setConnectionStatus] = useState<'PAIRING' | 'CONNECTED' | 'EXPIRED' | 'ERROR'>('PAIRING');
   const [errorMessage, setErrorMessage] = useState('');
+  const deviceIdRef = useRef<string>(`MOB-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`);
 
   // Camera & Permission State
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -33,8 +49,8 @@ export function MobileScannerPage() {
   const [isProcessingSnapshot, setIsProcessingSnapshot] = useState(false);
 
   // Scan History & Feedback
-  const [lastScanned, setLastScanned] = useState<{ barcode: string; symbology: string; time: string } | null>(null);
-  const [recentScans, setRecentScans] = useState<Array<{ id: string; barcode: string; symbology: string; time: string }>>([]);
+  const [lastScanned, setLastScanned] = useState<MobileScanQueueItem | null>(null);
+  const [recentScans, setRecentScans] = useState<MobileScanQueueItem[]>([]);
   const [justScannedFlash, setJustScannedFlash] = useState(false);
   const lastScannedTimeRef = useRef<{ [code: string]: number }>({});
 
@@ -48,12 +64,21 @@ export function MobileScannerPage() {
     const sId = params.get('session') || '';
     const tkn = params.get('token') || '';
     const ctx = params.get('context') || params.get('title') || 'Central Warehouse';
+    const modeParam = params.get('mode') === 'MULTI_SCAN' ? 'MULTI_SCAN' : 'ONE_SCAN';
 
     setSessionId(sId);
     setPairingToken(tkn);
     setContextTitle(ctx);
+    setScannerMode(modeParam);
 
     if (sId && tkn) {
+      try {
+        const saved = localStorage.getItem(`labsetu_scanner_queue_${sId}`);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) setRecentScans(parsed);
+        }
+      } catch {}
       void pairWithDesktop(sId, tkn, 1);
     } else {
       setConnectionStatus('ERROR');
@@ -293,11 +318,91 @@ export function MobileScannerPage() {
     setCameraFacing((prev) => (prev === 'environment' ? 'user' : 'environment'));
   }
 
-  // Transmit detected barcode to desktop
+  // Persist scan queue locally so network drops never lose scans
+  useEffect(() => {
+    if (!sessionId) return;
+    try {
+      localStorage.setItem(`labsetu_scanner_queue_${sessionId}`, JSON.stringify(recentScans.slice(0, 15)));
+    } catch {}
+  }, [recentScans, sessionId]);
+
+  const deliverScanEvent = useCallback(
+    async (item: MobileScanQueueItem) => {
+      if (!sessionId || !pairingToken) return;
+      if (connectionStatus === 'EXPIRED') return;
+
+      try {
+        const ack = await pushScannedBarcodeApi(sessionId, {
+          pairingToken,
+          eventId: item.eventId,
+          barcode: item.barcode,
+          symbology: item.symbology,
+          deviceId: deviceIdRef.current,
+          metadata: {
+            source: 'MOBILE_GOOGLE_LENS_VIEWFINDER',
+            userAgent: navigator.userAgent,
+          },
+        });
+
+        const resolvedStatus: MobileScanQueueItem['syncStatus'] = ack.duplicate ? 'DUPLICATE' : 'SYNCED';
+        const itemLabel = ack.event?.itemName || (ack.event?.status === 'UNKNOWN_BARCODE' ? 'Unknown Barcode' : null);
+        const statusText = ack.duplicate
+          ? 'Duplicate Scan • Already Recorded'
+          : ack.event?.status === 'UNKNOWN_BARCODE'
+          ? 'Unknown Barcode Recorded'
+          : 'Barcode Scanned Successfully • Record Added';
+
+        const updated: MobileScanQueueItem = {
+          ...item,
+          syncStatus: resolvedStatus,
+          itemName: itemLabel,
+          recordStatusText: statusText,
+        };
+
+        setLastScanned((prev) => (prev?.eventId === item.eventId ? updated : prev));
+        setRecentScans((prev) => prev.map((s) => (s.eventId === item.eventId ? updated : s)));
+
+        if ((ack.sessionMode || scannerMode) === 'ONE_SCAN' && ack.success) {
+          setIsPaused(true);
+        }
+      } catch (err: any) {
+        const statusCode = err?.statusCode;
+        const code = err?.code;
+        if (statusCode === 410 || statusCode === 404 || code === 'SESSION_EXPIRED' || code === 'SESSION_CLOSED' || code === 'SESSION_NOT_FOUND') {
+          setConnectionStatus('EXPIRED');
+          setErrorMessage('Desktop pairing session expired or closed. Please scan a new QR code from desktop.');
+          setIsPaused(true);
+          const expiredItem: MobileScanQueueItem = {
+            ...item,
+            syncStatus: 'EXPIRED',
+            recordStatusText: 'Session Expired',
+          };
+          setLastScanned((prev) => (prev?.eventId === item.eventId ? expiredItem : prev));
+          setRecentScans((prev) => prev.map((s) => (s.eventId === item.eventId ? expiredItem : s)));
+          return;
+        }
+
+        const pendingItem: MobileScanQueueItem = {
+          ...item,
+          syncStatus: 'PENDING_SYNC',
+          recordStatusText: 'Scan Pending Sync (Retrying...)',
+        };
+        setLastScanned((prev) => (prev?.eventId === item.eventId ? pendingItem : prev));
+        setRecentScans((prev) => prev.map((s) => (s.eventId === item.eventId ? pendingItem : s)));
+
+        setTimeout(() => {
+          void deliverScanEvent(item);
+        }, 2500);
+      }
+    },
+    [sessionId, pairingToken, connectionStatus, scannerMode]
+  );
+
+  // Transmit detected barcode to desktop with unique eventId
   const handleBarcodeDetected = useCallback(
     async (code: string, format = 'CODE_128') => {
       const clean = code.trim();
-      if (!clean || isPaused) return;
+      if (!clean || isPaused || connectionStatus === 'EXPIRED') return;
 
       // Debounce same barcode within 1.8 seconds
       const now = Date.now();
@@ -319,26 +424,22 @@ export function MobileScannerPage() {
       setTimeout(() => setJustScannedFlash(false), 500);
 
       const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      setLastScanned({ barcode: clean, symbology: format, time: timeStr });
-      setRecentScans((prev) => [{ id: `s-${Date.now()}`, barcode: clean, symbology: format, time: timeStr }, ...prev.slice(0, 7)]);
+      const eventId = `EVT-${sessionId || 'LOCAL'}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+      const queueItem: MobileScanQueueItem = {
+        eventId,
+        barcode: clean,
+        symbology: format,
+        time: timeStr,
+        syncStatus: 'SYNCING',
+        recordStatusText: 'Saving Record...',
+      };
 
-      // Push to Desktop
-      if (sessionId) {
-        try {
-          await pushScannedBarcodeApi(sessionId, {
-            barcode: clean,
-            symbology: format,
-            metadata: {
-              source: 'MOBILE_GOOGLE_LENS_VIEWFINDER',
-              userAgent: navigator.userAgent,
-            },
-          });
-        } catch (err: any) {
-          console.warn('Failed pushing scan to desktop:', err);
-        }
-      }
+      setLastScanned(queueItem);
+      setRecentScans((prev) => [queueItem, ...prev.slice(0, 14)]);
+
+      await deliverScanEvent(queueItem);
     },
-    [isPaused, playBeepSound, sessionId]
+    [isPaused, connectionStatus, playBeepSound, sessionId, deliverScanEvent]
   );
 
   // Barcode Detection Scanning Loop for Live Video
@@ -1121,39 +1222,99 @@ export function MobileScannerPage() {
         )}
 
         {/* LAST SCANNED CARD */}
-        {lastScanned ? (
+        {connectionStatus === 'EXPIRED' ? (
           <div
             style={{
-              background: 'linear-gradient(135deg, #064E3B 0%, #0F2E28 100%)',
-              border: '1px solid #059669',
+              background: '#7F1D1D',
+              border: '1px solid #EF4444',
+              borderRadius: '12px',
+              padding: '12px 16px',
+              color: '#FEE2E2',
+              fontSize: '0.84rem',
+              fontWeight: 700,
+            }}
+          >
+            ⚠️ {errorMessage || 'Session Expired. Please scan a new QR code from Desktop.'}
+          </div>
+        ) : lastScanned ? (
+          <div
+            style={{
+              background:
+                lastScanned.syncStatus === 'SYNCED' || lastScanned.syncStatus === 'DUPLICATE'
+                  ? 'linear-gradient(135deg, #064E3B 0%, #0F2E28 100%)'
+                  : lastScanned.syncStatus === 'PENDING_SYNC'
+                  ? '#78350F'
+                  : '#1E293B',
+              border: `1px solid ${
+                lastScanned.syncStatus === 'SYNCED' || lastScanned.syncStatus === 'DUPLICATE'
+                  ? '#059669'
+                  : lastScanned.syncStatus === 'PENDING_SYNC'
+                  ? '#F59E0B'
+                  : '#334155'
+              }`,
               borderRadius: '12px',
               padding: '12px 16px',
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
+              gap: '10px',
             }}
           >
-            <div>
-              <div style={{ fontSize: '0.7rem', color: '#6EE7B7', fontWeight: 700, textTransform: 'uppercase' }}>
-                Latest Scanned Code • {lastScanned.time}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: '0.7rem', color: '#A7F3D0', fontWeight: 700, textTransform: 'uppercase' }}>
+                {lastScanned.recordStatusText || 'Saving Record...'} • {lastScanned.time}
               </div>
-              <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#FFFFFF', letterSpacing: '0.04em', fontFamily: 'monospace' }}>
+              <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#FFFFFF', letterSpacing: '0.04em', fontFamily: 'monospace' }}>
                 {lastScanned.barcode}
               </div>
+              {lastScanned.itemName ? (
+                <div style={{ fontSize: '0.76rem', color: '#E2E8F0', marginTop: '2px' }}>
+                  {lastScanned.itemName}
+                </div>
+              ) : null}
             </div>
-            <div
-              style={{
-                background: '#10B981',
-                color: '#022C22',
-                borderRadius: '8px',
-                padding: '6px 12px',
-                fontSize: '0.75rem',
-                fontWeight: 800,
-                textAlign: 'center',
-              }}
-            >
-              ✓ Sent
-            </div>
+            {lastScanned.syncStatus === 'PENDING_SYNC' ? (
+              <button
+                type="button"
+                onClick={() => void deliverScanEvent(lastScanned)}
+                style={{
+                  background: '#F59E0B',
+                  color: '#0F172A',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '6px 12px',
+                  fontSize: '0.75rem',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                }}
+              >
+                Retry Sync
+              </button>
+            ) : (
+              <div
+                style={{
+                  background:
+                    lastScanned.syncStatus === 'SYNCED' || lastScanned.syncStatus === 'DUPLICATE'
+                      ? '#10B981'
+                      : '#38BDF8',
+                  color: '#022C22',
+                  borderRadius: '8px',
+                  padding: '6px 12px',
+                  fontSize: '0.74rem',
+                  fontWeight: 800,
+                  textAlign: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                {lastScanned.syncStatus === 'SYNCED'
+                  ? '✓ Record Added'
+                  : lastScanned.syncStatus === 'DUPLICATE'
+                  ? '✓ Already Saved'
+                  : lastScanned.syncStatus === 'EXPIRED'
+                  ? 'Expired'
+                  : '⏳ Syncing'}
+              </div>
+            )}
           </div>
         ) : (
           <div
@@ -1215,7 +1376,7 @@ export function MobileScannerPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '110px', overflowY: 'auto' }}>
               {recentScans.map((s) => (
                 <div
-                  key={s.id}
+                  key={s.eventId}
                   style={{
                     background: '#1E293B',
                     borderRadius: '6px',
@@ -1227,7 +1388,28 @@ export function MobileScannerPage() {
                   }}
                 >
                   <span style={{ fontFamily: 'monospace', color: '#E2E8F0', fontWeight: 600 }}>{s.barcode}</span>
-                  <span style={{ color: '#10B981', fontSize: '0.7rem' }}>✓ Transmitted</span>
+                  <span
+                    style={{
+                      color:
+                        s.syncStatus === 'SYNCED' || s.syncStatus === 'DUPLICATE'
+                          ? '#10B981'
+                          : s.syncStatus === 'PENDING_SYNC'
+                          ? '#FBBF24'
+                          : '#38BDF8',
+                      fontSize: '0.7rem',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {s.syncStatus === 'SYNCED'
+                      ? '✓ Record Added'
+                      : s.syncStatus === 'DUPLICATE'
+                      ? '✓ Duplicate Ack'
+                      : s.syncStatus === 'PENDING_SYNC'
+                      ? '⏳ Pending Sync'
+                      : s.syncStatus === 'EXPIRED'
+                      ? '✕ Expired'
+                      : '⏳ Syncing'}
+                  </span>
                 </div>
               ))}
             </div>

@@ -520,17 +520,56 @@ export async function fetchStockAdjustmentsApi(params?: {
 // Mobile-to-Desktop Remote Scanner Bridge
 // ---------------------------------------------------------------------------
 
-export async function createScannerBridgeSessionApi(): Promise<{
+export type ScannerMode = 'ONE_SCAN' | 'MULTI_SCAN';
+
+export interface ScannerBridgeEventRecord {
+  id: string;
+  eventId: string;
+  sessionId: string;
+  barcode: string;
+  barcodeType:
+    | 'SKU_BARCODE'
+    | 'SUPPLIER_BARCODE'
+    | 'KIT_BARCODE'
+    | 'SERIALIZED_TUBE_BARCODE'
+    | 'BATCH_BARCODE'
+    | 'UNKNOWN';
+  symbology?: string;
+  status: 'MATCHED' | 'UNKNOWN_BARCODE' | 'MAPPED';
+  recordStatus: 'RECORDED';
+  itemId: string | null;
+  itemName: string | null;
+  sku: string | null;
+  kitId: string | null;
+  batchNumber: string | null;
+  expiryDate: string | null;
+  warehouseLocation: string | null;
+  scannedAt: string;
+  acknowledgedAt?: string;
+  pairedDeviceId?: string | null;
+  pairedDeviceName?: string;
+  operatorEmail?: string | null;
+  context?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export async function createScannerBridgeSessionApi(options?: {
+  mode?: ScannerMode;
+  context?: string;
+  warehouseId?: string;
+}): Promise<{
   sessionId: string;
   pairingToken: string;
   status: string;
+  mode: ScannerMode;
   expiresAt: string;
+  lanIp?: string;
 }> {
   const headers = await getAuthHeader();
   const res = await fetch(`${getInventoryApiBase()}/inventory/scanner-bridge/session`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({}),
+    body: JSON.stringify(options || {}),
   });
   if (!res.ok) throw new Error(`Failed creating scanner session: ${res.statusText}`);
   const json = await res.json();
@@ -553,7 +592,10 @@ export async function pairMobileScannerApi(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Pairing failed: ${res.statusText}`);
+    const e: any = new Error(err?.error?.message || err?.error || `Pairing failed: ${res.statusText}`);
+    e.statusCode = res.status;
+    e.code = err?.error?.code || err?.code;
+    throw e;
   }
   return await res.json();
 }
@@ -561,18 +603,34 @@ export async function pairMobileScannerApi(
 export async function pushScannedBarcodeApi(
   sessionId: string,
   payload: {
+    pairingToken: string;
+    eventId: string;
     barcode: string;
     symbology?: string;
+    deviceId?: string;
     metadata?: Record<string, unknown>;
   }
-): Promise<any> {
+): Promise<{
+  success: boolean;
+  duplicate?: boolean;
+  alreadyProcessed?: boolean;
+  sessionMode?: ScannerMode;
+  event?: ScannerBridgeEventRecord;
+  barcode?: string;
+}> {
   const headers = await getAuthHeader();
   const res = await fetch(`${getInventoryApiBase()}/inventory/scanner-bridge/${encodeURIComponent(sessionId)}/scan`, {
     method: 'POST',
     headers,
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(`Push scan failed: ${res.statusText}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const e: any = new Error(err?.error?.message || err?.error || `Push scan failed: ${res.statusText}`);
+    e.statusCode = res.status;
+    e.code = err?.error?.code || err?.code;
+    throw e;
+  }
   return await res.json();
 }
 
@@ -581,15 +639,11 @@ export async function fetchScannerBridgeEventsApi(
   sinceIndex?: number
 ): Promise<{
   sessionId: string;
-  status: 'WAITING_FOR_DEVICE' | 'CONNECTED' | 'CLOSED';
+  status: 'WAITING_FOR_DEVICE' | 'CONNECTED' | 'CLOSED' | 'EXPIRED';
+  mode?: ScannerMode;
+  expiresAt?: string;
   pairedDeviceName?: string;
-  events: Array<{
-    id: string;
-    barcode: string;
-    symbology?: string;
-    scannedAt: string;
-    metadata?: Record<string, unknown>;
-  }>;
+  events: ScannerBridgeEventRecord[];
   totalCount: number;
 }> {
   const q = sinceIndex !== undefined ? `?since=${sinceIndex}` : '';
@@ -598,6 +652,52 @@ export async function fetchScannerBridgeEventsApi(
     headers,
   });
   if (!res.ok) throw new Error(`Failed fetching scanner events: ${res.statusText}`);
+  return await res.json();
+}
+
+export async function closeScannerBridgeSessionApi(sessionId: string): Promise<void> {
+  const headers = await getAuthHeader();
+  await fetch(`${getInventoryApiBase()}/inventory/scanner-bridge/${encodeURIComponent(sessionId)}/close`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({}),
+  });
+}
+
+export async function updateScannerBridgeModeApi(sessionId: string, mode: ScannerMode): Promise<void> {
+  const headers = await getAuthHeader();
+  await fetch(`${getInventoryApiBase()}/inventory/scanner-bridge/${encodeURIComponent(sessionId)}/mode`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ mode }),
+  });
+}
+
+export async function fetchRecentScannerEventsApi(): Promise<ScannerBridgeEventRecord[]> {
+  const headers = await getAuthHeader();
+  const res = await fetch(`${getInventoryApiBase()}/inventory/scanner-bridge/events/recent`, { headers });
+  if (!res.ok) return [];
+  const json = await res.json();
+  return json.events || [];
+}
+
+export async function mapUnknownScannerEventApi(
+  eventId: string,
+  payload: { itemId: string; itemName?: string; sku?: string; saveMapping?: boolean }
+): Promise<any> {
+  const headers = await getAuthHeader();
+  const res = await fetch(
+    `${getInventoryApiBase()}/inventory/scanner-bridge/events/${encodeURIComponent(eventId)}/map`,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || err?.error || 'Failed mapping barcode');
+  }
   return await res.json();
 }
 

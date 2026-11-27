@@ -1,38 +1,61 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
+import { db } from '../../../firebase';
 import {
+  closeScannerBridgeSessionApi,
   createScannerBridgeSessionApi,
   fetchScannerBridgeEventsApi,
+  updateScannerBridgeModeApi,
+  type ScannerBridgeEventRecord,
+  type ScannerMode,
 } from '../../../services/inventoryApiService';
 
 interface AdminInventoryScannerBridgeModalProps {
   isOpen?: boolean;
   onClose: () => void;
   onBarcodeScanned?: (barcode: string, metadata?: any) => void;
+  onScanRecorded?: (event: ScannerBridgeEventRecord) => void;
   contextTitle?: string;
   context?: string;
+  defaultMode?: ScannerMode;
 }
 
 const LIVE_SCANNER_ORIGIN = 'https://labsetu-diagnostics.web.app';
+
+type UiSyncPhase =
+  | 'WAITING_FOR_SCANNER'
+  | 'MOBILE_CONNECTED'
+  | 'RECORD_ADDED'
+  | 'UNKNOWN_BARCODE'
+  | 'SESSION_EXPIRED'
+  | 'SYNC_FAILED';
 
 export function AdminInventoryScannerBridgeModal({
   isOpen = true,
   onClose,
   onBarcodeScanned,
+  onScanRecorded,
   contextTitle,
   context,
+  defaultMode = 'ONE_SCAN',
 }: AdminInventoryScannerBridgeModalProps) {
-  const effectiveTitle = contextTitle || context || 'Inward / Kit Assembly';
-  if (!isOpen) return null;
+  const effectiveTitle = contextTitle || context || 'Central Warehouse Inventory';
   const [session, setSession] = useState<{
     sessionId: string;
     pairingToken: string;
     status: string;
+    mode: ScannerMode;
     expiresAt: string;
     lanIp?: string;
   } | null>(null);
-  const [deviceStatus, setDeviceStatus] = useState<'WAITING_FOR_DEVICE' | 'CONNECTED' | 'CLOSED'>('WAITING_FOR_DEVICE');
+  const [activeMode, setActiveMode] = useState<ScannerMode>(defaultMode);
+  const [deviceStatus, setDeviceStatus] = useState<
+    'WAITING_FOR_DEVICE' | 'CONNECTED' | 'CLOSED' | 'EXPIRED'
+  >('WAITING_FOR_DEVICE');
+  const [uiPhase, setUiPhase] = useState<UiSyncPhase>('WAITING_FOR_SCANNER');
   const [deviceName, setDeviceName] = useState<string | undefined>();
-  const [scannedEvents, setScannedEvents] = useState<Array<{ id: string; barcode: string; scannedAt: string }>>([]);
+  const [scannedEvents, setScannedEvents] = useState<ScannerBridgeEventRecord[]>([]);
+  const [latestConfirmedBanner, setLatestConfirmedBanner] = useState<ScannerBridgeEventRecord | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
   const [customHost, setCustomHost] = useState('');
   const [showHostInput, setShowHostInput] = useState(false);
@@ -41,9 +64,16 @@ export function AdminInventoryScannerBridgeModal({
   const [preferLocalFallback, setPreferLocalFallback] = useState<boolean>(false);
 
   const pollIntervalRef = useRef<any>(null);
+  const autoCloseTimerRef = useRef<any>(null);
   const nextSinceIndexRef = useRef<number>(0);
+  const processedEventIdsRef = useRef<Set<string>>(new Set());
+  const activeModeRef = useRef<ScannerMode>(defaultMode);
+  const isClosingRef = useRef<boolean>(false);
 
-  // Play audio chime on desktop when mobile scans a barcode
+  useEffect(() => {
+    activeModeRef.current = activeMode;
+  }, [activeMode]);
+
   const playDesktopChime = useCallback(() => {
     try {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -51,12 +81,10 @@ export function AdminInventoryScannerBridgeModal({
       const ctx = new AudioCtx();
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(1046.5, ctx.currentTime); // C6 tone
+      osc.frequency.setValueAtTime(1046.5, ctx.currentTime);
       gain.gain.setValueAtTime(0.2, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
-
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start();
@@ -66,90 +94,196 @@ export function AdminInventoryScannerBridgeModal({
     }
   }, []);
 
-  useEffect(() => {
-    if (isOpen) {
-      initSession();
-      const localCheck =
-        typeof window !== 'undefined' &&
-        (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-      if (!localCheck) {
-        setLiveLinkAvailable(true);
-      } else {
-        const ctrl = new AbortController();
-        const tid = setTimeout(() => ctrl.abort(), 2500);
-        fetch(`${LIVE_SCANNER_ORIGIN}/favicon.ico`, {
-          mode: 'no-cors',
-          cache: 'no-store',
-          signal: ctrl.signal,
-        })
-          .then(() => {
-            clearTimeout(tid);
-            setLiveLinkAvailable(true);
-          })
-          .catch(() => {
-            clearTimeout(tid);
-            setLiveLinkAvailable(false);
-          });
+  const handleIncomingConfirmedEvents = useCallback(
+    (incoming: ScannerBridgeEventRecord[], sessId: string) => {
+      const fresh: ScannerBridgeEventRecord[] = [];
+      for (const ev of incoming) {
+        const key = ev.eventId || ev.id;
+        if (!key || processedEventIdsRef.current.has(key)) continue;
+        processedEventIdsRef.current.add(key);
+        fresh.push(ev);
       }
-    } else {
-      stopPolling();
-      setSession(null);
-      setScannedEvents([]);
-      nextSinceIndexRef.current = 0;
-    }
-    return () => stopPolling();
-  }, [isOpen]);
+      if (fresh.length === 0) return;
 
-  async function initSession() {
-    try {
-      const sess = await createScannerBridgeSessionApi();
-      setSession(sess);
-      setDeviceStatus('WAITING_FOR_DEVICE');
-      startPolling(sess.sessionId);
-    } catch (err) {
-      console.error('Failed to create scanner bridge session:', err);
-    }
-  }
+      setScannedEvents((prev) => [...prev, ...fresh]);
+      playDesktopChime();
 
-  function startPolling(sessionId: string) {
-    stopPolling();
-    pollIntervalRef.current = setInterval(async () => {
-      try {
-        const res = await fetchScannerBridgeEventsApi(sessionId, nextSinceIndexRef.current);
-        setDeviceStatus(res.status);
-        if (res.pairedDeviceName) {
-          setDeviceName(res.pairedDeviceName);
-        }
-        if (res.events && res.events.length > 0) {
-          nextSinceIndexRef.current += res.events.length;
-          setScannedEvents((prev) => [...prev, ...res.events]);
-
-          // Play desktop audio confirmation & trigger scan handler
-          playDesktopChime();
-          for (const ev of res.events) {
-            if (onBarcodeScanned) {
-              onBarcodeScanned(ev.barcode, ev.metadata);
-            }
-          }
-        }
-      } catch (err) {
-        // Silently retry polling
+      for (const ev of fresh) {
+        setLatestConfirmedBanner(ev);
+        setUiPhase(ev.status === 'UNKNOWN_BARCODE' ? 'UNKNOWN_BARCODE' : 'RECORD_ADDED');
+        onBarcodeScanned?.(ev.barcode, ev);
+        onScanRecorded?.(ev);
       }
-    }, 750);
-  }
+
+      if (activeModeRef.current === 'ONE_SCAN' && !isClosingRef.current) {
+        isClosingRef.current = true;
+        void closeScannerBridgeSessionApi(sessId).catch(() => {});
+        autoCloseTimerRef.current = setTimeout(() => {
+          onClose();
+        }, 950);
+      }
+    },
+    [onBarcodeScanned, onScanRecorded, onClose, playDesktopChime]
+  );
 
   function stopPolling() {
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
     }
+    if (autoCloseTimerRef.current) {
+      clearTimeout(autoCloseTimerRef.current);
+      autoCloseTimerRef.current = null;
+    }
+  }
+
+  useEffect(() => {
+    if (!isOpen) {
+      stopPolling();
+      setSession(null);
+      setScannedEvents([]);
+      setLatestConfirmedBanner(null);
+      nextSinceIndexRef.current = 0;
+      processedEventIdsRef.current.clear();
+      isClosingRef.current = false;
+      return;
+    }
+
+    setActiveMode(defaultMode);
+    activeModeRef.current = defaultMode;
+    isClosingRef.current = false;
+    processedEventIdsRef.current.clear();
+    setScannedEvents([]);
+    setLatestConfirmedBanner(null);
+    setUiPhase('WAITING_FOR_SCANNER');
+
+    let unsubSess: (() => void) | null = null;
+    let unsubEvents: (() => void) | null = null;
+    let cancelled = false;
+
+    async function bootSession() {
+      try {
+        const sess = await createScannerBridgeSessionApi({
+          mode: defaultMode,
+          context: effectiveTitle,
+        });
+        if (cancelled) return;
+        setSession(sess);
+        setDeviceStatus('WAITING_FOR_DEVICE');
+
+        // Real-time Firestore listener for session status
+        try {
+          unsubSess = onSnapshot(doc(db, 'scannerPairingSessions', sess.sessionId), (snap) => {
+            if (!snap.exists()) return;
+            const d = snap.data() as any;
+            if (d.status) setDeviceStatus(d.status);
+            if (d.pairedDeviceName) setDeviceName(d.pairedDeviceName);
+            if (d.status === 'EXPIRED') {
+              setUiPhase('SESSION_EXPIRED');
+            } else if (d.status === 'CONNECTED') {
+              setUiPhase((prev) =>
+                prev === 'WAITING_FOR_SCANNER' ? 'MOBILE_CONNECTED' : prev
+              );
+            }
+          });
+
+          const evQ = query(
+            collection(db, 'scannerEvents'),
+            where('sessionId', '==', sess.sessionId)
+          );
+          unsubEvents = onSnapshot(evQ, (snap) => {
+            const docs = snap.docs
+              .map((d) => d.data() as ScannerBridgeEventRecord)
+              .sort((a, b) => String(a.scannedAt || '').localeCompare(String(b.scannedAt || '')));
+            if (docs.length > 0) {
+              handleIncomingConfirmedEvents(docs, sess.sessionId);
+            }
+          });
+        } catch {
+          // Polling fallback handles environments without live Firestore listener
+        }
+
+        // Polling fallback
+        pollIntervalRef.current = setInterval(async () => {
+          try {
+            const res = await fetchScannerBridgeEventsApi(sess.sessionId, nextSinceIndexRef.current);
+            setDeviceStatus(res.status);
+            if (res.pairedDeviceName) setDeviceName(res.pairedDeviceName);
+            if (res.status === 'EXPIRED') {
+              setUiPhase('SESSION_EXPIRED');
+              stopPolling();
+              return;
+            }
+            if (res.status === 'CONNECTED') {
+              setUiPhase((prev) =>
+                prev === 'WAITING_FOR_SCANNER' ? 'MOBILE_CONNECTED' : prev
+              );
+            }
+            if (res.events && res.events.length > 0) {
+              nextSinceIndexRef.current += res.events.length;
+              handleIncomingConfirmedEvents(res.events, sess.sessionId);
+            }
+          } catch {
+            // Silent retry
+          }
+        }, 900);
+      } catch (err) {
+        console.error('Failed to create scanner bridge session:', err);
+        setUiPhase('SYNC_FAILED');
+      }
+    }
+
+    void bootSession();
+
+    const localCheck =
+      typeof window !== 'undefined' &&
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    if (!localCheck) {
+      setLiveLinkAvailable(true);
+    } else {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 2500);
+      fetch(`${LIVE_SCANNER_ORIGIN}/favicon.ico`, {
+        mode: 'no-cors',
+        cache: 'no-store',
+        signal: ctrl.signal,
+      })
+        .then(() => {
+          clearTimeout(tid);
+          setLiveLinkAvailable(true);
+        })
+        .catch(() => {
+          clearTimeout(tid);
+          setLiveLinkAvailable(false);
+        });
+    }
+
+    return () => {
+      cancelled = true;
+      stopPolling();
+      unsubSess?.();
+      unsubEvents?.();
+    };
+  }, [isOpen, defaultMode, effectiveTitle, handleIncomingConfirmedEvents]);
+
+  async function handleToggleMode(nextMode: ScannerMode) {
+    setActiveMode(nextMode);
+    activeModeRef.current = nextMode;
+    if (session?.sessionId) {
+      await updateScannerBridgeModeApi(session.sessionId, nextMode).catch(() => {});
+    }
+  }
+
+  async function handleFinishAndClose() {
+    if (session?.sessionId && !isClosingRef.current) {
+      isClosingRef.current = true;
+      await closeScannerBridgeSessionApi(session.sessionId).catch(() => {});
+    }
+    onClose();
   }
 
   if (!isOpen) return null;
 
-  // Compute the direct URL that phone cameras / Google Lens can open:
-  // Automatically prefer verified Live HTTPS link (no Chrome/mobile SSL spam warning),
-  // and fall back to Local Network IP only if Live link is unavailable.
   const isLocal =
     typeof window !== 'undefined' &&
     (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
@@ -166,7 +300,7 @@ export function AdminInventoryScannerBridgeModal({
   const selectedProtocol = usingLiveOrigin ? 'https:' : `${protocolChoice}:`;
 
   const directScannerUrl = session
-    ? `${selectedProtocol}//${resolvedHost}/mobile-scanner?session=${encodeURIComponent(session.sessionId)}&token=${encodeURIComponent(session.pairingToken)}&context=${encodeURIComponent(effectiveTitle)}&auto=1`
+    ? `${selectedProtocol}//${resolvedHost}/mobile-scanner?session=${encodeURIComponent(session.sessionId)}&token=${encodeURIComponent(session.pairingToken)}&context=${encodeURIComponent(effectiveTitle)}&mode=${activeMode}&auto=1`
     : '';
 
   const qrUrl = directScannerUrl
@@ -179,6 +313,59 @@ export function AdminInventoryScannerBridgeModal({
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2500);
   }
+
+  const statusConfig: Record<UiSyncPhase, { bg: string; border: string; text: string; label: string; icon: string }> = {
+    WAITING_FOR_SCANNER: {
+      bg: '#EFF6FF',
+      border: '#BFDBFE',
+      text: '#1E40AF',
+      label: 'Waiting for Scanner...',
+      icon: '📡',
+    },
+    MOBILE_CONNECTED: {
+      bg: '#ECFDF5',
+      border: '#10B981',
+      text: '#065F46',
+      label: `Mobile Connected: ${deviceName || 'Active Mobile Camera'}`,
+      icon: '🟢',
+    },
+    RECORD_ADDED: {
+      bg: '#DCFCE7',
+      border: '#16A34A',
+      text: '#14532D',
+      label:
+        activeMode === 'ONE_SCAN'
+          ? 'Barcode Scanned Successfully • Record Added (Closing...)'
+          : 'Barcode Scanned Successfully • Record Added',
+      icon: '✅',
+    },
+    UNKNOWN_BARCODE: {
+      bg: '#FEF3C7',
+      border: '#F59E0B',
+      text: '#92400E',
+      label:
+        activeMode === 'ONE_SCAN'
+          ? 'Unknown Barcode Recorded (Closing...)'
+          : 'Unknown Barcode Recorded — Map item on inventory page',
+      icon: '⚠️',
+    },
+    SESSION_EXPIRED: {
+      bg: '#FEE2E2',
+      border: '#EF4444',
+      text: '#991B1B',
+      label: 'Session Expired — Close and open a new scanner session',
+      icon: '⏱️',
+    },
+    SYNC_FAILED: {
+      bg: '#FEE2E2',
+      border: '#EF4444',
+      text: '#991B1B',
+      label: 'Sync Failed — Unable to reach backend',
+      icon: '❌',
+    },
+  };
+
+  const activeStatusUi = statusConfig[uiPhase];
 
   return (
     <div
@@ -201,7 +388,7 @@ export function AdminInventoryScannerBridgeModal({
         style={{
           backgroundColor: '#FFFFFF',
           borderRadius: '16px',
-          maxWidth: '580px',
+          maxWidth: '600px',
           width: '100%',
           maxHeight: '92vh',
           overflowY: 'auto',
@@ -210,160 +397,127 @@ export function AdminInventoryScannerBridgeModal({
         }}
       >
         {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
           <div>
             <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span>📷</span> Scan with Mobile Camera / Google Lens
+              <span>📷</span> Mobile Barcode Scanner Bridge
             </h3>
             <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#64748B' }}>
-              No app needed! Point your phone camera or Google Lens to use your phone as a wireless barcode reader for {effectiveTitle}.
+              Scan with phone camera or Google Lens for <strong>{effectiveTitle}</strong>. Scans save automatically.
             </p>
           </div>
           <button
-            onClick={onClose}
+            type="button"
+            onClick={() => void handleFinishAndClose()}
             style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#94A3B8' }}
           >
             ✕
           </button>
         </div>
 
-        {/* Pairing Status Banner */}
+        {/* Mode Selector: ONE-SCAN vs MULTI-SCAN */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '12px', fontWeight: 700, color: '#334155' }}>Scan Completion Mode:</span>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button
+              type="button"
+              onClick={() => void handleToggleMode('ONE_SCAN')}
+              style={{
+                padding: '5px 12px',
+                borderRadius: '8px',
+                fontSize: '11.5px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                backgroundColor: activeMode === 'ONE_SCAN' ? '#0D9488' : '#F8FAFC',
+                color: activeMode === 'ONE_SCAN' ? '#FFFFFF' : '#475569',
+                border: `1.5px solid ${activeMode === 'ONE_SCAN' ? '#0D9488' : '#CBD5E1'}`,
+              }}
+            >
+              One-Scan (Auto-Close)
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleToggleMode('MULTI_SCAN')}
+              style={{
+                padding: '5px 12px',
+                borderRadius: '8px',
+                fontSize: '11.5px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                backgroundColor: activeMode === 'MULTI_SCAN' ? '#0D9488' : '#F8FAFC',
+                color: activeMode === 'MULTI_SCAN' ? '#FFFFFF' : '#475569',
+                border: `1.5px solid ${activeMode === 'MULTI_SCAN' ? '#0D9488' : '#CBD5E1'}`,
+              }}
+            >
+              Multi-Scan (Keep Open)
+            </button>
+          </div>
+        </div>
+
+        {/* Status Banner */}
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'space-between',
+            gap: '10px',
             padding: '10px 14px',
             borderRadius: '10px',
-            backgroundColor: deviceStatus === 'CONNECTED' ? '#ECFDF5' : '#EFF6FF',
-            border: `1.5px solid ${deviceStatus === 'CONNECTED' ? '#10B981' : '#BFDBFE'}`,
-            marginBottom: '16px',
+            backgroundColor: activeStatusUi.bg,
+            border: `1.5px solid ${activeStatusUi.border}`,
+            marginBottom: '14px',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '20px' }}>{deviceStatus === 'CONNECTED' ? '🟢' : '📡'}</span>
-            <div>
-              <div style={{ fontSize: '13px', fontWeight: 700, color: deviceStatus === 'CONNECTED' ? '#065F46' : '#1E40AF' }}>
-                {deviceStatus === 'CONNECTED'
-                  ? `Phone Connected: ${deviceName || 'Active Mobile Camera'}`
-                  : 'Waiting for Mobile Camera / Google Lens...'}
+          <span style={{ fontSize: '20px' }}>{activeStatusUi.icon}</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: activeStatusUi.text }}>
+              {activeStatusUi.label}
+            </div>
+            {latestConfirmedBanner ? (
+              <div style={{ fontSize: '11.5px', color: '#334155', marginTop: '2px' }}>
+                <strong>{latestConfirmedBanner.itemName || 'Unknown Item'}</strong> •{' '}
+                <code>{latestConfirmedBanner.barcode}</code> • {latestConfirmedBanner.recordStatus}
               </div>
+            ) : (
               <div style={{ fontSize: '11px', color: '#64748B' }}>
                 {deviceStatus === 'CONNECTED'
-                  ? 'Your phone is paired! Scan barcodes on boxes or tubes to beam them here instantly.'
-                  : 'Open your phone camera or Google Lens and scan the QR code below.'}
+                  ? 'Phone paired. Point camera at SKU, supplier, kit, or tube barcode.'
+                  : 'Scan the QR code below using your phone camera or Google Lens.'}
               </div>
-            </div>
+            )}
           </div>
         </div>
 
-        {/* QR Code & Web URL Container */}
+        {/* QR Code & URL */}
         <div
           style={{
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
             backgroundColor: '#F8FAFC',
-            padding: '18px',
+            padding: '16px',
             borderRadius: '12px',
             border: '1px solid #E2E8F0',
-            marginBottom: '16px',
+            marginBottom: '14px',
             textAlign: 'center',
           }}
         >
           {session ? (
             <>
-              {/* Protocol Switcher */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 600 }}>Scanner Mode:</span>
-                <button
-                  type="button"
-                  onClick={() => setProtocolChoice('https')}
-                  style={{
-                    backgroundColor: protocolChoice === 'https' ? '#0D9488' : '#FFFFFF',
-                    color: protocolChoice === 'https' ? '#FFFFFF' : '#475569',
-                    border: '1.5px solid ' + (protocolChoice === 'https' ? '#0D9488' : '#CBD5E1'),
-                    borderRadius: '6px',
-                    padding: '4px 10px',
-                    fontSize: '11px',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                  }}
-                >
-                  🔒 HTTPS (Live Camera)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setProtocolChoice('http')}
-                  style={{
-                    backgroundColor: protocolChoice === 'http' ? '#0D9488' : '#FFFFFF',
-                    color: protocolChoice === 'http' ? '#FFFFFF' : '#475569',
-                    border: '1.5px solid ' + (protocolChoice === 'http' ? '#0D9488' : '#CBD5E1'),
-                    borderRadius: '6px',
-                    padding: '4px 10px',
-                    fontSize: '11px',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                  }}
-                >
-                  🌐 HTTP
-                </button>
-              </div>
-
               <div
                 style={{
                   padding: '10px',
                   backgroundColor: '#FFFFFF',
                   borderRadius: '12px',
                   border: '1.5px solid #CBD5E1',
-                  boxShadow: '0 4px 6px -1px rgba(0,0,0,0.06)',
-                  marginBottom: '12px',
+                  marginBottom: '10px',
                 }}
               >
                 <img
                   src={qrUrl}
-                  alt="Google Lens Scanner Pairing QR"
-                  style={{ width: '200px', height: '200px', display: 'block' }}
+                  alt="Mobile Scanner Pairing QR"
+                  style={{ width: '185px', height: '185px', display: 'block' }}
                 />
               </div>
-
-              <div style={{ fontSize: '13px', fontWeight: 700, color: '#0F172A', marginBottom: '6px' }}>
-                🔍 Point Google Lens or Phone Camera at this QR Code
-              </div>
-              <div style={{ fontSize: '11px', color: '#64748B', maxWidth: '380px', marginBottom: '12px' }}>
-                Tap the link that appears on your phone screen to open the live wireless barcode scanner. No login or Phlebo app required.
-              </div>
-
-              {usingLiveOrigin ? (
-                <div style={{ fontSize: '11px', color: '#047857', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '8px', padding: '6px 12px', maxWidth: '380px', marginBottom: '12px', textAlign: 'left', lineHeight: 1.4 }}>
-                  🟢 <strong>Verified Live HTTPS Link:</strong> Using <strong>{resolvedHost}</strong> — opens directly on mobile camera &amp; Google Lens without any browser security warning.
-                  {isLocal && (
-                    <button
-                      type="button"
-                      onClick={() => setPreferLocalFallback(true)}
-                      style={{ marginLeft: '6px', background: 'none', border: 'none', color: '#0369A1', textDecoration: 'underline', cursor: 'pointer', fontSize: '11px', padding: 0 }}
-                    >
-                      Use Local Wi-Fi IP instead
-                    </button>
-                  )}
-                </div>
-              ) : protocolChoice === 'https' && (
-                <div style={{ fontSize: '11px', color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '8px', padding: '6px 12px', maxWidth: '380px', marginBottom: '12px', textAlign: 'left', lineHeight: 1.4 }}>
-                  🟡 <strong>Local Network Fallback ({resolvedHost}):</strong> Live link unavailable or overridden. Tap <strong>"Advanced" &rarr; "Proceed"</strong> if prompted on local IP.
-                  {liveLinkAvailable && isLocal && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCustomHost('');
-                        setPreferLocalFallback(false);
-                      }}
-                      style={{ marginLeft: '6px', background: 'none', border: 'none', color: '#047857', textDecoration: 'underline', cursor: 'pointer', fontSize: '11px', padding: 0 }}
-                    >
-                      Switch to Live HTTPS Link
-                    </button>
-                  )}
-                </div>
-              )}
 
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
                 <button
@@ -378,14 +532,10 @@ export function AdminInventoryScannerBridgeModal({
                     fontSize: '12px',
                     fontWeight: 700,
                     cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
                   }}
                 >
-                  <span>{copiedLink ? '✓' : '📋'}</span> {copiedLink ? 'Mobile Link Copied!' : 'Copy Mobile Link'}
+                  {copiedLink ? '✓ Mobile Link Copied!' : '📋 Copy Mobile Link'}
                 </button>
-
                 <a
                   href={directScannerUrl}
                   target="_blank"
@@ -399,14 +549,10 @@ export function AdminInventoryScannerBridgeModal({
                     fontSize: '12px',
                     fontWeight: 600,
                     textDecoration: 'none',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
                   }}
                 >
-                  <span>🔗</span> Open Scanner in New Tab
+                  🔗 Open Scanner Tab
                 </a>
-
                 <button
                   type="button"
                   onClick={() => setShowHostInput((s) => !s)}
@@ -419,67 +565,65 @@ export function AdminInventoryScannerBridgeModal({
                     textDecoration: 'underline',
                   }}
                 >
-                  ⚙️ Change Host / Wi-Fi IP
+                  ⚙️ Host / Protocol
                 </button>
               </div>
 
               {showHostInput && (
-                <div style={{ marginTop: '12px', width: '100%', maxWidth: '340px' }}>
-                  <div style={{ fontSize: '11px', color: '#64748B', textAlign: 'left', marginBottom: '4px' }}>
-                    Scanner Host IP (for phone on same Wi-Fi):
+                <div style={{ marginTop: '10px', width: '100%', maxWidth: '340px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                    <button
+                      type="button"
+                      onClick={() => setProtocolChoice('https')}
+                      style={{ padding: '4px 8px', fontSize: '11px', borderRadius: '6px', border: '1px solid #CBD5E1', background: protocolChoice === 'https' ? '#0D9488' : '#FFF', color: protocolChoice === 'https' ? '#FFF' : '#334155' }}
+                    >
+                      HTTPS
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setProtocolChoice('http')}
+                      style={{ padding: '4px 8px', fontSize: '11px', borderRadius: '6px', border: '1px solid #CBD5E1', background: protocolChoice === 'http' ? '#0D9488' : '#FFF', color: protocolChoice === 'http' ? '#FFF' : '#334155' }}
+                    >
+                      HTTP
+                    </button>
+                    {isLocal && (
+                      <button
+                        type="button"
+                        onClick={() => setPreferLocalFallback((p) => !p)}
+                        style={{ padding: '4px 8px', fontSize: '11px', borderRadius: '6px', border: '1px solid #CBD5E1', background: '#FFF' }}
+                      >
+                        {preferLocalFallback ? 'Use Live Origin' : 'Use Local IP'}
+                      </button>
+                    )}
                   </div>
                   <input
                     type="text"
                     value={customHost || resolvedHost}
                     onChange={(e) => setCustomHost(e.target.value)}
                     placeholder="e.g. 192.168.0.114:3003"
-                    style={{
-                      width: '100%',
-                      padding: '6px 10px',
-                      fontSize: '12px',
-                      borderRadius: '6px',
-                      border: '1px solid #CBD5E1',
-                      fontFamily: 'monospace',
-                    }}
+                    style={{ width: '100%', padding: '6px 10px', fontSize: '12px', borderRadius: '6px', border: '1px solid #CBD5E1', fontFamily: 'monospace' }}
                   />
                 </div>
               )}
             </>
           ) : (
-            <div style={{ padding: '40px', color: '#64748B', fontSize: '13px' }}>
+            <div style={{ padding: '32px', color: '#64748B', fontSize: '13px' }}>
               Generating secure mobile scanner session...
             </div>
           )}
         </div>
 
-        {/* Live Scanned Barcodes Stream */}
+        {/* Live Scanned Barcodes */}
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
             <span style={{ fontSize: '13px', fontWeight: 700, color: '#334155' }}>
-              Live Scanned Barcodes ({scannedEvents.length})
+              Session Scan Records ({scannedEvents.length})
             </span>
-            {scannedEvents.length > 0 && (
-              <button
-                onClick={() => setScannedEvents([])}
-                style={{ background: 'none', border: 'none', fontSize: '11px', color: '#0D9488', cursor: 'pointer', fontWeight: 600 }}
-              >
-                Clear Log
-              </button>
-            )}
           </div>
-
-          <div
-            style={{
-              maxHeight: '130px',
-              overflowY: 'auto',
-              borderRadius: '8px',
-              border: '1px solid #E2E8F0',
-              backgroundColor: '#FFFFFF',
-            }}
-          >
+          <div style={{ maxHeight: '140px', overflowY: 'auto', borderRadius: '8px', border: '1px solid #E2E8F0', backgroundColor: '#FFFFFF' }}>
             {scannedEvents.length === 0 ? (
-              <div style={{ padding: '16px', textAlign: 'center', color: '#94A3B8', fontSize: '12px' }}>
-                No barcodes received yet. Point phone camera at a barcode to scan in real-time.
+              <div style={{ padding: '14px', textAlign: 'center', color: '#94A3B8', fontSize: '12px' }}>
+                No barcodes received yet.
               </div>
             ) : (
               scannedEvents
@@ -487,7 +631,7 @@ export function AdminInventoryScannerBridgeModal({
                 .reverse()
                 .map((ev, idx) => (
                   <div
-                    key={ev.id || idx}
+                    key={ev.eventId || ev.id || idx}
                     style={{
                       display: 'flex',
                       justifyContent: 'space-between',
@@ -498,14 +642,25 @@ export function AdminInventoryScannerBridgeModal({
                     }}
                   >
                     <div>
-                      <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '13px', color: '#0F172A' }}>
-                        {ev.barcode}
-                      </span>
-                      {idx === 0 && (
-                        <span style={{ marginLeft: '8px', fontSize: '10px', background: '#DCFCE7', color: '#15803D', padding: '2px 6px', borderRadius: '4px', fontWeight: 700 }}>
-                          LATEST
+                      <div style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '12.5px', color: '#0F172A' }}>
+                        {ev.barcode}{' '}
+                        <span
+                          style={{
+                            marginLeft: '6px',
+                            fontSize: '10px',
+                            background: ev.status === 'UNKNOWN_BARCODE' ? '#FEF3C7' : '#DCFCE7',
+                            color: ev.status === 'UNKNOWN_BARCODE' ? '#92400E' : '#15803D',
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            fontFamily: 'sans-serif',
+                          }}
+                        >
+                          {ev.status === 'UNKNOWN_BARCODE' ? 'UNKNOWN_BARCODE' : 'RECORD ADDED'}
                         </span>
-                      )}
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px' }}>
+                        {ev.itemName ? `${ev.itemName} (${ev.sku || ev.barcodeType})` : 'Unmapped barcode'}
+                      </div>
                     </div>
                     <span style={{ fontSize: '11px', color: '#64748B' }}>
                       {new Date(ev.scannedAt).toLocaleTimeString()}
@@ -516,15 +671,24 @@ export function AdminInventoryScannerBridgeModal({
           </div>
         </div>
 
-        {/* Modal Actions */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '18px' }}>
+        {/* Footer Actions */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
           <button
             type="button"
-            className="btn-secondary"
-            onClick={onClose}
-            style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600 }}
+            className="btn-primary"
+            onClick={() => void handleFinishAndClose()}
+            style={{
+              padding: '8px 18px',
+              fontSize: '13px',
+              fontWeight: 700,
+              backgroundColor: activeMode === 'MULTI_SCAN' ? '#0D9488' : '#475569',
+              color: '#FFFFFF',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: 'pointer',
+            }}
           >
-            Done
+            {activeMode === 'MULTI_SCAN' ? 'Finish Scanning' : 'Close'}
           </button>
         </div>
       </div>

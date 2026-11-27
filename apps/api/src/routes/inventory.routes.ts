@@ -54,10 +54,14 @@ import {
   getStockAdjustments,
 } from '../services/stock-adjustments.service';
 import {
+  closeScannerBridgeSession,
   createScannerBridgeSession,
+  getRecentScannerEvents,
   getScannerBridgeEvents,
+  mapUnknownScannerEvent,
   pairMobileDevice,
   pushScannedBarcode,
+  updateScannerBridgeMode,
 } from '../services/scanner-bridge.service';
 import {
   getInventoryDashboardSummary,
@@ -601,7 +605,10 @@ inventoryRouter.get(
 inventoryRouter.post('/scanner-bridge/session', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const operatorEmail = req.user?.email || 'operator@labsetu.com';
-    const session = createScannerBridgeSession({ operatorEmail });
+    const mode = req.body?.mode === 'MULTI_SCAN' ? 'MULTI_SCAN' : 'ONE_SCAN';
+    const context = req.body?.context ? String(req.body.context) : undefined;
+    const warehouseId = req.body?.warehouseId ? String(req.body.warehouseId) : undefined;
+    const session = createScannerBridgeSession({ operatorEmail, mode, context, warehouseId });
     return res.status(201).json({ success: true, session });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message || 'Failed creating scanner session' });
@@ -622,25 +629,28 @@ inventoryRouter.post('/scanner-bridge/:sessionId/pair', async (req: Authenticate
     });
     return res.json({ success: true, session });
   } catch (err: any) {
-    return res.status(400).json({ success: false, error: err.message || 'Pairing failed' });
+    return res.status(err.statusCode || 400).json({ success: false, error: err.message || 'Pairing failed', code: err.code });
   }
 });
 
 inventoryRouter.post('/scanner-bridge/:sessionId/scan', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { barcode, symbology, metadata } = req.body;
+    const { pairingToken, eventId, barcode, symbology, deviceId, metadata } = req.body;
     if (!barcode) {
       return res.status(400).json({ success: false, error: 'barcode string is required.' });
     }
-    const result = pushScannedBarcode({
+    const result = await pushScannedBarcode({
       sessionId: req.params.sessionId,
+      pairingToken,
+      eventId,
       barcode,
       symbology,
+      deviceId,
       metadata,
     });
-    return res.json(result);
+    return res.status(result.duplicate ? 200 : 201).json(result);
   } catch (err: any) {
-    return res.status(400).json({ success: false, error: err.message || 'Push scanned barcode failed' });
+    return res.status(err.statusCode || 400).json({ success: false, error: err.message || 'Push scanned barcode failed', code: err.code });
   }
 });
 
@@ -650,7 +660,45 @@ inventoryRouter.get('/scanner-bridge/:sessionId/events', async (req: Authenticat
     const result = getScannerBridgeEvents({ sessionId: req.params.sessionId, sinceIndex });
     return res.json({ success: true, ...result });
   } catch (err: any) {
-    return res.status(400).json({ success: false, error: err.message || 'Failed fetching scanner events' });
+    return res.status(err.statusCode || 400).json({ success: false, error: err.message || 'Failed fetching scanner events', code: err.code });
+  }
+});
+
+inventoryRouter.patch('/scanner-bridge/:sessionId/mode', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const mode = req.body?.mode === 'MULTI_SCAN' ? 'MULTI_SCAN' : 'ONE_SCAN';
+    const session = updateScannerBridgeMode(req.params.sessionId, mode);
+    return res.json({ success: true, sessionId: session.sessionId, mode: session.mode });
+  } catch (err: any) {
+    return res.status(err.statusCode || 400).json({ success: false, error: err.message || 'Failed updating mode' });
+  }
+});
+
+inventoryRouter.post('/scanner-bridge/:sessionId/close', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const session = closeScannerBridgeSession(req.params.sessionId);
+    return res.json({ success: true, sessionId: session.sessionId, status: session.status });
+  } catch (err: any) {
+    return res.status(err.statusCode || 400).json({ success: false, error: err.message || 'Failed closing session' });
+  }
+});
+
+inventoryRouter.get('/scanner-bridge/events/recent', async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    return res.json({ success: true, events: getRecentScannerEvents() });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message || 'Failed fetching recent events' });
+  }
+});
+
+inventoryRouter.post('/scanner-bridge/events/:eventId/map', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { itemId, itemName, sku } = req.body;
+    if (!itemId) return res.status(400).json({ success: false, error: 'itemId is required.' });
+    const ev = mapUnknownScannerEvent({ eventId: req.params.eventId, itemId, itemName: itemName || itemId, sku });
+    return res.json({ success: true, event: ev });
+  } catch (err: any) {
+    return res.status(err.statusCode || 400).json({ success: false, error: err.message || 'Failed mapping event' });
   }
 });
 

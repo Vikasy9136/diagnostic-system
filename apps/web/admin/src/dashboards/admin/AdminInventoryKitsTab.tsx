@@ -15,7 +15,10 @@ import {
 } from '../../services/firestoreService';
 import {
   fetchInventorySettingsApi,
+  fetchRecentScannerEventsApi,
+  mapUnknownScannerEventApi,
   updateInventorySettingsApi,
+  type ScannerBridgeEventRecord,
 } from '../../services/inventoryApiService';
 import { AdminInventoryInwardTab } from './inventory/AdminInventoryInwardTab';
 import { AdminInventoryBatchesTab } from './inventory/AdminInventoryBatchesTab';
@@ -67,6 +70,10 @@ export function AdminInventoryKitsTab({
   const [activeSubTab, setActiveSubTab] = useState<InventorySubTab>('overview');
   const [showScannerBridgeModal, setShowScannerBridgeModal] = useState(false);
   const [kitsViewMode, setKitsViewMode] = useState<'BOM_ASSEMBLY' | 'READY_STOCK'>('BOM_ASSEMBLY');
+  const [recentScanRecords, setRecentScanRecords] = useState<ScannerBridgeEventRecord[]>([]);
+  const [latestScanBanner, setLatestScanBanner] = useState<ScannerBridgeEventRecord | null>(null);
+  const [mappingEventId, setMappingEventId] = useState<string | null>(null);
+  const [selectedMapItemId, setSelectedMapItemId] = useState<string>('');
 
   // Enterprise Feature Activation State
   const [isFeatureActive, setIsFeatureActive] = useState<boolean>(false);
@@ -76,7 +83,49 @@ export function AdminInventoryKitsTab({
     fetchInventorySettingsApi()
       .then((settings) => setIsFeatureActive(Boolean(settings?.enterpriseKitInventoryActive)))
       .catch(() => {});
+    fetchRecentScannerEventsApi()
+      .then((events) => setRecentScanRecords(events))
+      .catch(() => {});
   }, []);
+
+  async function handleMapUnknownBarcode(eventId: string) {
+    if (!selectedMapItemId) return;
+    const mat = materials.find((m) => m.id === selectedMapItemId);
+    try {
+      await mapUnknownScannerEventApi(eventId, {
+        itemId: selectedMapItemId,
+        itemName: mat?.name || selectedMapItemId,
+        sku: mat?.id || selectedMapItemId,
+        saveMapping: true,
+      });
+      setRecentScanRecords((prev) =>
+        prev.map((ev) =>
+          ev.eventId === eventId
+            ? {
+                ...ev,
+                status: 'MAPPED',
+                itemId: selectedMapItemId,
+                itemName: mat?.name || selectedMapItemId,
+                sku: mat?.id || selectedMapItemId,
+              }
+            : ev
+        )
+      );
+      setMappingEventId(null);
+      setSelectedMapItemId('');
+      onShowAlert({
+        variant: 'success',
+        title: 'Barcode Mapped',
+        message: `Barcode linked to ${mat?.name || selectedMapItemId}. Future scans will auto-match.`,
+      });
+    } catch (err: any) {
+      onShowAlert({
+        variant: 'error',
+        title: 'Mapping Failed',
+        message: err?.message || 'Unable to map barcode to inventory item.',
+      });
+    }
+  }
 
   async function handleToggleFeatureActivation() {
     setIsTogglingFeature(true);
@@ -864,6 +913,143 @@ export function AdminInventoryKitsTab({
           <span>📱</span> Connect Mobile Scanner
         </button>
       </div>
+
+      {/* LIVE MOBILE SCAN RESULT & PERSISTED SCAN RECORDS */}
+      {latestScanBanner && (
+        <div
+          style={{
+            marginBottom: '14px',
+            padding: '12px 16px',
+            borderRadius: '12px',
+            backgroundColor: latestScanBanner.status === 'UNKNOWN_BARCODE' ? '#FFFBEB' : '#ECFDF5',
+            border: `1.5px solid ${latestScanBanner.status === 'UNKNOWN_BARCODE' ? '#F59E0B' : '#10B981'}`,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: '12px',
+            flexWrap: 'wrap',
+          }}
+        >
+          <div>
+            <div style={{ fontSize: '0.86rem', fontWeight: 800, color: latestScanBanner.status === 'UNKNOWN_BARCODE' ? '#92400E' : '#065F46' }}>
+              {latestScanBanner.status === 'UNKNOWN_BARCODE'
+                ? '⚠️ Unknown Barcode Scanned — Record Added (No Stock Changed)'
+                : '✅ Barcode Scanned Successfully — Record Added'}
+            </div>
+            <div style={{ fontSize: '0.8rem', color: '#334155', marginTop: '2px' }}>
+              <strong>{latestScanBanner.itemName || 'Unmapped Barcode'}</strong> •{' '}
+              <code>{latestScanBanner.barcode}</code> ({latestScanBanner.barcodeType}) •{' '}
+              {new Date(latestScanBanner.scannedAt).toLocaleTimeString()} • Status: <strong>{latestScanBanner.status}</strong>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setLatestScanBanner(null)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: '#64748B' }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {recentScanRecords.length > 0 && (
+        <div
+          style={{
+            marginBottom: '18px',
+            background: '#FFFFFF',
+            borderRadius: '12px',
+            border: '1px solid #E2E8F0',
+            padding: '14px 16px',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#0F172A' }}>
+              📲 Recent Mobile Inventory Scan Records ({recentScanRecords.length})
+            </div>
+            <span style={{ fontSize: '0.75rem', color: '#64748B' }}>
+              Identification log only — stock quantities require authorised inward/assembly confirmation
+            </span>
+          </div>
+          <div style={{ overflowX: 'auto', maxHeight: '210px', overflowY: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+              <thead>
+                <tr style={{ textAlign: 'left', borderBottom: '1px solid #E2E8F0', color: '#64748B' }}>
+                  <th style={{ padding: '6px 8px' }}>Barcode</th>
+                  <th style={{ padding: '6px 8px' }}>Type</th>
+                  <th style={{ padding: '6px 8px' }}>Item / SKU</th>
+                  <th style={{ padding: '6px 8px' }}>Location</th>
+                  <th style={{ padding: '6px 8px' }}>Scanned At</th>
+                  <th style={{ padding: '6px 8px' }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentScanRecords.slice(0, 8).map((ev) => (
+                  <tr key={ev.eventId || ev.id} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                    <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontWeight: 700 }}>{ev.barcode}</td>
+                    <td style={{ padding: '6px 8px', color: '#475569' }}>{ev.barcodeType}</td>
+                    <td style={{ padding: '6px 8px' }}>
+                      {ev.itemName ? (
+                        <span>
+                          <strong>{ev.itemName}</strong> {ev.sku ? `(${ev.sku})` : ''}
+                        </span>
+                      ) : mappingEventId === ev.eventId ? (
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                          <select
+                            value={selectedMapItemId}
+                            onChange={(e) => setSelectedMapItemId(e.target.value)}
+                            style={{ padding: '4px 6px', fontSize: '0.76rem', borderRadius: '6px', border: '1px solid #CBD5E1' }}
+                          >
+                            <option value="">Select item...</option>
+                            {materials.map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {m.name}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => void handleMapUnknownBarcode(ev.eventId)}
+                            style={{ padding: '4px 8px', fontSize: '0.74rem', background: '#0D9488', color: '#FFF', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
+                          >
+                            Save
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMappingEventId(ev.eventId);
+                            setSelectedMapItemId('');
+                          }}
+                          style={{ padding: '3px 8px', fontSize: '0.74rem', background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', borderRadius: '6px', cursor: 'pointer', fontWeight: 700 }}
+                        >
+                          Map to Item
+                        </button>
+                      )}
+                    </td>
+                    <td style={{ padding: '6px 8px', color: '#64748B' }}>{ev.warehouseLocation || 'Central Warehouse'}</td>
+                    <td style={{ padding: '6px 8px', color: '#64748B' }}>{new Date(ev.scannedAt).toLocaleTimeString()}</td>
+                    <td style={{ padding: '6px 8px' }}>
+                      <span
+                        style={{
+                          padding: '2px 8px',
+                          borderRadius: '999px',
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          background: ev.status === 'UNKNOWN_BARCODE' ? '#FEF3C7' : '#DCFCE7',
+                          color: ev.status === 'UNKNOWN_BARCODE' ? '#92400E' : '#15803D',
+                        }}
+                      >
+                        {ev.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* VIEW 0: CENTRAL WAREHOUSE VALUATION & OVERVIEW */}
       {activeSubTab === 'overview' && (
@@ -2272,6 +2458,14 @@ export function AdminInventoryKitsTab({
         isOpen={showScannerBridgeModal}
         onClose={() => setShowScannerBridgeModal(false)}
         contextTitle="Central Warehouse Inventory"
+        defaultMode="ONE_SCAN"
+        onScanRecorded={(ev) => {
+          setLatestScanBanner(ev);
+          setRecentScanRecords((prev) => {
+            if (prev.some((p) => p.eventId === ev.eventId)) return prev;
+            return [ev, ...prev].slice(0, 30);
+          });
+        }}
       />
     </div>
   );

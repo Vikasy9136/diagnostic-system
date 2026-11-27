@@ -844,6 +844,7 @@ export function AdminInventoryInwardTab({ onShowAlert }: AdminInventoryInwardTab
             handleResolveBarcode(barcode);
           }}
           context="STOCK_INWARD"
+          defaultMode="ONE_SCAN"
         />
       )}
     </div>

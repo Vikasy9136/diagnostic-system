@@ -82,6 +82,7 @@ import {
   createLargeLabAndWalletCloudRouter,
   createPhleboPayoutsCloudRouter,
 } from './bankPayouts';
+import { createScannerBridgeRouter } from './scannerBridge';
 
 const ALLOWED_WEB_ORIGINS = new Set([
   'https://labsetu-diagnostics.web.app',
@@ -1447,6 +1448,7 @@ export function createCloudApiApp(): Application {
 
   // 404 Not Found Handler
   app.use('/api/v1/branding', createBrandingRouter());
+  app.use('/api/v1/inventory/scanner-bridge', createScannerBridgeRouter());
   app.use('/api/v1/phlebo-payouts', createPhleboPayoutsCloudRouter());
   app.use('/api/v1', createLargeLabAndWalletCloudRouter());
   app.use('/api', createLargeLabAndWalletCloudRouter());
