@@ -23,3 +23,5 @@ export {
 } from './SmallLabOrderChatModal';
 export { StatusDonutCard, type StatusDonutCardProps } from './StatusDonutCard';
 export { WeeklyVolumeBarCard, type WeeklyVolumeBarCardProps } from './WeeklyVolumeBarCard';
+
+export { LabBadge, LabButton, LabSkeleton, LabStatCard, type LabButtonProps } from './LabSetuUi';

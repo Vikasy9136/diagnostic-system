@@ -24,3 +24,5 @@ export {
   SmallLabOrderChatModal,
   type SmallLabOrderChatModalProps,
 } from './SmallLabOrderChatModal';
+
+export { LabBadge, LabButton, LabSkeleton, LabStatCard, type LabButtonProps } from './LabSetuUi';

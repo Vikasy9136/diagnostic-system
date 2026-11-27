@@ -7,6 +7,7 @@ export {
 export { CredentialSlipModal, type CredentialSlipModalProps } from './CredentialSlipModal';
 export { DashboardShell, type DashboardShellProps, type GlobalSearchCategory } from './DashboardShell';
 export { EmptyStateBox, type EmptyStateBoxProps } from './EmptyStateBox';
+export { LabBadge, LabButton, LabSkeleton, LabStatCard, type LabButtonProps } from './LabSetuUi';
 export {
   LiveCameraCaptureModal,
   type LiveCameraCaptureModalProps,

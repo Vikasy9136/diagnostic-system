@@ -76,8 +76,31 @@ export function DashboardShell<TTab extends string>({
 }: DashboardShellProps<TTab>) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const searchContainerRef = useRef<HTMLDivElement | null>(null);
   const unreadCount = notifications.filter((n) => !n.read).length;
+
+  const activeNavLabel = (() => {
+    for (const item of navItems) {
+      if (item.id === activeTab) return { icon: item.icon, label: item.label };
+      const sub = item.subItems?.find((s) => s.id === activeTab);
+      if (sub) return { icon: item.icon, label: sub.label };
+    }
+    return null;
+  })();
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setMobileNavOpen(false);
+        setNotifOpen(false);
+        setSearchFocused(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
@@ -109,7 +132,11 @@ export function DashboardShell<TTab extends string>({
 
   return (
     <div className="app-shell">
-      <aside className="sidebar-dark">
+      <div
+        className={`sidebar-mobile-backdrop ${mobileNavOpen ? 'open' : ''}`}
+        onClick={() => setMobileNavOpen(false)}
+      />
+      <aside className={`sidebar-dark ${sidebarCollapsed ? 'collapsed' : ''} ${mobileNavOpen ? 'mobile-open' : ''}`}>
         <div className="brand-header">
           <div className="brand-logo-icon">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -141,6 +168,7 @@ export function DashboardShell<TTab extends string>({
                       item.onToggleExpand();
                     } else {
                       onSelectTab(item.id);
+                      setMobileNavOpen(false);
                     }
                   }}
                 >
@@ -153,6 +181,7 @@ export function DashboardShell<TTab extends string>({
                         item.onToggleExpand();
                       } else {
                         onSelectTab(item.id);
+                        setMobileNavOpen(false);
                       }
                     }}
                     style={{
@@ -185,6 +214,7 @@ export function DashboardShell<TTab extends string>({
                           if (e.metaKey || e.ctrlKey || e.shiftKey) return;
                           e.preventDefault();
                           onSelectTab(sub.id);
+                          setMobileNavOpen(false);
                         }}
                       >
                         <a
@@ -193,6 +223,7 @@ export function DashboardShell<TTab extends string>({
                             if (e.metaKey || e.ctrlKey || e.shiftKey) return;
                             e.preventDefault();
                             onSelectTab(sub.id);
+                            setMobileNavOpen(false);
                           }}
                           style={{
                             display: 'contents',
@@ -222,6 +253,29 @@ export function DashboardShell<TTab extends string>({
 
       <div className="main-wrapper">
         <header className="top-navbar">
+          <button
+            type="button"
+            className="mobile-menu-toggle-btn"
+            aria-label="Open navigation menu"
+            onClick={() => setMobileNavOpen((prev) => !prev)}
+          >
+            ☰
+          </button>
+          <button
+            type="button"
+            className="sidebar-collapse-btn"
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            onClick={() => setSidebarCollapsed((prev) => !prev)}
+          >
+            {sidebarCollapsed ? '▶' : '◀'}
+          </button>
+          {activeNavLabel && (
+            <span className="top-page-breadcrumb">
+              <span>{activeNavLabel.icon}</span>
+              <span>{activeNavLabel.label}</span>
+            </span>
+          )}
           <div
             ref={searchContainerRef}
             className="top-search-pill"

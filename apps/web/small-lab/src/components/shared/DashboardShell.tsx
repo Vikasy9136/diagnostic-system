@@ -1,7 +1,19 @@
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { LABSETU_THEME, type PlatformNotification } from '@diagnostic/shared';
 import { type FormatLabelFn, type SidebarNavItem } from '../../dashboards/types';
 import { markNotificationRead } from '../../services/firestoreService';
+
+export interface GlobalSearchCategory {
+  category: string;
+  items: Array<{
+    id: string;
+    icon: string;
+    title: string;
+    subtitle: string;
+    tag?: string;
+    onClick: () => void;
+  }>;
+}
 
 export interface DashboardShellProps<TTab extends string> {
   brandSubtitle: string;
@@ -17,12 +29,16 @@ export interface DashboardShellProps<TTab extends string> {
   searchPlaceholder: string;
   searchQuery: string;
   onSearchChange: (val: string) => void;
+  globalSearchResults?: GlobalSearchCategory[];
   notifications: PlatformNotification[];
   notifTitle: string;
   notifSubtitle: string;
   notifEmptyText?: string;
   notifHeaderAction?: ReactNode;
   notifExtraBanner?: ReactNode;
+  onMarkAllNotificationsRead?: () => Promise<void> | void;
+  onClearAllNotifications?: () => Promise<void> | void;
+  onMarkSingleNotificationRead?: (id: string) => Promise<void> | void;
   formatLabel: FormatLabelFn;
   profile: {
     initials: string;
@@ -43,19 +59,48 @@ export function DashboardShell<TTab extends string>({
   searchPlaceholder,
   searchQuery,
   onSearchChange,
+  globalSearchResults,
   notifications,
   notifTitle,
   notifSubtitle,
   notifEmptyText = 'No notifications yet.',
   notifHeaderAction,
   notifExtraBanner,
+  onMarkAllNotificationsRead,
+  onClearAllNotifications,
+  onMarkSingleNotificationRead,
   formatLabel,
   profile,
   onSignOut,
   children,
 }: DashboardShellProps<TTab>) {
   const [notifOpen, setNotifOpen] = useState(false);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const searchContainerRef = useRef<HTMLDivElement | null>(null);
   const unreadCount = notifications.filter((n) => !n.read).length;
+
+  const activeNavLabel = (() => {
+    for (const item of navItems) {
+      if (item.id === activeTab) return { icon: item.icon, label: item.label };
+      const sub = item.subItems?.find((s) => s.id === activeTab);
+      if (sub) return { icon: item.icon, label: sub.label };
+    }
+    return null;
+  })();
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setMobileNavOpen(false);
+        setNotifOpen(false);
+        setSearchFocused(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
@@ -63,6 +108,21 @@ export function DashboardShell<TTab extends string>({
       el.scrollTop = 0;
     });
   }, [activeTab]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        searchContainerRef.current &&
+        !searchContainerRef.current.contains(event.target as Node)
+      ) {
+        setSearchFocused(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   function renderBadgeClass(variant?: 'teal' | 'green' | 'red') {
     if (variant === 'green') return 'nav-badge-green';
@@ -72,7 +132,11 @@ export function DashboardShell<TTab extends string>({
 
   return (
     <div className="app-shell">
-      <aside className="sidebar-dark">
+      <div
+        className={`sidebar-mobile-backdrop ${mobileNavOpen ? 'open' : ''}`}
+        onClick={() => setMobileNavOpen(false)}
+      />
+      <aside className={`sidebar-dark ${sidebarCollapsed ? 'collapsed' : ''} ${mobileNavOpen ? 'mobile-open' : ''}`}>
         <div className="brand-header">
           <div className="brand-logo-icon">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -104,6 +168,7 @@ export function DashboardShell<TTab extends string>({
                       item.onToggleExpand();
                     } else {
                       onSelectTab(item.id);
+                      setMobileNavOpen(false);
                     }
                   }}
                 >
@@ -116,6 +181,7 @@ export function DashboardShell<TTab extends string>({
                         item.onToggleExpand();
                       } else {
                         onSelectTab(item.id);
+                        setMobileNavOpen(false);
                       }
                     }}
                     style={{
@@ -148,6 +214,7 @@ export function DashboardShell<TTab extends string>({
                           if (e.metaKey || e.ctrlKey || e.shiftKey) return;
                           e.preventDefault();
                           onSelectTab(sub.id);
+                          setMobileNavOpen(false);
                         }}
                       >
                         <a
@@ -156,6 +223,7 @@ export function DashboardShell<TTab extends string>({
                             if (e.metaKey || e.ctrlKey || e.shiftKey) return;
                             e.preventDefault();
                             onSelectTab(sub.id);
+                            setMobileNavOpen(false);
                           }}
                           style={{
                             display: 'contents',
@@ -185,14 +253,191 @@ export function DashboardShell<TTab extends string>({
 
       <div className="main-wrapper">
         <header className="top-navbar">
-          <div className="top-search-pill">
+          <button
+            type="button"
+            className="mobile-menu-toggle-btn"
+            aria-label="Open navigation menu"
+            onClick={() => setMobileNavOpen((prev) => !prev)}
+          >
+            ☰
+          </button>
+          <button
+            type="button"
+            className="sidebar-collapse-btn"
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            onClick={() => setSidebarCollapsed((prev) => !prev)}
+          >
+            {sidebarCollapsed ? '▶' : '◀'}
+          </button>
+          {activeNavLabel && (
+            <span className="top-page-breadcrumb">
+              <span>{activeNavLabel.icon}</span>
+              <span>{activeNavLabel.label}</span>
+            </span>
+          )}
+          <div
+            ref={searchContainerRef}
+            className="top-search-pill"
+            style={{ position: 'relative' }}
+          >
             <span>🔍</span>
             <input
               type="text"
               placeholder={searchPlaceholder}
               value={searchQuery}
-              onChange={(e) => onSearchChange(e.target.value)}
+              onChange={(e) => {
+                onSearchChange(e.target.value);
+                setSearchFocused(true);
+              }}
+              onFocus={() => setSearchFocused(true)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setSearchFocused(false);
+              }}
             />
+            {searchQuery.trim().length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  onSearchChange('');
+                  setSearchFocused(false);
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: '#94A3B8',
+                  padding: '2px 6px',
+                  fontSize: '0.85rem',
+                  lineHeight: 1,
+                }}
+                title="Clear Search"
+              >
+                ✕
+              </button>
+            )}
+
+            {searchFocused && searchQuery.trim().length >= 1 && (
+              <div
+                className="global-search-dropdown"
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 8px)',
+                  left: 0,
+                  width: '460px',
+                  maxWidth: '92vw',
+                  backgroundColor: '#FFFFFF',
+                  borderRadius: '12px',
+                  boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
+                  border: '1px solid #CBD5E1',
+                  zIndex: 9999,
+                  overflow: 'hidden',
+                  maxHeight: '480px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                }}
+              >
+                <div
+                  style={{
+                    padding: '10px 14px',
+                    backgroundColor: '#F8FAFC',
+                    borderBottom: '1px solid #E2E8F0',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#334155' }}>
+                    🔍 Search Results for &ldquo;{searchQuery}&rdquo;
+                  </span>
+                  <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>Esc to close</span>
+                </div>
+
+                <div style={{ overflowY: 'auto', padding: '8px 0', maxHeight: '420px' }}>
+                  {globalSearchResults && globalSearchResults.some((c) => c.items.length > 0) ? (
+                    globalSearchResults.map((cat) => {
+                      if (!cat.items || cat.items.length === 0) return null;
+                      return (
+                        <div key={cat.category} style={{ marginBottom: '10px' }}>
+                          <div
+                            style={{
+                              fontSize: '0.68rem',
+                              fontWeight: 800,
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.05em',
+                              color: '#64748B',
+                              padding: '4px 14px',
+                              backgroundColor: '#F1F5F9',
+                            }}
+                          >
+                            {cat.category} ({cat.items.length})
+                          </div>
+                          {cat.items.map((item) => (
+                            <div
+                              key={item.id}
+                              onClick={() => {
+                                item.onClick();
+                                setSearchFocused(false);
+                              }}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '10px',
+                                padding: '8px 14px',
+                                cursor: 'pointer',
+                                transition: 'background-color 0.15s ease',
+                                borderBottom: '1px solid #F8FAFC',
+                              }}
+                              onMouseEnter={(e) => {
+                                (e.currentTarget as HTMLElement).style.backgroundColor = '#F0FDFA';
+                              }}
+                              onMouseLeave={(e) => {
+                                (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+                              }}
+                            >
+                              <span style={{ fontSize: '1.2rem', flexShrink: 0 }}>{item.icon}</span>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: '0.84rem', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  {item.title}
+                                </div>
+                                <div style={{ fontSize: '0.74rem', color: '#64748B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  {item.subtitle}
+                                </div>
+                              </div>
+                              {item.tag && (
+                                <span
+                                  style={{
+                                    fontSize: '0.68rem',
+                                    fontWeight: 700,
+                                    padding: '2px 8px',
+                                    borderRadius: '999px',
+                                    backgroundColor: '#E0F2FE',
+                                    color: '#0369A1',
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  {item.tag}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div style={{ padding: '24px 16px', textAlign: 'center', color: '#64748B' }}>
+                      <div style={{ fontSize: '1.5rem', marginBottom: '6px' }}>🔎</div>
+                      <div style={{ fontSize: '0.84rem', fontWeight: 600, color: '#334155' }}>
+                        No results found for &ldquo;{searchQuery}&rdquo;
+                      </div>
+                      <div style={{ fontSize: '0.74rem', color: '#94A3B8', marginTop: '2px' }}>
+                        Try searching by Booking ID, Patient pseudonym, Lab name, or User name
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="top-nav-right">
@@ -204,12 +449,73 @@ export function DashboardShell<TTab extends string>({
 
               {notifOpen && (
                 <div className="notif-popover">
-                  <div className="notif-popover-header">
+                  <div
+                    className="notif-popover-header"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      flexWrap: 'wrap',
+                      gap: '8px',
+                    }}
+                  >
                     <div>
                       <div style={{ fontSize: '0.88rem', fontWeight: 700 }}>{notifTitle}</div>
                       <div style={{ fontSize: '0.72rem', color: '#64748B' }}>{notifSubtitle}</div>
                     </div>
-                    {notifHeaderAction}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                      {notifications.length > 0 && (
+                        <>
+                          <button
+                            type="button"
+                            className="btn-link-muted"
+                            style={{
+                              fontSize: '0.72rem',
+                              fontWeight: 700,
+                              color: '#0D9488',
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              backgroundColor: '#CCFBF1',
+                              border: 'none',
+                              cursor: 'pointer',
+                            }}
+                            onClick={() => {
+                              if (onMarkAllNotificationsRead) {
+                                void onMarkAllNotificationsRead();
+                              } else {
+                                notifications.forEach((n) => void markNotificationRead(n.id));
+                              }
+                            }}
+                            title="Mark all notifications as read"
+                          >
+                            ✓ Mark All Read
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-link-muted"
+                            style={{
+                              fontSize: '0.72rem',
+                              fontWeight: 700,
+                              color: '#DC2626',
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              backgroundColor: '#FEE2E2',
+                              border: 'none',
+                              cursor: 'pointer',
+                            }}
+                            onClick={() => {
+                              if (onClearAllNotifications) {
+                                void onClearAllNotifications();
+                              }
+                            }}
+                            title="Clear all notifications"
+                          >
+                            🗑️ Clear All
+                          </button>
+                        </>
+                      )}
+                      {notifHeaderAction}
+                    </div>
                   </div>
                   {notifExtraBanner}
                   <div className="notif-list">
@@ -222,7 +528,13 @@ export function DashboardShell<TTab extends string>({
                         <div
                           key={n.id}
                           className={`notif-item ${!n.read ? 'unread' : ''}`}
-                          onClick={() => void markNotificationRead(n.id)}
+                          onClick={() => {
+                            if (onMarkSingleNotificationRead) {
+                              void onMarkSingleNotificationRead(n.id);
+                            } else {
+                              void markNotificationRead(n.id);
+                            }
+                          }}
                         >
                           <div className="notif-item-title">{n.title}</div>
                           <div className="notif-item-msg">{n.message}</div>
