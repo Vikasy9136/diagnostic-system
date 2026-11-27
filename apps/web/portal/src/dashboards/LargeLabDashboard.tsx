@@ -76,6 +76,7 @@ import {
   LargeLabReportsTab,
   LargeLabSettingsTab,
   LargeLabSettlementsTab,
+  LargeLabWalletTab,
   type LargeLabTab,
   LargeLabTestingTab,
   LargeLabUrgentRequestsTab,
@@ -697,6 +698,7 @@ export function LargeLabDashboard({
     { id: 'rates', icon: '🏷️', label: 'Catalog & Branches', path: getPathForTab('rates') },
     { id: 'centres', icon: '📍', label: 'Collection Centres', path: getPathForTab('centres') },
     { id: 'settlements', icon: '💳', label: 'Settlements', path: getPathForTab('settlements') },
+    { id: 'wallet', icon: '💰', label: 'Wallet & Payouts', path: getPathForTab('wallet') },
     { id: 'analytics', icon: '📈', label: 'TAT & Analytics', path: getPathForTab('analytics') },
     { id: 'settings', icon: '⚙️', label: 'Facility Settings', path: getPathForTab('settings') },
   ];
@@ -851,6 +853,10 @@ export function LargeLabDashboard({
             payouts={payouts}
             nowTick={nowTick}
           />
+        )}
+
+        {activeTab === 'wallet' && (
+          <LargeLabWalletTab onOpenSettings={() => setActiveTab('settings')} />
         )}
 
         {activeTab === 'analytics' && (

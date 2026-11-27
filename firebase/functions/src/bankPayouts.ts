@@ -554,5 +554,182 @@ export function createLargeLabAndWalletCloudRouter(): Router {
     } catch (e) { next(e); }
   });
 
+  async function handleSubmitWithdrawal(params: {
+    beneficiaryType: 'PHLEBOTOMIST' | 'LARGE_LAB';
+    id: string;
+    name: string;
+    requestedAmountPaise: number;
+    paymentMethod?: 'BANK_ACCOUNT' | 'UPI';
+  }) {
+    const { beneficiaryType, id, name, requestedAmountPaise, paymentMethod = 'BANK_ACCOUNT' } = params;
+    if (!id) throw new AppError('Beneficiary ID not found.', 400, 'INVALID_BENEFICIARY');
+    if (!Number.isFinite(requestedAmountPaise) || requestedAmountPaise <= 0) {
+      throw new AppError('Enter a valid withdrawal amount.', 400, 'INVALID_AMOUNT');
+    }
+
+    const cfgSnap = await db.collection('settings').doc('withdrawalConfig').get();
+    const cfg = cfgSnap.exists ? cfgSnap.data()! : { minWithdrawalPaise: 10000, cycleDays: 7 };
+    const minPaise = Number(cfg.minWithdrawalPaise ?? 10000);
+    if (requestedAmountPaise < minPaise) {
+      throw new AppError(`Minimum withdrawal amount is ₹${(minPaise / 100).toFixed(0)}.`, 400, 'BELOW_MINIMUM');
+    }
+
+    const walletRef = db.collection('wallets').doc(id);
+    const wdId = `WD-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+    const txId = `WTX-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+    const now = new Date().toISOString();
+
+    return await db.runTransaction(async (tx) => {
+      const wSnap = await tx.get(walletRef);
+      const wData = wSnap.exists ? wSnap.data()! : { availableBalancePaise: 0, pendingWithdrawalPaise: 0, totalEarnedPaise: 0, totalWithdrawnPaise: 0 };
+      const avail = Number(wData.availableBalancePaise || 0);
+      if (avail < requestedAmountPaise) {
+        throw new AppError(`Insufficient available balance (₹${(avail / 100).toFixed(2)}).`, 400, 'INSUFFICIENT_BALANCE');
+      }
+
+      const nextAvail = avail - requestedAmountPaise;
+      const nextPending = Number(wData.pendingWithdrawalPaise || 0) + requestedAmountPaise;
+
+      tx.set(walletRef, {
+        ...wData,
+        id,
+        beneficiaryType,
+        ...(beneficiaryType === 'PHLEBOTOMIST' ? { phleboId: id } : { largeLabId: id }),
+        availableBalancePaise: nextAvail,
+        withdrawalEligibleBalancePaise: nextAvail,
+        pendingWithdrawalPaise: nextPending,
+        updatedAt: now,
+      }, { merge: true });
+
+      const wdDoc = {
+        id: wdId,
+        beneficiaryType,
+        phleboId: id,
+        ...(beneficiaryType === 'LARGE_LAB' ? { largeLabId: id } : {}),
+        beneficiaryName: name,
+        requestedAmountPaise,
+        paymentMethod,
+        status: 'PENDING_ADMIN_SETTLEMENT',
+        createdAt: now,
+        updatedAt: now,
+      };
+      tx.set(db.collection('withdrawalRequests').doc(wdId), wdDoc);
+
+      tx.set(db.collection('walletTransactions').doc(txId), {
+        id: txId,
+        phleboId: id,
+        ...(beneficiaryType === 'LARGE_LAB' ? { largeLabId: id } : {}),
+        beneficiaryType,
+        type: 'WITHDRAWAL_REQUEST',
+        direction: 'DEBIT',
+        amountPaise: requestedAmountPaise,
+        description: `Withdrawal request ${wdId} (${paymentMethod})`,
+        referenceId: wdId,
+        createdAt: now,
+      });
+
+      return {
+        request: wdDoc,
+        wallet: {
+          ...wData,
+          id,
+          availableBalancePaise: nextAvail,
+          withdrawalEligibleBalancePaise: nextAvail,
+          pendingWithdrawalPaise: nextPending,
+        },
+        message: 'Withdrawal request submitted for settlement.',
+      };
+    });
+  }
+
+  r.post('/phlebo/wallet/withdrawals', requireAuth, requireRoles(UserRole.PHLEBOTOMIST, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const id = req.user?.phlebotomistId || req.user?.uid || '';
+      const result = await handleSubmitWithdrawal({
+        beneficiaryType: 'PHLEBOTOMIST',
+        id,
+        name: req.user?.displayName || req.user?.email || id,
+        requestedAmountPaise: Number(req.body?.requestedAmountPaise),
+        paymentMethod: req.body?.paymentMethod,
+      });
+      res.status(201).json({ success: true, data: result, message: result.message });
+    } catch (e) { next(e); }
+  });
+
+  // Large Lab automatic wallet & withdrawals
+  r.get('/large-lab/wallet', requireAuth, requireRoles(UserRole.LARGE_LAB, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const labId = req.user?.labId || req.user?.uid || '';
+      const [wSnap, cfgSnap, payoutsSnap] = await Promise.all([
+        db.collection('wallets').doc(labId).get(),
+        db.collection('settings').doc('withdrawalConfig').get(),
+        db.collection('payouts').where('largeLabId', '==', labId).get().catch(() => ({ empty: true, docs: [] as any[] })),
+      ]);
+
+      let wallet: any = wSnap.exists ? { id: wSnap.id, ...wSnap.data() } : null;
+      if (!wallet) {
+        let totalEarnedPaise = 0;
+        let totalSettledPaise = 0;
+        payoutsSnap.docs.forEach((d: any) => {
+          const p = d.data() || {};
+          const amtPaise = Math.round(Number(p.amountInr || p.netAmountInr || 0) * 100);
+          totalEarnedPaise += amtPaise;
+          if (p.status === 'PAID' || p.status === 'SETTLED') {
+            totalSettledPaise += amtPaise;
+          }
+        });
+        const availableBalancePaise = Math.max(0, totalEarnedPaise - totalSettledPaise);
+        wallet = {
+          id: labId,
+          largeLabId: labId,
+          beneficiaryType: 'LARGE_LAB',
+          availableBalancePaise,
+          withdrawalEligibleBalancePaise: availableBalancePaise,
+          pendingWithdrawalPaise: 0,
+          totalEarnedPaise,
+          totalSettledPaise,
+          totalWithdrawnPaise: totalSettledPaise,
+          thisWeekEarningsPaise: 0,
+          thisMonthEarningsPaise: totalEarnedPaise,
+          autoSynced: true,
+        };
+      }
+      const config = cfgSnap.exists ? cfgSnap.data() : { minWithdrawalPaise: 10000, cycleDays: 7, platformFeePct: 10 };
+      res.json({ success: true, data: { wallet, config } });
+    } catch (e) { next(e); }
+  });
+
+  r.get('/large-lab/wallet/transactions', requireAuth, requireRoles(UserRole.LARGE_LAB, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const labId = req.user?.labId || req.user?.uid || '';
+      const snap = await db.collection('walletTransactions').where('phleboId', '==', labId).get();
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a: any, b: any) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      res.json({ success: true, data: list });
+    } catch (e) { next(e); }
+  });
+
+  r.get('/large-lab/wallet/withdrawals', requireAuth, requireRoles(UserRole.LARGE_LAB, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const labId = req.user?.labId || req.user?.uid || '';
+      const snap = await db.collection('withdrawalRequests').where('phleboId', '==', labId).get();
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a: any, b: any) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      res.json({ success: true, data: list });
+    } catch (e) { next(e); }
+  });
+
+  r.post('/large-lab/wallet/withdrawals', requireAuth, requireRoles(UserRole.LARGE_LAB, UserRole.ADMIN), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const labId = req.user?.labId || req.user?.uid || '';
+      const result = await handleSubmitWithdrawal({
+        beneficiaryType: 'LARGE_LAB',
+        id: labId,
+        name: req.user?.displayName || req.user?.email || labId,
+        requestedAmountPaise: Number(req.body?.requestedAmountPaise),
+        paymentMethod: req.body?.paymentMethod,
+      });
+      res.status(201).json({ success: true, data: result, message: result.message });
+    } catch (e) { next(e); }
+  });
+
   return r;
 }

@@ -165,6 +165,7 @@ import {
   ProfileScreen,
   TodayCollectionsScreen,
   TrainingSopScreen,
+  WalletScreen,
   type KycUploadPayload,
   type NotificationPrefsPayload,
   type PersonalDetailsPayload,
@@ -1091,11 +1092,11 @@ function PhleboAppContent() {
           await AsyncStorage.setItem(
             `@labsetu_cleared_notifs_${effectivePhleboId}`,
             JSON.stringify(persisted)
-          ).catch(() => {});
+          ).catch(() => { });
         }
 
         if (Platform.OS !== 'web') {
-          void Notifications.dismissAllNotificationsAsync().catch(() => {});
+          void Notifications.dismissAllNotificationsAsync().catch(() => { });
         }
 
         // Archive/mark cleared in Firestore (preserves audit history; never deletes records)
@@ -4711,6 +4712,7 @@ function PhleboAppContent() {
       if (
         currentScreen === 'PROFILE_PERSONAL_DETAILS' ||
         currentScreen === 'PROFILE_BANKING_PAYOUT' ||
+        currentScreen === 'PROFILE_WALLET' ||
         currentScreen === 'PROFILE_KYC_VERIFICATION' ||
         currentScreen === 'PROFILE_MY_DOCUMENTS' ||
         currentScreen === 'PROFILE_NOTIFICATIONS' ||
@@ -4959,6 +4961,11 @@ function PhleboAppContent() {
                 instantPayoutWindowMinutes={commissionConfig.instantPayoutWindowMinutes || 30}
                 onBack={handleBackToProfile}
               />
+            ) : currentScreen === 'PROFILE_WALLET' ? (
+              <WalletScreen
+                onBack={handleBackToProfile}
+                onGoToProfile={() => setCurrentScreen('PROFILE_BANKING_PAYOUT')}
+              />
             ) : currentScreen === 'PROFILE_KYC_VERIFICATION' ? (
               <KycVerificationScreen
                 myPhleboProfile={myPhleboProfile}
@@ -5153,6 +5160,7 @@ function PhleboAppContent() {
                 onBack={handleNavigateBackHome}
                 onOpenPersonalDetails={() => setCurrentScreen('PROFILE_PERSONAL_DETAILS')}
                 onOpenBankingPayout={() => setCurrentScreen('PROFILE_BANKING_PAYOUT')}
+                onOpenWallet={() => setCurrentScreen('PROFILE_WALLET')}
                 onOpenKycVerification={() => setCurrentScreen('PROFILE_KYC_VERIFICATION')}
                 onOpenMyDocuments={() => setCurrentScreen('PROFILE_MY_DOCUMENTS')}
                 onOpenNotificationsPreferences={() => setCurrentScreen('PROFILE_NOTIFICATIONS')}

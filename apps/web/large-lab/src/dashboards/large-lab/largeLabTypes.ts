@@ -13,6 +13,7 @@ export type LargeLabTab =
   | 'rates'
   | 'centres'
   | 'settlements'
+  | 'wallet'
   | 'analytics'
   | 'settings';
 

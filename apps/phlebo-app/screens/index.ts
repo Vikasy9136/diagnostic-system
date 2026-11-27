@@ -6,6 +6,7 @@ export * from './DropSampleScreen';
 export * from './CompletedReceiptScreen';
 export * from './BookingsHistoryScreen';
 export * from './EarningsScreen';
+export * from './WalletScreen';
 export * from './ProfileScreen';
 export * from './PersonalDetailsScreen';
 export * from './BankingPayoutScreen';

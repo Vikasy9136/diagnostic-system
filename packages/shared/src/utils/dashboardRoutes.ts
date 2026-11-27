@@ -363,6 +363,13 @@ export const LARGE_LAB_ROUTES: Record<LargeLabTab, DashboardRouteMeta<LargeLabTa
     title: 'LabSetu | Financial Settlements',
     navLabel: 'Settlements',
   },
+  wallet: {
+    tab: 'wallet',
+    path: '/dashboard/wallet',
+    aliases: ['/wallet', '/dashboard/payout-wallet'],
+    title: 'LabSetu | Automatic Payout Wallet',
+    navLabel: 'Wallet & Payouts',
+  },
   analytics: {
     tab: 'analytics',
     path: '/dashboard/analytics',

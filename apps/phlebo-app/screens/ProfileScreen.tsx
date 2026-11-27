@@ -23,6 +23,7 @@ export interface ProfileScreenProps {
   onBack?: () => void;
   onOpenPersonalDetails: () => void;
   onOpenBankingPayout: () => void;
+  onOpenWallet: () => void;
   onOpenKycVerification: () => void;
   onOpenMyDocuments: () => void;
   onOpenNotificationsPreferences: () => void;
@@ -51,6 +52,7 @@ export function ProfileScreen({
   onBack,
   onOpenPersonalDetails,
   onOpenBankingPayout,
+  onOpenWallet,
   onOpenKycVerification,
   onOpenMyDocuments,
   onOpenNotificationsPreferences,
@@ -231,6 +233,25 @@ export function ProfileScreen({
               </Text>
               <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.menuRowSub}>
                 Bank Account, UPI ID &amp; Private UPI QR
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={BRAND_COLORS.muted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.menuGroupRow}
+            onPress={onOpenWallet}
+            activeOpacity={0.75}
+          >
+            <View style={[styles.menuRowIconWrap, { backgroundColor: '#DCFCE7' }]}>
+              <Ionicons name="wallet-outline" size={18} color="#15803D" />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.menuRowTitle}>
+                My Wallet &amp; Payouts
+              </Text>
+              <Text maxFontSizeMultiplier={MAX_TEXT_SCALE} style={styles.menuRowSub}>
+                Auto-credited balance, withdrawals &amp; ledger
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color={BRAND_COLORS.muted} />

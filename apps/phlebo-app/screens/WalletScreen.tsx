@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
+  ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
@@ -16,6 +17,7 @@ import {
   type WithdrawalConfig,
   type WithdrawalRequest,
 } from '@diagnostic/shared';
+import { ProfileSubScreenHeader } from '../components/ProfileSubScreenHeader';
 import { fetchMyPaymentMethods } from '../services/phleboPayoutService';
 import {
   fetchMyWallet,
@@ -23,13 +25,15 @@ import {
   fetchMyWithdrawalRequests,
   submitWithdrawalRequest,
 } from '../services/walletService';
-import { styles } from '../styles/phleboStyles';
+import { COLORS, styles } from '../styles/phleboStyles';
+import { rs } from '../utils/responsive';
 
 export interface WalletScreenProps {
   onGoToProfile: () => void;
+  onBack?: () => void;
 }
 
-export function WalletScreen({ onGoToProfile }: WalletScreenProps) {
+export function WalletScreen({ onGoToProfile, onBack }: WalletScreenProps) {
   const [wallet, setWallet] = useState<PhleboWallet | null>(null);
   const [cfg, setCfg] = useState<WithdrawalConfig | null>(null);
   const [txs, setTxs] = useState<WalletTransaction[]>([]);
@@ -126,15 +130,28 @@ export function WalletScreen({ onGoToProfile }: WalletScreenProps) {
   };
 
   if (loading && !wallet) {
-    return (
+    const loader = (
       <View style={{ padding: 24, alignItems: 'center' }}>
         <ActivityIndicator size="large" color="#0D9488" />
         <Text style={{ marginTop: 10, color: '#64748B' }}>Loading LabSetu Wallet...</Text>
       </View>
     );
+    if (onBack) {
+      return (
+        <View style={{ flex: 1, backgroundColor: COLORS.background }}>
+          <ProfileSubScreenHeader
+            title="My Wallet & Payouts"
+            subtitle="Auto-credited earnings & withdrawals"
+            onBack={onBack}
+          />
+          {loader}
+        </View>
+      );
+    }
+    return loader;
   }
 
-  return (
+  const content = (
     <View style={{ gap: 14 }}>
       {banner && (
         <View
@@ -377,4 +394,25 @@ export function WalletScreen({ onGoToProfile }: WalletScreenProps) {
       </Modal>
     </View>
   );
+
+  if (onBack) {
+    return (
+      <View style={{ flex: 1, backgroundColor: COLORS.background }}>
+        <ProfileSubScreenHeader
+          title="My Wallet & Payouts"
+          subtitle="Auto-credited earnings & withdrawals"
+          onBack={onBack}
+        />
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: rs(16), paddingBottom: rs(90) }}
+          showsVerticalScrollIndicator={false}
+        >
+          {content}
+        </ScrollView>
+      </View>
+    );
+  }
+
+  return content;
 }

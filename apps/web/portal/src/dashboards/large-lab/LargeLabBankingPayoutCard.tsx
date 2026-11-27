@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import {
-  formatInr,
   getBankBrandMeta,
   type IfscLookupResult,
   type PhleboPaymentMethodSummary,
-  type PhleboWallet,
-  type WithdrawalRequest,
 } from '@diagnostic/shared';
 import { API_BASE_URL, auth } from '../../firebase';
 
@@ -38,8 +35,6 @@ function statusPill(status?: string) {
 
 export function LargeLabBankingPayoutCard() {
   const [summary, setSummary] = useState<PhleboPaymentMethodSummary | null>(null);
-  const [wallet, setWallet] = useState<PhleboWallet | null>(null);
-  const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [qrPreviewUrl, setQrPreviewUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeEditor, setActiveEditor] = useState<'NONE' | 'BANK' | 'UPI'>('NONE');
@@ -63,24 +58,16 @@ export function LargeLabBankingPayoutCard() {
   const [qrBusy, setQrBusy] = useState(false);
   const [decodedQrUriInput, setDecodedQrUriInput] = useState('');
 
-  // Withdrawal form
-  const [withdrawAmountInr, setWithdrawAmountInr] = useState('');
-  const [withdrawing, setWithdrawing] = useState(false);
-
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [profileData, walletData, wdData, qrData] = await Promise.all([
+      const [profileData, qrData] = await Promise.all([
         callLargeLabFinanceApi<PhleboPaymentMethodSummary>('/large-lab/payout-profile'),
-        callLargeLabFinanceApi<{ wallet: PhleboWallet }>('/large-lab/wallet').catch(() => null),
-        callLargeLabFinanceApi<WithdrawalRequest[]>('/large-lab/wallet/withdrawals').catch(() => []),
         callLargeLabFinanceApi<{ available: boolean; signedUrl?: string; dataUrl?: string }>('/large-lab/payout-profile/qr').catch(
           (): { available: boolean; signedUrl?: string; dataUrl?: string } => ({ available: false })
         ),
       ]);
       setSummary(profileData);
-      if (walletData?.wallet) setWallet(walletData.wallet);
-      setWithdrawals(wdData || []);
       setQrPreviewUrl(qrData?.available ? qrData.signedUrl || qrData.dataUrl || null : null);
     } catch (err) {
       setStatusMsg({ type: 'err', text: err instanceof Error ? err.message : 'Unable to load Banking & Payout Settings.' });
@@ -234,34 +221,6 @@ export function LargeLabBankingPayoutCard() {
       setStatusMsg({ type: 'err', text: err instanceof Error ? err.message : 'Unable to delete QR.' });
     } finally {
       setQrBusy(false);
-    }
-  }
-
-  async function handleRequestWithdrawal(e: FormEvent) {
-    e.preventDefault();
-    setStatusMsg(null);
-    const inr = Number(withdrawAmountInr);
-    if (!Number.isFinite(inr) || inr <= 0) {
-      setStatusMsg({ type: 'err', text: 'Enter a valid withdrawal amount in INR.' });
-      return;
-    }
-    setWithdrawing(true);
-    try {
-      const method = summary?.defaultMethod === 'UPI' ? 'UPI' : 'BANK_ACCOUNT';
-      const res = await callLargeLabFinanceApi<{ message: string }>('/large-lab/wallet/withdrawals', {
-        method: 'POST',
-        body: JSON.stringify({
-          requestedAmountPaise: Math.round(inr * 100),
-          paymentMethod: method,
-        }),
-      });
-      setWithdrawAmountInr('');
-      await loadAll();
-      setStatusMsg({ type: 'ok', text: res.message || 'Withdrawal request submitted for Admin Finance settlement.' });
-    } catch (err) {
-      setStatusMsg({ type: 'err', text: err instanceof Error ? err.message : 'Withdrawal request failed.' });
-    } finally {
-      setWithdrawing(false);
     }
   }
 
@@ -523,37 +482,6 @@ export function LargeLabBankingPayoutCard() {
             </div>
           </div>
 
-          {/* Wallet Withdrawal Request */}
-          <div style={{ padding: '14px', borderRadius: '12px', border: '1px solid #99F6E4', background: '#F0FDFA' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
-              <div>
-                <strong style={{ fontSize: '0.92rem', color: '#0F766E' }}>Large Lab Payout Wallet</strong>
-                <div style={{ fontSize: '0.8rem', color: '#334155', marginTop: '2px' }}>
-                  Available: <strong>{formatInr((wallet?.availableBalancePaise || 0) / 100)}</strong> • Pending: <strong>{formatInr((wallet?.pendingWithdrawalPaise || 0) / 100)}</strong> • Settled: <strong>{formatInr((wallet?.totalSettledPaise || 0) / 100)}</strong>
-                </div>
-              </div>
-              <form onSubmit={(e) => void handleRequestWithdrawal(e)} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <input
-                  type="number"
-                  min={100}
-                  step="1"
-                  className="form-input"
-                  style={{ width: '130px' }}
-                  placeholder="Amount ₹"
-                  value={withdrawAmountInr}
-                  onChange={(e) => setWithdrawAmountInr(e.target.value)}
-                />
-                <button type="submit" className="btn-primary" disabled={withdrawing}>
-                  {withdrawing ? 'Submitting...' : 'Request Withdrawal'}
-                </button>
-              </form>
-            </div>
-            {withdrawals.length > 0 && (
-              <div style={{ marginTop: '10px', fontSize: '0.78rem', color: '#475569' }}>
-                Latest Request: <strong>{withdrawals[0].id}</strong> — {formatInr(withdrawals[0].requestedAmountPaise / 100)} ({withdrawals[0].status})
-              </div>
-            )}
-          </div>
         </div>
       )}
     </div>
