@@ -45,6 +45,8 @@ export interface NativeBankLogoProps {
   ifsc?: string | null;
   bankName?: string | null;
   size?: number;
+  width?: number;
+  height?: number;
   style?: ViewStyle;
 }
 
@@ -56,7 +58,9 @@ export function BankLogo({
   bankCode,
   ifsc,
   bankName,
-  size = 40,
+  size = 36,
+  width,
+  height,
   style,
 }: NativeBankLogoProps) {
   const [failed, setFailed] = useState(false);
@@ -66,11 +70,14 @@ export function BankLogo({
     ? fallbackSource
     : NATIVE_BANK_ASSETS[meta.logoAsset] || fallbackSource;
 
+  const boxHeight = height ?? size;
+  const boxWidth = width ?? Math.round(boxHeight * 1.45);
+
   return (
     <View
       style={[
         styles.frame,
-        { width: size, height: size, borderRadius: Math.max(8, Math.round(size * 0.22)) },
+        { width: boxWidth, height: boxHeight, borderRadius: Math.max(8, Math.round(boxHeight * 0.22)) },
         style,
       ]}
     >

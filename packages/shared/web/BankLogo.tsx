@@ -12,20 +12,24 @@ export interface BankLogoProps {
   ifsc?: string | null;
   bankName?: string | null;
   size?: number;
+  width?: number;
+  height?: number;
   className?: string;
   style?: CSSProperties;
 }
 
 /**
  * Centralized BankLogo component for React web applications.
- * Resolves the verified bank identity from @diagnostic/shared and renders
- * the authentic local PNG asset with neutral fallback and preserved aspect ratio.
+ * Uses explicit inline styles (no Tailwind dependency) so bank PNGs never overflow
+ * and preserve aspect ratio cleanly across all portals.
  */
 export function BankLogo({
   bankCode,
   ifsc,
   bankName,
-  size = 40,
+  size = 36,
+  width,
+  height,
   className = '',
   style,
 }: BankLogoProps) {
@@ -36,10 +40,31 @@ export function BankLogo({
     ? fallbackSrc
     : BANK_LOGO_ASSETS[`../assets/banks/${meta.logoAsset}`] || fallbackSrc;
 
+  const boxHeight = height ?? size;
+  const boxWidth = width ?? Math.round(boxHeight * 1.45);
+
   return (
     <div
-      className={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-xs ${className}`}
-      style={{ width: size, height: size, ...style }}
+      className={className}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: `${boxWidth}px`,
+        height: `${boxHeight}px`,
+        minWidth: `${boxWidth}px`,
+        minHeight: `${boxHeight}px`,
+        maxWidth: `${boxWidth}px`,
+        maxHeight: `${boxHeight}px`,
+        overflow: 'hidden',
+        borderRadius: '8px',
+        border: '1px solid #E2E8F0',
+        backgroundColor: '#FFFFFF',
+        padding: '4px 6px',
+        boxSizing: 'border-box',
+        flexShrink: 0,
+        ...style,
+      }}
       title={meta.officialBankName}
     >
       {resolvedSrc ? (
@@ -47,11 +72,18 @@ export function BankLogo({
           src={resolvedSrc}
           alt={meta.officialBankName}
           onError={() => setFailed(true)}
-          className="h-full w-full object-contain"
+          style={{
+            width: '100%',
+            height: '100%',
+            maxWidth: '100%',
+            maxHeight: '100%',
+            objectFit: 'contain',
+            display: 'block',
+          }}
           loading="lazy"
         />
       ) : (
-        <span className="text-[10px] font-bold text-slate-600">{meta.shortName}</span>
+        <span style={{ fontSize: '10px', fontWeight: 700, color: '#475569' }}>{meta.shortName}</span>
       )}
     </div>
   );
