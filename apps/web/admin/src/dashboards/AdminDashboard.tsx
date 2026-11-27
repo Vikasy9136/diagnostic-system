@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { type ReactNode, useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   ADMIN_SUB_ROLE_LABELS,
   type CatalogItemType,
@@ -162,16 +162,31 @@ import { useDashboardPageRouter } from './useDashboardPageRouter';
 
 export type { AlertTriggerFn } from './types';
 
+export interface AdminRoleScopeConfig {
+  brandSubtitle: string;
+  allowedTabs: AdminTab[];
+  defaultTab: AdminTab;
+  allowAdminRoleCreation?: boolean;
+  renderCustomOverview?: (ctx: {
+    labs: LabFacility[];
+    phlebotomists: PhlebotomistProfile[];
+    onSelectTab: (tab: AdminTab) => void;
+    onOpenAddUserModal: (presetRole: UserRole) => void;
+  }) => ReactNode;
+}
+
 interface AdminDashboardProps {
   session: VerifiedPortalSession;
   onSignOut: () => void;
   onShowAlert: AlertTriggerFn;
+  roleScope?: AdminRoleScopeConfig;
 }
 
 export function AdminDashboard({
   session,
   onSignOut,
   onShowAlert,
+  roleScope,
 }: AdminDashboardProps) {
   const rootAdminEmail = ADMIN_LOGIN_EMAIL || DEFAULT_SUPER_ADMIN_EMAIL;
   const isSuperAdmin = useMemo(
@@ -201,6 +216,9 @@ export function AdminDashboard({
   const canViewTab = useMemo(
     () =>
       (tab: AdminTab): boolean => {
+        if (roleScope) {
+          return roleScope.allowedTabs.includes(tab);
+        }
         switch (tab) {
           case 'dashboard':
             return hasAnyPerm('VIEW_SUPER_ADMIN_DASHBOARD', 'FULL_PLATFORM_CONTROL');
@@ -330,7 +348,7 @@ export function AdminDashboard({
             return false;
         }
       },
-    [hasAnyPerm]
+    [hasAnyPerm, roleScope]
   );
 
   const [labsMenuOpen, setLabsMenuOpen] = useState(true);
@@ -338,7 +356,7 @@ export function AdminDashboard({
     resolveTabFromPath: resolveAdminTab,
     resolvePathForTab: getAdminPath,
     resolveTitleForTab: getAdminTitle,
-    defaultTab: 'dashboard',
+    defaultTab: roleScope?.defaultTab || 'dashboard',
     baseRoleQuery: session.profile.role,
     onTabChange: (tab) => {
       if (tab === 'labs-small' || tab === 'labs-large' || tab === 'labs-verify' || tab === 'labs') {
@@ -1279,7 +1297,7 @@ export function AdminDashboard({
   return (
     <>
       <DashboardShell<AdminTab>
-        brandSubtitle={roleTitleDisplay}
+        brandSubtitle={roleScope?.brandSubtitle || roleTitleDisplay}
         navItems={navItems}
         activeTab={activeTab}
         onSelectTab={selectAdminTab}
@@ -1382,29 +1400,37 @@ export function AdminDashboard({
           </div>
         )}
 
-        {activeTab === 'dashboard' && (
-          <AdminOverviewTab
-            metrics={metrics}
-            trendDays={trendDays}
-            onToggleTrendDays={() => setTrendDays(trendDays === 30 ? 7 : 30)}
-            labs={labs}
-            phlebotomists={phlebotomists}
-            orders={orders}
-            managedUsers={managedUsers}
-            reports={reports}
-            execSummary={execSummary}
-            commConfig={commConfig}
-            canViewTab={canViewTab}
-            onSelectTab={selectAdminTab}
-            onSelectDeptWorkspace={(dept: AdminDeptView, tab: AdminTab) => {
-              setDeptView(dept);
-              setActiveTab(tab);
-            }}
-            onOpenAddUserModal={(r) => openAddUserModal(r)}
-            onOpenAddTestModal={() => openAddTestModal('TEST')}
-            onExportCsv={handleExportCsv}
-          />
-        )}
+        {activeTab === 'dashboard' &&
+          (roleScope?.renderCustomOverview ? (
+            roleScope.renderCustomOverview({
+              labs,
+              phlebotomists,
+              onSelectTab: selectAdminTab,
+              onOpenAddUserModal: (r) => openAddUserModal(r),
+            })
+          ) : (
+            <AdminOverviewTab
+              metrics={metrics}
+              trendDays={trendDays}
+              onToggleTrendDays={() => setTrendDays(trendDays === 30 ? 7 : 30)}
+              labs={labs}
+              phlebotomists={phlebotomists}
+              orders={orders}
+              managedUsers={managedUsers}
+              reports={reports}
+              execSummary={execSummary}
+              commConfig={commConfig}
+              canViewTab={canViewTab}
+              onSelectTab={selectAdminTab}
+              onSelectDeptWorkspace={(dept: AdminDeptView, tab: AdminTab) => {
+                setDeptView(dept);
+                setActiveTab(tab);
+              }}
+              onOpenAddUserModal={(r) => openAddUserModal(r)}
+              onOpenAddTestModal={() => openAddTestModal('TEST')}
+              onExportCsv={handleExportCsv}
+            />
+          ))}
 
         {activeTab === 'org-structure' && canViewTab('org-structure') && (
           <OrgStructurePanel
@@ -1742,6 +1768,7 @@ export function AdminDashboard({
         presetCenterType={onboardingModal.presetCenterType}
         onClose={() => setOnboardingModal((prev) => ({ ...prev, open: false }))}
         isSuperAdmin={isSuperAdmin}
+        allowAdminRoleCreation={roleScope?.allowAdminRoleCreation ?? (isSuperAdmin || hasAnyPerm('MANAGE_EMPLOYEES'))}
         rootAdminEmail={rootAdminEmail}
         currentUserEmail={session.profile.email}
         currentUserName={session.profile.displayName}

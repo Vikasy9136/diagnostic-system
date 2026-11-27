@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ROLE_LABELS, UserRole } from '@diagnostic/shared';
 import { useSeasonalFavicon } from '@diagnostic/shared/web/useSeasonalFavicon';
 import { signOut } from 'firebase/auth';
-import { auth, db } from './firebase';
+import { ADMIN_LOGIN_EMAIL, auth, db } from './firebase';
 import { LandingPage } from './components/LandingPage';
 import { LoginPage, type VerifiedPortalSession } from './components/LoginPage';
 import { ForgotPasswordPage } from './components/ForgotPasswordPage';
@@ -17,7 +17,7 @@ import {
   type DynamicAlertState,
   type DynamicAlertVariant,
 } from './components/DynamicAlertModal';
-import { AdminDashboard } from './dashboards/AdminDashboard';
+import { resolveAdminRoleDashboard } from './dashboards/roles';
 import { SmallLabDashboard } from './dashboards/SmallLabDashboard';
 import { LargeLabDashboard } from './dashboards/LargeLabDashboard';
 
@@ -369,14 +369,16 @@ export function App() {
     }
 
     switch (session.profile.role) {
-      case UserRole.ADMIN:
+      case UserRole.ADMIN: {
+        const RoleDashboard = resolveAdminRoleDashboard(session.profile, ADMIN_LOGIN_EMAIL);
         return (
-          <AdminDashboard
+          <RoleDashboard
             session={session}
             onSignOut={handleSignOut}
             onShowAlert={showAlert}
           />
         );
+      }
       case UserRole.SMALL_LAB:
         return (
           <SmallLabDashboard

@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { UserRole } from '@diagnostic/shared';
 import { useSeasonalFavicon } from '@diagnostic/shared/web/useSeasonalFavicon';
 import { signOut } from 'firebase/auth';
-import { auth, db } from './firebase';
+import { ADMIN_LOGIN_EMAIL, auth, db } from './firebase';
 import { MobileScannerPage } from './components/MobileScannerPage';
 import {
   AuthGateScreen,
@@ -14,7 +14,7 @@ import {
   type DynamicAlertState,
   type DynamicAlertVariant,
 } from './components/DynamicAlertModal';
-import { AdminDashboard } from './dashboards/AdminDashboard';
+import { resolveAdminRoleDashboard } from './dashboards/roles';
 
 export default function App() {
   useSeasonalFavicon(db);
@@ -88,11 +88,16 @@ export default function App() {
           onAuthenticated={(verified) => setSession(verified)}
         />
       ) : (
-        <AdminDashboard
-          session={session}
-          onSignOut={handleSignOut}
-          onShowAlert={showDynamicAlert}
-        />
+        (() => {
+          const RoleDashboard = resolveAdminRoleDashboard(session.profile, ADMIN_LOGIN_EMAIL);
+          return (
+            <RoleDashboard
+              session={session}
+              onSignOut={handleSignOut}
+              onShowAlert={showDynamicAlert}
+            />
+          );
+        })()
       )}
     </>
   );

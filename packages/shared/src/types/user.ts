@@ -30,6 +30,7 @@ export enum AuthMethod {
  */
 export type AdminTeamRole =
   | 'SUPER_ADMIN'
+  | 'FIELD_ONBOARDING_OFFICER'
   | 'FINANCE_B2B'
   | 'OPS_DISPATCH'
   | 'CATALOG_LABS'
@@ -42,6 +43,7 @@ export type AdminTeamRole =
 
 export const ADMIN_SUB_ROLE_LABELS: Record<AdminTeamRole, string> = {
   SUPER_ADMIN: 'Super Admin (Full Control)',
+  FIELD_ONBOARDING_OFFICER: 'Field Onboarding & Partner Officer',
   FINANCE_B2B: 'Finance & B2B Margin Team',
   OPS_DISPATCH: 'Dispatch & Cold-Chain Operations',
   CATALOG_LABS: 'Lab Network & Catalog Team',

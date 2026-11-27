@@ -32,6 +32,7 @@ export interface AdminOnboardingModalProps {
   presetCenterType?: LabCenterType;
   onClose: () => void;
   isSuperAdmin: boolean;
+  allowAdminRoleCreation?: boolean;
   rootAdminEmail: string;
   currentUserEmail?: string;
   currentUserName?: string;
@@ -49,6 +50,7 @@ export function AdminOnboardingModal({
   presetCenterType = 'MAIN_HUB',
   onClose,
   isSuperAdmin: _isSuperAdmin,
+  allowAdminRoleCreation = true,
   rootAdminEmail,
   currentUserEmail,
   currentUserName,
@@ -60,7 +62,7 @@ export function AdminOnboardingModal({
   onProvisioned,
 }: AdminOnboardingModalProps) {
   const [role, setRole] = useState<UserRole>(presetRole);
-  const [adminSubRole, setAdminSubRole] = useState<AdminTeamRole>('OPS_DISPATCH');
+  const [adminSubRole, setAdminSubRole] = useState<AdminTeamRole>('FIELD_ONBOARDING_OFFICER');
   const [centerType, setCenterType] = useState<LabCenterType>(presetCenterType);
   const [parentLabId, setParentLabId] = useState('');
   const [email, setEmail] = useState('');
@@ -120,8 +122,8 @@ export function AdminOnboardingModal({
   useEffect(() => {
     if (!open) return;
     const initZone = serviceZones.find((z) => z.isActive) || serviceZones[0] || null;
-    setRole(presetRole);
-    setAdminSubRole('OPS_DISPATCH');
+    setRole(!allowAdminRoleCreation && presetRole === UserRole.ADMIN ? UserRole.SMALL_LAB : presetRole);
+    setAdminSubRole('FIELD_ONBOARDING_OFFICER');
     setCenterType(presetCenterType);
     setParentLabId(largeLabOrgs[0]?.id || '');
     setEmail('');
@@ -714,12 +716,14 @@ Instructions: Download, print/sign with official signature, and upload scan/PDF 
             <option value={UserRole.SMALL_LAB}>Small Collection Lab</option>
             <option value={UserRole.LARGE_LAB}>Large Partner / Reference Lab</option>
             <option value={UserRole.PHLEBOTOMIST}>Field Phlebotomist (Mobile App)</option>
-            <option value={UserRole.ADMIN}>Platform Admin Team</option>
+            {allowAdminRoleCreation && (
+              <option value={UserRole.ADMIN}>Platform Admin Team</option>
+            )}
           </select>
         </div>
 
         {/* Admin Staff Sub-Role & Visible Dashboard Selector */}
-        {role === UserRole.ADMIN && (
+        {allowAdminRoleCreation && role === UserRole.ADMIN && (
           <div className="form-group">
             <label className="form-label">Admin Staff Role &amp; Dashboard Access *</label>
             <select
@@ -737,15 +741,16 @@ Instructions: Download, print/sign with official signature, and upload scan/PDF 
                 );
               }}
             >
-              <option value="OPS_DISPATCH">Operations &amp; Dispatch Lead (Ops Command + Bookings + Labs + Phlebos)</option>
-              <option value="OPERATIONS_PARTNERSHIPS_HEAD">Operations &amp; Partnerships Head (Ops + Lab Partnerships)</option>
-              <option value="FINANCE_BUSINESS_HEAD">Finance &amp; Business Head (Finance Ops + Payments + Commissions)</option>
-              <option value="FINANCE_B2B">Finance &amp; Billing Executive (Payments + Settlements)</option>
-              <option value="MARKETING_GROWTH_HEAD">Marketing &amp; Growth Head (Marketing Growth + Labs)</option>
-              <option value="MARKETING_EXECUTIVE">Marketing &amp; Field Acquisition Executive (Leads + Campaigns)</option>
-              <option value="PRODUCT_TECHNOLOGY_HEAD">Product &amp; Tech Head (System Health + Error Logs + Tech)</option>
-              <option value="CATALOG_LABS">Catalog &amp; Labs Coordinator (Labs + Test Catalog)</option>
-              <option value="DEPARTMENT_EMPLOYEE">Department Employee (Custom Scoped Permissions Only)</option>
+              <option value="FIELD_ONBOARDING_OFFICER">1. Field Onboarding Officer (Onboard Small Labs, Large Labs &amp; Phlebos)</option>
+              <option value="OPS_DISPATCH">2. Operations &amp; Dispatch Lead (Ops Command + Bookings + Labs + Phlebos)</option>
+              <option value="OPERATIONS_PARTNERSHIPS_HEAD">3. Operations &amp; Partnerships Head (Ops + Lab Partnerships)</option>
+              <option value="FINANCE_BUSINESS_HEAD">4. Finance &amp; Business Head (Finance Ops + Payments + Commissions)</option>
+              <option value="FINANCE_B2B">5. Finance &amp; Billing Executive (Payments + Settlements)</option>
+              <option value="MARKETING_GROWTH_HEAD">6. Marketing &amp; Growth Head (Marketing Growth + Labs)</option>
+              <option value="MARKETING_EXECUTIVE">7. Marketing &amp; Field Acquisition Executive (Leads + Campaigns)</option>
+              <option value="PRODUCT_TECHNOLOGY_HEAD">8. Product &amp; Tech Head (System Health + Error Logs + Tech)</option>
+              <option value="CATALOG_LABS">9. Catalog &amp; Labs Coordinator (Labs + Test Catalog)</option>
+              <option value="DEPARTMENT_EMPLOYEE">10. Department Employee (Custom Scoped Permissions Only)</option>
               {_isSuperAdmin && (
                 <option value="SUPER_ADMIN">Super Admin (Full Platform Control + Executive Dashboard)</option>
               )}
@@ -763,7 +768,9 @@ Instructions: Download, print/sign with official signature, and upload scan/PDF 
               }}
             >
               <strong>Visible Dashboard:</strong>{' '}
-              {adminSubRole === 'FINANCE_BUSINESS_HEAD' || adminSubRole === 'FINANCE_B2B'
+              {adminSubRole === 'FIELD_ONBOARDING_OFFICER'
+                ? 'Dedicated Field Onboarding Workspace (Onboard & Verify Small Labs, Large Reference Labs & Field Phlebotomists + Service Zones). Super Admin Executive Dashboard, Finance & Settings remain hidden.'
+                : adminSubRole === 'FINANCE_BUSINESS_HEAD' || adminSubRole === 'FINANCE_B2B'
                 ? 'Finance & Business Workspace (Payments, Settlements, Commissions). Executive Super Admin Dashboard & Settings remain hidden.'
                 : adminSubRole === 'OPS_DISPATCH' || adminSubRole === 'OPERATIONS_PARTNERSHIPS_HEAD'
                 ? 'Operations Command Center (Bookings, Labs, Phlebotomists, Samples, Service Zones). Finance & Settings remain hidden.'

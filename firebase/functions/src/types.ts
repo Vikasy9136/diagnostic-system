@@ -23,6 +23,7 @@ export const ROLE_LABELS: Record<UserRole, string> = {
 
 export type AdminTeamRole =
   | 'SUPER_ADMIN'
+  | 'FIELD_ONBOARDING_OFFICER'
   | 'FINANCE_B2B'
   | 'OPS_DISPATCH'
   | 'CATALOG_LABS'
@@ -30,10 +31,12 @@ export type AdminTeamRole =
   | 'OPERATIONS_PARTNERSHIPS_HEAD'
   | 'MARKETING_GROWTH_HEAD'
   | 'PRODUCT_TECHNOLOGY_HEAD'
-  | 'DEPARTMENT_EMPLOYEE';
+  | 'DEPARTMENT_EMPLOYEE'
+  | 'MARKETING_EXECUTIVE';
 
 export const ADMIN_SUB_ROLE_LABELS: Record<AdminTeamRole, string> = {
   SUPER_ADMIN: 'Super Admin (Full Control)',
+  FIELD_ONBOARDING_OFFICER: 'Field Onboarding & Partner Officer',
   FINANCE_B2B: 'Finance & B2B Margin Team',
   OPS_DISPATCH: 'Operations & Courier Dispatch',
   CATALOG_LABS: 'Lab Onboarding & Catalog Team',
@@ -42,6 +45,7 @@ export const ADMIN_SUB_ROLE_LABELS: Record<AdminTeamRole, string> = {
   MARKETING_GROWTH_HEAD: 'Head — Marketing & Growth',
   PRODUCT_TECHNOLOGY_HEAD: 'Head — Product & Technology',
   DEPARTMENT_EMPLOYEE: 'Department Team Member',
+  MARKETING_EXECUTIVE: 'Marketing & Field BD Executive',
 };
 
 export interface UserCustomClaims {
