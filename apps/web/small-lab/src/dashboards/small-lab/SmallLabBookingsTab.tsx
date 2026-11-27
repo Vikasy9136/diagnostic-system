@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  type BookingTestItem,
   formatInr,
   formatOrderStatus,
   OrderStatus,
   type PickupOrder,
   type SettlementRecord,
+  type UrgentPriorityLevel,
 } from '@diagnostic/shared';
 import { EmptyStateBox } from '../../components/shared';
+import {
+  createUrgentRequestApi,
+} from '../../services/workflowApiService';
 
 export interface SmallLabBookingsTabProps {
   myLabId: string;
@@ -51,6 +56,65 @@ export function SmallLabBookingsTab({
 }: SmallLabBookingsTabProps) {
   const [nowTick, setNowTick] = useState(Date.now());
   const [previewPhotoOrder, setPreviewPhotoOrder] = useState<PickupOrder | null>(null);
+  const [urgentTarget, setUrgentTarget] = useState<{
+    order: PickupOrder;
+    test: BookingTestItem;
+  } | null>(null);
+  const [urgentPriority, setUrgentPriority] = useState<UrgentPriorityLevel>('URGENT');
+  const [urgentReason, setUrgentReason] = useState('');
+  const [urgentDeadline, setUrgentDeadline] = useState('');
+  const [urgentRemarks, setUrgentRemarks] = useState('');
+  const [urgentConfirmChecked, setUrgentConfirmChecked] = useState(false);
+  const [urgentSubmitting, setUrgentSubmitting] = useState(false);
+  const [urgentFeedback, setUrgentFeedback] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+
+  function openUrgentModal(order: PickupOrder, test: BookingTestItem) {
+    setUrgentTarget({ order, test });
+    setUrgentPriority('URGENT');
+    setUrgentReason('');
+    setUrgentDeadline(new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 16));
+    setUrgentRemarks('');
+    setUrgentConfirmChecked(false);
+    setUrgentFeedback(null);
+  }
+
+  async function handleSubmitUrgentRequest() {
+    if (!urgentTarget) return;
+    const deadlineMs = Date.parse(urgentDeadline);
+    if (!urgentReason.trim() || urgentReason.trim().length < 3) {
+      setUrgentFeedback({ type: 'error', msg: 'Please enter a valid clinical/operational reason.' });
+      return;
+    }
+    if (Number.isNaN(deadlineMs) || deadlineMs < Date.now() + 15 * 60 * 1000) {
+      setUrgentFeedback({ type: 'error', msg: 'Requested deadline must be at least 15 minutes in the future.' });
+      return;
+    }
+    if (!urgentConfirmChecked) {
+      setUrgentFeedback({ type: 'error', msg: 'Please confirm before submitting the urgent request.' });
+      return;
+    }
+    setUrgentSubmitting(true);
+    setUrgentFeedback(null);
+    try {
+      await createUrgentRequestApi({
+        orderId: urgentTarget.order.id,
+        testId: urgentTarget.test.testId,
+        requestedPriority: urgentPriority,
+        reason: urgentReason.trim(),
+        requestedDeadline: new Date(deadlineMs).toISOString(),
+        remarks: urgentRemarks.trim() || undefined,
+      });
+      setUrgentFeedback({
+        type: 'success',
+        msg: `Urgent request submitted for ${urgentTarget.test.testName}. Large Lab has been notified.`,
+      });
+      setTimeout(() => setUrgentTarget(null), 900);
+    } catch (err) {
+      setUrgentFeedback({ type: 'error', msg: (err as Error).message });
+    } finally {
+      setUrgentSubmitting(false);
+    }
+  }
 
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
   const [dateFilterMode, setDateFilterMode] = useState<'TODAY' | 'ALL' | 'CUSTOM'>('TODAY');
@@ -421,6 +485,95 @@ export function SmallLabBookingsTab({
                       </span>
                     ) : null}
                   </div>
+
+                  {/* Per-test report status & Request Urgent Report action */}
+                  {(() => {
+                    const testRows: BookingTestItem[] = o.bookingTestItems?.length
+                      ? o.bookingTestItems
+                      : (o.specimens || []).map((s, idx) => ({
+                          testId: s.testCode || s.id || `TEST-${idx + 1}`,
+                          testCode: s.testCode || `TEST-${idx + 1}`,
+                          testName: s.testName || s.testCode || `Test ${idx + 1}`,
+                          priceInr: 0,
+                          reportStatus: 'PENDING',
+                          updatedAt: o.updatedAt,
+                        }));
+                    if (testRows.length === 0) return null;
+                    return (
+                      <div style={{ marginTop: '8px', borderTop: '1px dashed #CBD5E1', paddingTop: '6px', display: 'grid', gap: '4px' }}>
+                        {testRows.map((t) => {
+                          const isAvailable =
+                            t.reportStatus === 'AVAILABLE_TO_SMALL_LAB' ||
+                            t.reportStatus === 'UPLOADED' ||
+                            t.reportStatus === 'VERIFIED';
+                          const pStatus = t.urgentPriorityStatus || 'NORMAL';
+                          const hasActiveUrgent = [
+                            'URGENT_REQUESTED',
+                            'URGENT_ACCEPTED',
+                            'URGENT_IN_PROGRESS',
+                            'URGENT_DELAYED',
+                          ].includes(pStatus);
+                          return (
+                            <div
+                              key={t.testId}
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                gap: '6px',
+                                fontSize: '0.72rem',
+                                background: '#FFFFFF',
+                                border: '1px solid #E2E8F0',
+                                borderRadius: '6px',
+                                padding: '4px 8px',
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                <strong>{t.testName}</strong>
+                                <span style={{ color: isAvailable ? '#059669' : '#64748B' }}>
+                                  ({isAvailable ? 'Report Available' : t.reportStatus})
+                                </span>
+                                {pStatus !== 'NORMAL' && (
+                                  <span
+                                    style={{
+                                      fontSize: '0.66rem',
+                                      fontWeight: 700,
+                                      padding: '1px 6px',
+                                      borderRadius: '999px',
+                                      background:
+                                        pStatus === 'URGENT_COMPLETED'
+                                          ? '#DCFCE7'
+                                          : pStatus === 'URGENT_REJECTED' || pStatus === 'URGENT_DELAYED'
+                                          ? '#FEE2E2'
+                                          : '#FEF3C7',
+                                      color:
+                                        pStatus === 'URGENT_COMPLETED'
+                                          ? '#15803D'
+                                          : pStatus === 'URGENT_REJECTED' || pStatus === 'URGENT_DELAYED'
+                                          ? '#B91C1C'
+                                          : '#B45309',
+                                    }}
+                                  >
+                                    {pStatus.replace(/_/g, ' ')}
+                                  </span>
+                                )}
+                              </div>
+                              {!isAvailable && !hasActiveUrgent && o.status !== OrderStatus.CANCELLED && (
+                                <button
+                                  type="button"
+                                  className="btn-secondary"
+                                  style={{ padding: '2px 7px', fontSize: '0.68rem', whiteSpace: 'nowrap' }}
+                                  onClick={() => openUrgentModal(o, t)}
+                                >
+                                  ⚡ Request Urgent Report
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* 3. Drop Destination & Route */}
@@ -880,6 +1033,106 @@ export function SmallLabBookingsTab({
                 onClick={() => setPreviewPhotoOrder(null)}
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {urgentTarget && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            padding: '16px',
+          }}
+        >
+          <div style={{ background: '#FFF', borderRadius: '14px', maxWidth: '480px', width: '100%', padding: '20px' }}>
+            <h3 style={{ marginTop: 0, marginBottom: '6px' }}>⚡ Request Urgent Test Report</h3>
+            <p style={{ fontSize: '0.8rem', color: '#475569', marginBottom: '12px' }}>
+              Booking: <strong>{urgentTarget.order.orderNumber}</strong> &bull; Test:{' '}
+              <strong>{urgentTarget.test.testName}</strong>
+            </p>
+            <div className="form-group">
+              <label className="form-label">Priority Level</label>
+              <select
+                className="form-select"
+                value={urgentPriority}
+                onChange={(e) => setUrgentPriority(e.target.value as UrgentPriorityLevel)}
+              >
+                <option value="URGENT">URGENT</option>
+                <option value="CRITICAL">CRITICAL (STAT)</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Reason for Urgent Request *</label>
+              <textarea
+                className="form-input"
+                rows={2}
+                value={urgentReason}
+                onChange={(e) => setUrgentReason(e.target.value)}
+                placeholder="e.g. Patient scheduled for emergency surgery / doctor follow-up"
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Requested Report Deadline *</label>
+              <input
+                type="datetime-local"
+                className="form-input"
+                value={urgentDeadline}
+                onChange={(e) => setUrgentDeadline(e.target.value)}
+              />
+              <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '4px' }}>
+                Note: Requested deadline is subject to Large Lab confirmation (not guaranteed). Additional fee: ₹0.
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Optional Remarks</label>
+              <input
+                className="form-input"
+                value={urgentRemarks}
+                onChange={(e) => setUrgentRemarks(e.target.value)}
+                placeholder="Additional clinical notes"
+              />
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', marginBottom: '10px' }}>
+              <input
+                type="checkbox"
+                checked={urgentConfirmChecked}
+                onChange={(e) => setUrgentConfirmChecked(e.target.checked)}
+              />
+              Confirm urgent priority request for {urgentTarget.test.testName} only.
+            </label>
+            {urgentFeedback && (
+              <div
+                style={{
+                  fontSize: '0.8rem',
+                  padding: '8px 10px',
+                  borderRadius: '8px',
+                  marginBottom: '10px',
+                  background: urgentFeedback.type === 'success' ? '#DCFCE7' : '#FEE2E2',
+                  color: urgentFeedback.type === 'success' ? '#15803D' : '#B91C1C',
+                }}
+              >
+                {urgentFeedback.msg}
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button type="button" className="btn-secondary" onClick={() => setUrgentTarget(null)} disabled={urgentSubmitting}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => void handleSubmitUrgentRequest()}
+                disabled={urgentSubmitting}
+              >
+                {urgentSubmitting ? 'Submitting...' : 'Submit Urgent Request'}
               </button>
             </div>
           </div>

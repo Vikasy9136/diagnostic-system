@@ -14,4 +14,8 @@ export { LargeLabReportsTab, type LargeLabReportsTabProps } from './LargeLabRepo
 export { LargeLabSettingsTab, type LargeLabSettingsTabProps } from './LargeLabSettingsTab';
 export { LargeLabSettlementsTab, type LargeLabSettlementsTabProps } from './LargeLabSettlementsTab';
 export { LargeLabTestingTab, type LargeLabTestingTabProps } from './LargeLabTestingTab';
+export {
+  LargeLabUrgentRequestsTab,
+  type LargeLabUrgentRequestsTabProps,
+} from './LargeLabUrgentRequestsTab';
 

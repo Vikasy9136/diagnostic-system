@@ -109,6 +109,13 @@ export const ADMIN_ROUTES: Record<AdminTab, DashboardRouteMeta<AdminTab>> = {
     title: 'LabSetu | Live Operations Command Tower',
     navLabel: 'Ops Command Tower',
   },
+  'urgent-reports': {
+    tab: 'urgent-reports',
+    path: '/dashboard/urgent-reports',
+    aliases: ['/urgent-reports', '/dashboard/operations/urgent-reports'],
+    title: 'LabSetu | Urgent Report Requests',
+    navLabel: 'Urgent Reports',
+  },
   bookings: {
     tab: 'bookings',
     path: '/dashboard/bookings',
@@ -327,6 +334,13 @@ export const LARGE_LAB_ROUTES: Record<LargeLabTab, DashboardRouteMeta<LargeLabTa
     aliases: ['/reports', '/dashboard/report-entry'],
     title: 'LabSetu | Diagnostic Reports Entry',
     navLabel: 'Reports & Entry',
+  },
+  'urgent-reports': {
+    tab: 'urgent-reports',
+    path: '/dashboard/urgent-reports',
+    aliases: ['/urgent-reports', '/dashboard/urgent-requests'],
+    title: 'LabSetu | Urgent Report Requests',
+    navLabel: 'Urgent Reports',
   },
   rates: {
     tab: 'rates',

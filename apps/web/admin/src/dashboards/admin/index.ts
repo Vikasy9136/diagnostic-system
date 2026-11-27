@@ -3,6 +3,7 @@ export { OrgStructurePanel } from './OrgStructurePanel';
 export { EmployeeManagementPanel } from './EmployeeManagementPanel';
 export { FinanceAutomationPanel } from './FinanceAutomationPanel';
 export { OperationsAutomationPanel } from './OperationsAutomationPanel';
+export { AdminUrgentReportsTab, type AdminUrgentReportsTabProps } from './AdminUrgentReportsTab';
 export { MarketingGrowthPanel } from './MarketingGrowthPanel';
 export { ProductTechPanel } from './ProductTechPanel';
 export { AuditLogsPanel } from './AuditLogsPanel';

@@ -138,6 +138,7 @@ import {
   AdminSettingsTab,
   AdminSupportManagementTab,
   AdminUsersTab,
+  AdminUrgentReportsTab,
   AdminZonesTab,
   AdminAgreementsTab,
   AuditLogsPanel,
@@ -246,6 +247,7 @@ export function AdminDashboard({
               'VIEW_SUPER_ADMIN_DASHBOARD'
             );
           case 'ops-command':
+          case 'urgent-reports':
             return hasAnyPerm(
               'VIEW_OPERATIONS_DASHBOARD',
               'MANAGE_BOOKINGS_DISPATCH',
@@ -357,7 +359,7 @@ export function AdminDashboard({
     resolvePathForTab: getAdminPath,
     resolveTitleForTab: getAdminTitle,
     defaultTab: roleScope?.defaultTab || 'dashboard',
-    baseRoleQuery: session.profile.role,
+    
     onTabChange: (tab) => {
       if (tab === 'labs-small' || tab === 'labs-large' || tab === 'labs-verify' || tab === 'labs') {
         setLabsMenuOpen(true);
@@ -468,7 +470,7 @@ export function AdminDashboard({
 
   useEffect(() => {
     if (!session.firebaseUser) return;
-    const noop = () => {};
+    const noop = () => { };
     const unsubs = [
       subscribeTestCatalog(setTestCatalog, noop),
       subscribeNotifications(session.profile, setNotifications, noop),
@@ -531,11 +533,11 @@ export function AdminDashboard({
       isSuperAdmin ||
       hasPermission(session.profile, 'VIEW_SUPER_ADMIN_DASHBOARD', rootAdminEmail);
     if (!canViewExec) return;
-    void bootstrapOrgStructureApi(session.bearerToken).catch(() => {});
+    void bootstrapOrgStructureApi(session.bearerToken).catch(() => { });
     if (activeTab === 'dashboard') {
       void getExecutiveSummaryApi(session.bearerToken)
         .then((res) => setExecSummary(res.data))
-        .catch(() => {});
+        .catch(() => { });
     }
   }, [
     session.firebaseUser,
@@ -715,9 +717,8 @@ export function AdminDashboard({
     onShowAlert({
       variant: 'success',
       title: input.itemType === 'PACKAGE' ? 'Health Package Saved' : 'Test Panel Saved',
-      message: `${input.code} (${input.name}) has been saved${
-        input.ownerOrgId ? ` for ${input.labName}` : ' to global catalogue'
-      }.`,
+      message: `${input.code} (${input.name}) has been saved${input.ownerOrgId ? ` for ${input.labName}` : ' to global catalogue'
+        }.`,
     });
   }
 
@@ -1003,6 +1004,7 @@ export function AdminDashboard({
           path: getPathForTab('finance-ops'),
         },
         canViewTab('ops-command') && { id: 'ops-command', icon: '🚚', label: 'Operations & KYC', path: getPathForTab('ops-command') },
+        canViewTab('urgent-reports') && { id: 'urgent-reports', icon: '⚡', label: 'Urgent Report Requests', path: getPathForTab('urgent-reports') },
         canViewTab('marketing-growth') && { id: 'marketing-growth', icon: '📢', label: 'Marketing & Growth', path: getPathForTab('marketing-growth') },
         canViewTab('product-tech') && { id: 'product-tech', icon: '💻', label: 'Product & Technology', path: getPathForTab('product-tech') },
         canViewTab('audit-logs') && { id: 'audit-logs', icon: '📜', label: 'Audit & Login Logs', path: getPathForTab('audit-logs') },
@@ -1468,6 +1470,10 @@ export function AdminDashboard({
           />
         )}
 
+        {activeTab === 'urgent-reports' && canViewTab('urgent-reports') && (
+          <AdminUrgentReportsTab labs={labs} orders={orders} />
+        )}
+
         {activeTab === 'marketing-growth' && canViewTab('marketing-growth') && (
           <MarketingGrowthPanel
             currentUser={session.profile}
@@ -1526,31 +1532,31 @@ export function AdminDashboard({
           activeTab === 'labs-small' ||
           activeTab === 'labs-large' ||
           activeTab === 'labs-verify') && (
-          <AdminLabsTab
-            activeTab={activeTab}
-            labs={labs}
-            formatLabel={formatDashboardLabel}
-            onOpenAddUserModal={(r) => openAddUserModal(r)}
-            onVerifyLab={async (labId) => {
-              try {
-                await updateLabVerification(labId, 'VERIFIED');
-                onShowAlert({
-                  variant: 'success',
-                  title: 'Lab Verified & Credentials Dispatched',
-                  message: 'The lab facility has been successfully verified. An onboarding email with login steps and credentials has been dispatched to their registered email.',
-                });
-              } catch (err) {
-                onShowAlert({
-                  variant: 'error',
-                  title: 'Verification Blocked',
-                  message: (err as Error).message || 'Could not verify lab.',
-                });
-              }
-            }}
-            onOpenSetPasswordDialog={setPwdTarget}
-            onShowAlert={onShowAlert}
-          />
-        )}
+            <AdminLabsTab
+              activeTab={activeTab}
+              labs={labs}
+              formatLabel={formatDashboardLabel}
+              onOpenAddUserModal={(r) => openAddUserModal(r)}
+              onVerifyLab={async (labId) => {
+                try {
+                  await updateLabVerification(labId, 'VERIFIED');
+                  onShowAlert({
+                    variant: 'success',
+                    title: 'Lab Verified & Credentials Dispatched',
+                    message: 'The lab facility has been successfully verified. An onboarding email with login steps and credentials has been dispatched to their registered email.',
+                  });
+                } catch (err) {
+                  onShowAlert({
+                    variant: 'error',
+                    title: 'Verification Blocked',
+                    message: (err as Error).message || 'Could not verify lab.',
+                  });
+                }
+              }}
+              onOpenSetPasswordDialog={setPwdTarget}
+              onShowAlert={onShowAlert}
+            />
+          )}
 
         {activeTab === 'phlebotomists' && (
           <AdminPhlebotomistsTab

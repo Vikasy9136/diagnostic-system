@@ -15,6 +15,13 @@ import {
   upsertLargeLabTestOrPackage,
   verifyHandoverOtp,
 } from '../services/labWorkflow.service';
+import {
+  checkAndFlagDelayedUrgentRequests,
+  createUrgentReportRequest,
+  listUrgentReportRequests,
+  respondToUrgentRequest,
+  submitUrgentClarification,
+} from '../services/urgentReport.service';
 
 export const labWorkflowRouter = Router();
 
@@ -224,6 +231,117 @@ labWorkflowRouter.get(
         actorRole: req.user!.role,
         actorLabId: req.user?.labId,
       });
+      res.json({ success: true, data, timestamp: new Date().toISOString() });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ============================================================================
+// URGENT TEST REPORT REQUESTS & PRIORITY PROCESSING
+// ============================================================================
+
+labWorkflowRouter.get(
+  '/urgent-requests',
+  requireRoles(UserRole.SMALL_LAB, UserRole.LARGE_LAB, UserRole.ADMIN),
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const data = await listUrgentReportRequests({
+        actorRole: req.user!.role,
+        actorLabId: req.user?.labId,
+        status: req.query.status ? (String(req.query.status) as any) : 'ALL',
+        largeLabId: req.query.largeLabId ? String(req.query.largeLabId) : undefined,
+        smallLabId: req.query.smallLabId ? String(req.query.smallLabId) : undefined,
+        delayedOnly: req.query.delayedOnly === 'true',
+        department: req.query.department ? String(req.query.department) : undefined,
+        date: req.query.date ? String(req.query.date) : undefined,
+        orderId: req.query.orderId ? String(req.query.orderId) : undefined,
+      });
+      res.json({ success: true, data, timestamp: new Date().toISOString() });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+labWorkflowRouter.post(
+  '/urgent-requests',
+  requireRoles(UserRole.SMALL_LAB, UserRole.ADMIN),
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const data = await createUrgentReportRequest({
+        orderId: String(req.body?.orderId || ''),
+        testId: String(req.body?.testId || ''),
+        actorUid: req.user?.uid || '',
+        actorRole: req.user!.role,
+        actorLabId: req.user?.labId,
+        actorName: req.user?.email,
+        requestedPriority: req.body?.requestedPriority === 'CRITICAL' ? 'CRITICAL' : 'URGENT',
+        reason: String(req.body?.reason || ''),
+        requestedDeadline: String(req.body?.requestedDeadline || ''),
+        remarks: req.body?.remarks ? String(req.body.remarks) : undefined,
+      });
+      res.status(201).json({ success: true, data, timestamp: new Date().toISOString() });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+labWorkflowRouter.post(
+  '/urgent-requests/:requestId/respond',
+  requireRoles(UserRole.LARGE_LAB, UserRole.ADMIN),
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const data = await respondToUrgentRequest({
+        requestId: req.params.requestId,
+        action: req.body?.action,
+        actorUid: req.user?.uid || '',
+        actorRole: req.user!.role,
+        actorLabId: req.user?.labId,
+        actorName: req.user?.email,
+        expectedCompletionAt: req.body?.expectedCompletionAt
+          ? String(req.body.expectedCompletionAt)
+          : undefined,
+        assignedTeamOrCentre: req.body?.assignedTeamOrCentre
+          ? String(req.body.assignedTeamOrCentre)
+          : undefined,
+        reason: req.body?.reason ? String(req.body.reason) : undefined,
+      });
+      res.json({ success: true, data, timestamp: new Date().toISOString() });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+labWorkflowRouter.post(
+  '/urgent-requests/:requestId/clarification',
+  requireRoles(UserRole.SMALL_LAB, UserRole.ADMIN),
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const data = await submitUrgentClarification({
+        requestId: req.params.requestId,
+        actorUid: req.user?.uid || '',
+        actorRole: req.user!.role,
+        actorLabId: req.user?.labId,
+        actorName: req.user?.email,
+        clarificationResponse: String(req.body?.clarificationResponse || ''),
+      });
+      res.json({ success: true, data, timestamp: new Date().toISOString() });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+labWorkflowRouter.post(
+  '/urgent-requests/check-delays',
+  requireRoles(UserRole.ADMIN, UserRole.LARGE_LAB),
+  async (_req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const data = await checkAndFlagDelayedUrgentRequests();
       res.json({ success: true, data, timestamp: new Date().toISOString() });
     } catch (err) {
       next(err);

@@ -78,6 +78,7 @@ import {
   LargeLabSettlementsTab,
   type LargeLabTab,
   LargeLabTestingTab,
+  LargeLabUrgentRequestsTab,
 } from './large-lab';
 import {
   type AlertTriggerFn,
@@ -105,6 +106,7 @@ export function LargeLabDashboard({
     resolvePathForTab: getLargeLabPath,
     resolveTitleForTab: getLargeLabTitle,
     defaultTab: 'dashboard',
+    
   });
   const [searchQuery, setSearchQuery] = useState('');
   const [deptFilter, setDeptFilter] = useState<string>('ALL');
@@ -691,6 +693,7 @@ export function LargeLabDashboard({
     { id: 'incoming', icon: '🧊', label: 'Incoming & QC', badgeCount: metrics.incomingCount, badgeVariant: 'red', path: getPathForTab('incoming') },
     { id: 'testing', icon: '🔬', label: 'Analyzer Worklist', badgeCount: testingQueue.length, badgeVariant: 'teal', path: getPathForTab('testing') },
     { id: 'reports', icon: '📄', label: 'Upload Reports', badgeCount: reports.length, badgeVariant: 'green', path: getPathForTab('reports') },
+    { id: 'urgent-reports', icon: '⚡', label: 'Urgent Requests', path: getPathForTab('urgent-reports') },
     { id: 'rates', icon: '🏷️', label: 'Catalog & Branches', path: getPathForTab('rates') },
     { id: 'centres', icon: '📍', label: 'Collection Centres', path: getPathForTab('centres') },
     { id: 'settlements', icon: '💳', label: 'Settlements', path: getPathForTab('settlements') },
@@ -802,6 +805,10 @@ export function LargeLabDashboard({
             uploadingReport={uploadingReport}
             onSubmitReport={handlePublishReportSubmit}
           />
+        )}
+
+        {activeTab === 'urgent-reports' && (
+          <LargeLabUrgentRequestsTab orders={orders} onAlert={onShowAlert} />
         )}
 
         {activeTab === 'rates' && (

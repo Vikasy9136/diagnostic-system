@@ -21,6 +21,7 @@ import { initializeFirebase } from '../config/firebase';
 import { AppError } from '../middleware/errorHandler';
 import { recordAuditLog } from '../middleware/rbac';
 import { sendPlatformNotification } from './notification.service';
+import { markUrgentRequestsCompletedForTests } from './urgentReport.service';
 
 export interface HandoverOtpRecord {
   orderId: string;
@@ -803,11 +804,19 @@ export async function uploadTestOrCombinedReport(params: {
   // Update ONLY the covered tests in bookingTestItems; leave uncovered tests untouched!
   const updatedItems: BookingTestItem[] = currentItems.map((item) => {
     if (!params.coveredTestIds.includes(item.testId)) return item;
+    const isUrgentActive =
+      item.urgentPriorityStatus &&
+      ['URGENT_REQUESTED', 'URGENT_ACCEPTED', 'URGENT_IN_PROGRESS', 'URGENT_DELAYED'].includes(
+        item.urgentPriorityStatus
+      );
     return {
       ...item,
       reportStatus: params.authoriseNow ? 'AVAILABLE_TO_SMALL_LAB' : 'UPLOADED',
       latestReportId: reportId,
       reportType: params.reportType,
+      ...(params.authoriseNow && isUrgentActive
+        ? { urgentPriorityStatus: 'URGENT_COMPLETED' as const }
+        : {}),
       updatedAt: now,
     };
   });
@@ -827,6 +836,12 @@ export async function uploadTestOrCombinedReport(params: {
   });
 
   if (params.authoriseNow) {
+    await markUrgentRequestsCompletedForTests({
+      orderId: order.id,
+      coveredTestIds: params.coveredTestIds,
+      actorUid: params.actorUid,
+      actorRole: params.actorRole,
+    });
     await sendPlatformNotification({
       title: `Verified ${params.reportType === 'COMBINED' ? 'Combined ' : ''}Report Available — ${order.orderNumber}`,
       message: `${order.targetLabName} published verified report for: ${coveredNames.join(', ')}.`,

@@ -244,6 +244,23 @@
         { "fieldPath": "smallLabId", "order": "ASCENDING" },
         { "fieldPath": "orderId", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "urgent_report_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "largeLabId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "urgent_report_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "smallLabId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

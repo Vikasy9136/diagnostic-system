@@ -9,6 +9,7 @@ export type LargeLabTab =
   | 'incoming'
   | 'testing'
   | 'reports'
+  | 'urgent-reports'
   | 'rates'
   | 'centres'
   | 'settlements'

@@ -943,6 +943,15 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /urgent_report_requests/{requestId} {
+      allow read: if isAuthenticated() && isAccountActive() && (
+        isAdmin()
+        || (isSmallLab() && getLabId() != null && resource.data.smallLabId == getLabId())
+        || (isLargeLab() && getLabId() != null && resource.data.largeLabId == getLabId())
+      );
+      allow write: if false;
+    }
+
     // =========================================================================
     // DEFAULT DENY
     // =========================================================================

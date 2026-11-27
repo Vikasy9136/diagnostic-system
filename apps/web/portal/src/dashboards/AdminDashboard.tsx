@@ -138,6 +138,7 @@ import {
   AdminSettingsTab,
   AdminSupportManagementTab,
   AdminUsersTab,
+  AdminUrgentReportsTab,
   AdminZonesTab,
   AdminAgreementsTab,
   AuditLogsPanel,
@@ -246,6 +247,7 @@ export function AdminDashboard({
               'VIEW_SUPER_ADMIN_DASHBOARD'
             );
           case 'ops-command':
+          case 'urgent-reports':
             return hasAnyPerm(
               'VIEW_OPERATIONS_DASHBOARD',
               'MANAGE_BOOKINGS_DISPATCH',
@@ -1002,6 +1004,7 @@ export function AdminDashboard({
           path: getPathForTab('finance-ops'),
         },
         canViewTab('ops-command') && { id: 'ops-command', icon: '🚚', label: 'Operations & KYC', path: getPathForTab('ops-command') },
+        canViewTab('urgent-reports') && { id: 'urgent-reports', icon: '⚡', label: 'Urgent Report Requests', path: getPathForTab('urgent-reports') },
         canViewTab('marketing-growth') && { id: 'marketing-growth', icon: '📢', label: 'Marketing & Growth', path: getPathForTab('marketing-growth') },
         canViewTab('product-tech') && { id: 'product-tech', icon: '💻', label: 'Product & Technology', path: getPathForTab('product-tech') },
         canViewTab('audit-logs') && { id: 'audit-logs', icon: '📜', label: 'Audit & Login Logs', path: getPathForTab('audit-logs') },
@@ -1465,6 +1468,10 @@ export function AdminDashboard({
             phlebotomists={phlebotomists}
             onShowAlert={onShowAlert}
           />
+        )}
+
+        {activeTab === 'urgent-reports' && canViewTab('urgent-reports') && (
+          <AdminUrgentReportsTab labs={labs} orders={orders} />
         )}
 
         {activeTab === 'marketing-growth' && canViewTab('marketing-growth') && (

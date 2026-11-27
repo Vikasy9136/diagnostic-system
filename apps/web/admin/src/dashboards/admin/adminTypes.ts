@@ -11,6 +11,7 @@ export type AdminTab =
   | 'employees'
   | 'finance-ops'
   | 'ops-command'
+  | 'urgent-reports'
   | 'marketing-growth'
   | 'product-tech'
   | 'audit-logs'

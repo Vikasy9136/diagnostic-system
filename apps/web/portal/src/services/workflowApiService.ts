@@ -4,6 +4,9 @@ import {
   type DiagnosticTestItem,
   OrderStatus,
   type PickupOrder,
+  type UrgentPriorityLevel,
+  type UrgentReportRequestRecord,
+  type UrgentRequestStatus,
 } from '@diagnostic/shared';
 import { API_BASE_URL, auth } from '../firebase';
 
@@ -226,6 +229,78 @@ export async function getAuthorizedReportDownloadApi(
 ): Promise<{ signedUrl?: string; dataUrl?: string; report: DiagnosticReportRecord }> {
   const res = await callWorkflowApi<{ signedUrl?: string; dataUrl?: string; report: DiagnosticReportRecord }>(
     `/workflow/reports/${encodeURIComponent(reportId)}/download`
+  );
+  return res.data;
+}
+
+export async function listUrgentRequestsApi(filters?: {
+  status?: UrgentRequestStatus | 'ALL';
+  largeLabId?: string;
+  smallLabId?: string;
+  delayedOnly?: boolean;
+  department?: string;
+  date?: string;
+  orderId?: string;
+}): Promise<UrgentReportRequestRecord[]> {
+  const qs = new URLSearchParams();
+  if (filters?.status && filters.status !== 'ALL') qs.set('status', filters.status);
+  if (filters?.largeLabId) qs.set('largeLabId', filters.largeLabId);
+  if (filters?.smallLabId) qs.set('smallLabId', filters.smallLabId);
+  if (filters?.delayedOnly) qs.set('delayedOnly', 'true');
+  if (filters?.department && filters.department !== 'ALL') qs.set('department', filters.department);
+  if (filters?.date) qs.set('date', filters.date);
+  if (filters?.orderId) qs.set('orderId', filters.orderId);
+  const query = qs.toString();
+  const res = await callWorkflowApi<UrgentReportRequestRecord[]>(
+    `/workflow/urgent-requests${query ? `?${query}` : ''}`
+  );
+  return res.data || [];
+}
+
+export async function createUrgentRequestApi(payload: {
+  orderId: string;
+  testId: string;
+  requestedPriority: UrgentPriorityLevel;
+  reason: string;
+  requestedDeadline: string;
+  remarks?: string;
+}): Promise<UrgentReportRequestRecord> {
+  const res = await callWorkflowApi<UrgentReportRequestRecord>('/workflow/urgent-requests', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return res.data;
+}
+
+export async function respondUrgentRequestApi(
+  requestId: string,
+  payload: {
+    action: 'ACCEPT' | 'REJECT' | 'REQUEST_CLARIFICATION' | 'START_PROCESSING' | 'UPDATE_DEADLINE';
+    expectedCompletionAt?: string;
+    assignedTeamOrCentre?: string;
+    reason?: string;
+  }
+): Promise<UrgentReportRequestRecord> {
+  const res = await callWorkflowApi<UrgentReportRequestRecord>(
+    `/workflow/urgent-requests/${encodeURIComponent(requestId)}/respond`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+  return res.data;
+}
+
+export async function submitUrgentClarificationApi(
+  requestId: string,
+  clarificationResponse: string
+): Promise<UrgentReportRequestRecord> {
+  const res = await callWorkflowApi<UrgentReportRequestRecord>(
+    `/workflow/urgent-requests/${encodeURIComponent(requestId)}/clarification`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ clarificationResponse }),
+    }
   );
   return res.data;
 }

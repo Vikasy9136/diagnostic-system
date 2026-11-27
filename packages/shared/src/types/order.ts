@@ -35,6 +35,73 @@ export type TestReportStatus =
   | 'VERIFIED'
   | 'AVAILABLE_TO_SMALL_LAB';
 
+export type UrgentPriorityLevel = 'URGENT' | 'CRITICAL';
+
+export type UrgentRequestStatus =
+  | 'NORMAL'
+  | 'URGENT_REQUESTED'
+  | 'URGENT_ACCEPTED'
+  | 'URGENT_REJECTED'
+  | 'URGENT_IN_PROGRESS'
+  | 'URGENT_DELAYED'
+  | 'URGENT_COMPLETED'
+  | 'URGENT_CANCELLED';
+
+export interface UrgentRequestHistoryEntry {
+  action:
+    | 'REQUESTED'
+    | 'ACCEPTED'
+    | 'REJECTED'
+    | 'CLARIFICATION_REQUESTED'
+    | 'CLARIFICATION_SUBMITTED'
+    | 'IN_PROGRESS'
+    | 'DEADLINE_UPDATED'
+    | 'DELAYED'
+    | 'COMPLETED'
+    | 'CANCELLED';
+  previousStatus?: UrgentRequestStatus;
+  newStatus: UrgentRequestStatus;
+  actorUid: string;
+  actorRole: string;
+  actorName?: string;
+  timestamp: string;
+  remarks?: string;
+  expectedCompletionAt?: string;
+}
+
+export interface UrgentReportRequestRecord {
+  id: string;
+  orderId: string;
+  orderNumber: string;
+  testId: string;
+  testCode: string;
+  testName: string;
+  department?: string;
+  smallLabId: string;
+  smallLabName: string;
+  largeLabId: string;
+  largeLabName: string;
+  requestedPriority: UrgentPriorityLevel;
+  reason: string;
+  requestedDeadline: string;
+  remarks?: string;
+  status: UrgentRequestStatus;
+  acceptedExpectedCompletionAt?: string;
+  assignedTeamOrCentre?: string;
+  rejectionReason?: string;
+  clarificationQuestion?: string;
+  clarificationResponse?: string;
+  delayReason?: string;
+  delayedDetectedAt?: string;
+  respondedByUid?: string;
+  respondedByName?: string;
+  respondedAt?: string;
+  completedAt?: string;
+  history: UrgentRequestHistoryEntry[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface BookingTestItem {
   testId: string;
   testCode: string;
@@ -46,6 +113,10 @@ export interface BookingTestItem {
   reportStatus: TestReportStatus;
   latestReportId?: string;
   reportType?: 'INDIVIDUAL' | 'COMBINED';
+  urgentPriorityStatus?: UrgentRequestStatus;
+  urgentRequestId?: string;
+  urgentDeadline?: string;
+  expectedCompletionAt?: string;
   updatedAt: string;
 }
 
