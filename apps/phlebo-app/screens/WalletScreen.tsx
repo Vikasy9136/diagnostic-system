@@ -1,12 +1,15 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   ScrollView,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { BrandText as Text, BrandTextInput as TextInput } from '../components/LabSetuBrand';
+import { BankLogo } from '@diagnostic/shared/native/BankLogo';
+import { BRAND_FONTS, BrandText as Text, BrandTextInput as TextInput } from '../components/LabSetuBrand';
 import { Ionicons } from '@expo/vector-icons';
 import {
   formatInr,
@@ -45,6 +48,7 @@ export function WalletScreen({ onGoToProfile, onBack }: WalletScreenProps) {
   const [withdrawModalOpen, setWithdrawModalOpen] = useState(false);
   const [step, setStep] = useState<'AMOUNT' | 'CONFIRM'>('AMOUNT');
   const [amountInput, setAmountInput] = useState('');
+  const [amountError, setAmountError] = useState<string | null>(null);
   const [selectedMethod, setSelectedMethod] = useState<'BANK_ACCOUNT' | 'UPI'>('BANK_ACCOUNT');
   const [submitting, setSubmitting] = useState(false);
 
@@ -96,10 +100,38 @@ export function WalletScreen({ onGoToProfile, onBack }: WalletScreenProps) {
 
   const openWithdrawFlow = () => {
     setBanner(null);
+    setAmountError(null);
     setAmountInput(availInr > 0 ? String(availInr) : '');
     setStep('AMOUNT');
     setWithdrawModalOpen(true);
   };
+
+  const handleAmountChange = (raw: string) => {
+    const sanitized = raw.replace(/[^0-9.]/g, '');
+    const parts = sanitized.split('.');
+    const clean = parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : sanitized;
+    if (clean === '') {
+      setAmountInput('');
+      setAmountError(null);
+      return;
+    }
+    const num = Number(clean);
+    if (!Number.isFinite(num)) return;
+    if (num > availInr) {
+      setAmountError(`Amount cannot exceed available balance (${formatInr(availInr)}).`);
+      return;
+    }
+    setAmountInput(clean);
+    if (num < minInr) {
+      setAmountError(`Minimum withdrawal amount is ${formatInr(minInr)}.`);
+    } else {
+      setAmountError(null);
+    }
+  };
+
+  const parsedAmount = Number(amountInput);
+  const canContinueWithdraw =
+    Number.isFinite(parsedAmount) && parsedAmount >= minInr && parsedAmount <= availInr;
 
   const handleConfirmWithdraw = async () => {
     setSubmitting(true);
@@ -231,14 +263,21 @@ export function WalletScreen({ onGoToProfile, onBack }: WalletScreenProps) {
         </View>
 
         <TouchableOpacity
-          style={[
-            styles.btnPrimary,
-            { marginTop: 14 },
-            (cycleLocked || hasActivePending || availInr < minInr) && { opacity: 0.6 },
-          ]}
+          style={{
+            marginTop: 14,
+            width: '100%',
+            minHeight: 48,
+            backgroundColor: COLORS.primaryNavy,
+            borderRadius: 12,
+            paddingVertical: 13,
+            paddingHorizontal: 16,
+            alignItems: 'center',
+            justifyContent: 'center',
+            opacity: cycleLocked || hasActivePending || availInr < minInr ? 0.6 : 1,
+          }}
           onPress={openWithdrawFlow}
         >
-          <Text style={styles.btnPrimaryText}>💸 Withdraw Money</Text>
+          <Text style={[styles.btnPrimaryText, { fontFamily: BRAND_FONTS.bold }]}>💸 Withdraw Money</Text>
         </TouchableOpacity>
 
         {!methodVerified && (
@@ -300,103 +339,148 @@ export function WalletScreen({ onGoToProfile, onBack }: WalletScreenProps) {
 
       {/* Withdraw Money Confirmation Modal */}
       <Modal visible={withdrawModalOpen} transparent animationType="slide" onRequestClose={() => setWithdrawModalOpen(false)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'flex-end' }}>
-          <View style={{ backgroundColor: '#FFFFFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 18 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>
-                {step === 'AMOUNT' ? 'Withdraw Money' : 'Confirm Withdrawal'}
-              </Text>
-              <TouchableOpacity onPress={() => setWithdrawModalOpen(false)}>
-                <Ionicons name="close" size={24} color="#475569" />
-              </TouchableOpacity>
-            </View>
-
-            {step === 'AMOUNT' ? (
-              <>
-                <Text style={styles.inputLabelSm}>Withdrawal Amount (₹) • Available: {formatInr(availInr)}</Text>
-                <TextInput
-                  style={[styles.fieldInput, { marginBottom: 10 }]}
-                  value={amountInput}
-                  onChangeText={setAmountInput}
-                  keyboardType="numeric"
-                  placeholder={`Min ₹${minInr}`}
-                />
-
-                <Text style={styles.inputLabelSm}>Select Verified Payout Destination</Text>
-                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
-                  <TouchableOpacity
-                    onPress={() => setSelectedMethod('BANK_ACCOUNT')}
-                    style={{
-                      flex: 1,
-                      padding: 10,
-                      borderRadius: 10,
-                      borderWidth: 1.5,
-                      borderColor: selectedMethod === 'BANK_ACCOUNT' ? '#0D9488' : '#CBD5E1',
-                      backgroundColor: selectedMethod === 'BANK_ACCOUNT' ? '#F0FDFA' : '#F8FAFC',
-                    }}
-                  >
-                    <Text style={{ fontSize: 12, fontWeight: '700', textAlign: 'center' }}>🏦 Bank Account</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => setSelectedMethod('UPI')}
-                    style={{
-                      flex: 1,
-                      padding: 10,
-                      borderRadius: 10,
-                      borderWidth: 1.5,
-                      borderColor: selectedMethod === 'UPI' ? '#0D9488' : '#CBD5E1',
-                      backgroundColor: selectedMethod === 'UPI' ? '#F0FDFA' : '#F8FAFC',
-                    }}
-                  >
-                    <Text style={{ fontSize: 12, fontWeight: '700', textAlign: 'center' }}>⚡ UPI ID</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <Text style={{ fontSize: 12, color: '#475569', marginBottom: 14 }}>
-                  Destination: <Text style={{ fontWeight: '700' }}>{maskedDest}</Text>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'flex-end' }}
+        >
+          <View style={{ backgroundColor: '#FFFFFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '88%' }}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              bounces={false}
+              contentContainerStyle={{ padding: 18, paddingBottom: 24 }}
+            >
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>
+                  {step === 'AMOUNT' ? 'Withdraw Money' : 'Confirm Withdrawal'}
                 </Text>
-
-                <TouchableOpacity
-                  style={styles.btnPrimary}
-                  onPress={() => setStep('CONFIRM')}
-                >
-                  <Text style={styles.btnPrimaryText}>Continue to Confirmation →</Text>
+                <TouchableOpacity onPress={() => setWithdrawModalOpen(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="close" size={24} color="#475569" />
                 </TouchableOpacity>
-              </>
-            ) : (
-              <>
-                <View style={{ padding: 12, borderRadius: 10, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 14, gap: 4 }}>
-                  <Text style={{ fontSize: 13, color: '#0F172A' }}>Amount: <Text style={{ fontWeight: '800' }}>{formatInr(Number(amountInput) || 0)}</Text></Text>
-                  <Text style={{ fontSize: 13, color: '#0F172A' }}>Method: <Text style={{ fontWeight: '700' }}>{selectedMethod}</Text></Text>
-                  <Text style={{ fontSize: 12.5, color: '#475569' }}>Account: {maskedDest}</Text>
-                  <Text style={{ fontSize: 11.5, color: '#B45309', marginTop: 4 }}>
-                    Note: Once submitted, your next withdrawal window opens after 7 days. Admin will manually settle and record UTR.
-                  </Text>
-                </View>
+              </View>
 
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                  <TouchableOpacity style={[styles.btnSecondary, { flex: 1 }]} onPress={() => setStep('AMOUNT')}>
-                    <Text style={styles.btnSecondaryText}>← Back</Text>
-                  </TouchableOpacity>
+              {step === 'AMOUNT' ? (
+                <>
+                  <Text style={styles.inputLabelSm}>Withdrawal Amount (₹) • Available: {formatInr(availInr)}</Text>
+                  <TextInput
+                    style={[
+                      styles.fieldInput,
+                      { marginBottom: amountError ? 4 : 10, fontFamily: BRAND_FONTS.semiBold },
+                      amountError ? { borderColor: '#DC2626' } : null,
+                    ]}
+                    value={amountInput}
+                    onChangeText={handleAmountChange}
+                    keyboardType="numeric"
+                    placeholder={`Min ₹${minInr} • Max ₹${availInr}`}
+                    placeholderTextColor="#94A3B8"
+                  />
+                  {amountError && (
+                    <Text style={{ fontSize: 11.5, fontWeight: '600', color: '#DC2626', marginBottom: 10 }}>
+                      {amountError}
+                    </Text>
+                  )}
+
+                  <Text style={styles.inputLabelSm}>Select Verified Payout Destination</Text>
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                    <TouchableOpacity
+                      onPress={() => setSelectedMethod('BANK_ACCOUNT')}
+                      style={{
+                        flex: 1,
+                        padding: 10,
+                        borderRadius: 10,
+                        borderWidth: 1.5,
+                        borderColor: selectedMethod === 'BANK_ACCOUNT' ? '#0D9488' : '#CBD5E1',
+                        backgroundColor: selectedMethod === 'BANK_ACCOUNT' ? '#F0FDFA' : '#F8FAFC',
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '700', textAlign: 'center', color: '#0F172A' }}>🏦 Bank Account</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setSelectedMethod('UPI')}
+                      style={{
+                        flex: 1,
+                        padding: 10,
+                        borderRadius: 10,
+                        borderWidth: 1.5,
+                        borderColor: selectedMethod === 'UPI' ? '#0D9488' : '#CBD5E1',
+                        backgroundColor: selectedMethod === 'UPI' ? '#F0FDFA' : '#F8FAFC',
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '700', textAlign: 'center', color: '#0F172A' }}>⚡ UPI ID</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                    {selectedMethod === 'BANK_ACCOUNT' && payoutProfile?.bankAccount && (
+                      <BankLogo
+                        bankCode={payoutProfile.bankAccount.bankCode}
+                        ifsc={payoutProfile.bankAccount.ifsc}
+                        bankName={payoutProfile.bankAccount.bankName}
+                        size={26}
+                      />
+                    )}
+                    <Text style={{ flex: 1, fontSize: 12, color: '#475569' }}>
+                      Destination: <Text style={{ fontWeight: '700', color: '#0F172A' }}>{maskedDest}</Text>
+                    </Text>
+                  </View>
+
                   <TouchableOpacity
-                    style={[styles.btnPrimary, { flex: 1.6 }, submitting && { opacity: 0.65 }]}
-                    disabled={submitting}
-                    onPress={() => void handleConfirmWithdraw()}
+                    disabled={!canContinueWithdraw}
+                    style={{
+                      width: '100%',
+                      minHeight: 48,
+                      borderRadius: 12,
+                      backgroundColor: COLORS.primaryNavy,
+                      paddingVertical: 13,
+                      paddingHorizontal: 16,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: canContinueWithdraw ? 1 : 0.5,
+                    }}
+                    onPress={() => {
+                      if (canContinueWithdraw) setStep('CONFIRM');
+                    }}
                   >
-                    <Text style={styles.btnPrimaryText}>{submitting ? 'Submitting...' : 'Confirm Withdraw'}</Text>
+                    <Text style={[styles.btnPrimaryText, { fontFamily: BRAND_FONTS.bold }]}>Continue to Confirmation →</Text>
                   </TouchableOpacity>
-                </View>
-              </>
-            )}
+                </>
+              ) : (
+                <>
+                  <View style={{ padding: 12, borderRadius: 10, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 14, gap: 4 }}>
+                    <Text style={{ fontSize: 13, color: '#0F172A' }}>Amount: <Text style={{ fontWeight: '800' }}>{formatInr(Number(amountInput) || 0)}</Text></Text>
+                    <Text style={{ fontSize: 13, color: '#0F172A' }}>Method: <Text style={{ fontWeight: '700' }}>{selectedMethod}</Text></Text>
+                    <Text style={{ fontSize: 12.5, color: '#475569' }}>Account: {maskedDest}</Text>
+                    <Text style={{ fontSize: 11.5, color: '#B45309', marginTop: 4 }}>
+                      Note: Once submitted, your next withdrawal window opens after 7 days. Admin will manually settle and record UTR.
+                    </Text>
+                  </View>
+
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <TouchableOpacity style={[styles.btnSecondary, { flex: 1, minHeight: 48 }]} onPress={() => setStep('AMOUNT')}>
+                      <Text style={styles.btnSecondaryText}>← Back</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.btnPrimary, { flex: 1.6, minHeight: 48 }, submitting && { opacity: 0.65 }]}
+                      disabled={submitting}
+                      onPress={() => void handleConfirmWithdraw()}
+                    >
+                      <Text style={styles.btnPrimaryText}>{submitting ? 'Submitting...' : 'Confirm Withdraw'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
 
   if (onBack) {
     return (
-      <View style={{ flex: 1, backgroundColor: COLORS.background }}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1, backgroundColor: COLORS.background }}
+      >
         <ProfileSubScreenHeader
           title="My Wallet & Payouts"
           subtitle="Auto-credited earnings & withdrawals"
@@ -404,12 +488,13 @@ export function WalletScreen({ onGoToProfile, onBack }: WalletScreenProps) {
         />
         <ScrollView
           style={{ flex: 1 }}
+          keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ padding: rs(16), paddingBottom: rs(90) }}
           showsVerticalScrollIndicator={false}
         >
           {content}
         </ScrollView>
-      </View>
+      </KeyboardAvoidingView>
     );
   }
 

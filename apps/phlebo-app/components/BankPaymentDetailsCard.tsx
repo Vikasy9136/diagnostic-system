@@ -603,7 +603,7 @@ export function BankPaymentDetailsCard() {
               />
 
               <TouchableOpacity
-                style={[styles.btnPrimary, savingBank && { opacity: 0.65 }]}
+                style={[styles.btnPrimary, { flex: 0, width: '100%', minHeight: 46 }, savingBank && { opacity: 0.65 }]}
                 disabled={savingBank}
                 onPress={() => void handleSaveBank()}
               >
@@ -636,7 +636,7 @@ export function BankPaymentDetailsCard() {
               />
 
               <TouchableOpacity
-                style={[styles.btnPrimary, savingUpi && { opacity: 0.65 }]}
+                style={[styles.btnPrimary, { flex: 0, width: '100%', minHeight: 46 }, savingUpi && { opacity: 0.65 }]}
                 disabled={savingUpi}
                 onPress={() => void handleSaveUpi()}
               >
