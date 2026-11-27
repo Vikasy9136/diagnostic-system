@@ -14,6 +14,7 @@ import {
   type BarcodeResolutionResult,
 } from '../../../services/inventoryApiService';
 import { AdminInventoryScannerBridgeModal } from './AdminInventoryScannerBridgeModal';
+import { usePersistentScannerBridge } from '../../../hooks/usePersistentScannerBridge';
 
 interface AdminInventoryInwardTabProps {
   onShowAlert: (params: {
@@ -42,7 +43,14 @@ export function AdminInventoryInwardTab({ onShowAlert }: AdminInventoryInwardTab
   const [resolutionResult, setResolutionResult] = useState<BarcodeResolutionResult | null>(null);
 
   const [selectedItemId, setSelectedItemId] = useState('');
-  const [showMobileScanner, setShowMobileScanner] = useState(false);
+  const scannerBridge = usePersistentScannerBridge({
+    contextTitle: 'STOCK_INWARD',
+    defaultMode: 'ONE_SCAN',
+    onScanConfirmed: (ev) => {
+      setBarcodeInput(ev.barcode);
+      handleResolveBarcode(ev.barcode);
+    },
+  });
   const [packageUnit, setPackageUnit] = useState('BOX');
   const [packageQuantity, setPackageQuantity] = useState(5);
   const [unitsPerPackage, setUnitsPerPackage] = useState(100);
@@ -313,13 +321,13 @@ export function AdminInventoryInwardTab({ onShowAlert }: AdminInventoryInwardTab
               </button>
               <button
                 type="button"
-                onClick={() => setShowMobileScanner(true)}
+                onClick={() => void scannerBridge.openScanner()}
                 style={{
                   padding: '12px 18px',
                   borderRadius: '8px',
-                  background: '#6366F1',
+                  background: scannerBridge.deviceStatus === 'CONNECTED' ? '#065F46' : '#6366F1',
                   color: '#FFFFFF',
-                  border: 'none',
+                  border: scannerBridge.deviceStatus === 'CONNECTED' ? '1.5px solid #10B981' : 'none',
                   fontWeight: 700,
                   cursor: 'pointer',
                   display: 'flex',
@@ -328,7 +336,9 @@ export function AdminInventoryInwardTab({ onShowAlert }: AdminInventoryInwardTab
                 }}
                 title="Connect mobile camera or Google Lens to scan barcodes wirelessly"
               >
-                📷 Scan with Mobile Camera / Google Lens
+                {scannerBridge.deviceStatus === 'CONNECTED'
+                  ? `🟢 Mobile Connected (${scannerBridge.deviceName || 'Scanner'})`
+                  : '📷 Scan with Mobile Camera / Google Lens'}
               </button>
             </div>
 
@@ -836,17 +846,20 @@ export function AdminInventoryInwardTab({ onShowAlert }: AdminInventoryInwardTab
         )}
       </div>
 
-      {showMobileScanner && (
-        <AdminInventoryScannerBridgeModal
-          onClose={() => setShowMobileScanner(false)}
-          onBarcodeScanned={(barcode) => {
-            setBarcodeInput(barcode);
-            handleResolveBarcode(barcode);
-          }}
-          context="STOCK_INWARD"
-          defaultMode="ONE_SCAN"
-        />
-      )}
+      <AdminInventoryScannerBridgeModal
+        isOpen={scannerBridge.isModalOpen}
+        onClose={scannerBridge.closePopupOnly}
+        onDisconnect={() => void scannerBridge.disconnectSession()}
+        session={scannerBridge.session}
+        activeMode={scannerBridge.activeMode}
+        onSwitchMode={(m) => void scannerBridge.switchMode(m)}
+        deviceStatus={scannerBridge.deviceStatus}
+        uiPhase={scannerBridge.uiPhase}
+        deviceName={scannerBridge.deviceName}
+        scannedEvents={scannerBridge.sessionEvents}
+        latestConfirmedBanner={scannerBridge.latestConfirmedEvent}
+        context="STOCK_INWARD"
+      />
     </div>
   );
 }

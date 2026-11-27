@@ -1,11 +1,9 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
-import { db } from '../../../firebase';
+import { useEffect, useState } from 'react';
 import {
-  closeScannerBridgeSessionApi,
-  createScannerBridgeSessionApi,
-  fetchScannerBridgeEventsApi,
-  updateScannerBridgeModeApi,
+  type ActiveScannerSessionInfo,
+  type PersistentScannerUiPhase,
+} from '../../../hooks/usePersistentScannerBridge';
+import {
   type ScannerBridgeEventRecord,
   type ScannerMode,
 } from '../../../services/inventoryApiService';
@@ -13,49 +11,37 @@ import {
 interface AdminInventoryScannerBridgeModalProps {
   isOpen?: boolean;
   onClose: () => void;
-  onBarcodeScanned?: (barcode: string, metadata?: any) => void;
-  onScanRecorded?: (event: ScannerBridgeEventRecord) => void;
+  onDisconnect?: () => void;
+  session: ActiveScannerSessionInfo | null;
+  activeMode: ScannerMode;
+  onSwitchMode: (mode: ScannerMode) => void;
+  deviceStatus: 'WAITING_FOR_DEVICE' | 'CONNECTED' | 'CLOSED' | 'EXPIRED';
+  uiPhase: PersistentScannerUiPhase;
+  deviceName?: string;
+  scannedEvents: ScannerBridgeEventRecord[];
+  latestConfirmedBanner: ScannerBridgeEventRecord | null;
   contextTitle?: string;
   context?: string;
-  defaultMode?: ScannerMode;
 }
 
 const LIVE_SCANNER_ORIGIN = 'https://labsetu-diagnostics.web.app';
 
-type UiSyncPhase =
-  | 'WAITING_FOR_SCANNER'
-  | 'MOBILE_CONNECTED'
-  | 'RECORD_ADDED'
-  | 'UNKNOWN_BARCODE'
-  | 'SESSION_EXPIRED'
-  | 'SYNC_FAILED';
-
 export function AdminInventoryScannerBridgeModal({
   isOpen = true,
   onClose,
-  onBarcodeScanned,
-  onScanRecorded,
+  onDisconnect,
+  session,
+  activeMode,
+  onSwitchMode,
+  deviceStatus,
+  uiPhase,
+  deviceName,
+  scannedEvents,
+  latestConfirmedBanner,
   contextTitle,
   context,
-  defaultMode = 'ONE_SCAN',
 }: AdminInventoryScannerBridgeModalProps) {
   const effectiveTitle = contextTitle || context || 'Central Warehouse Inventory';
-  const [session, setSession] = useState<{
-    sessionId: string;
-    pairingToken: string;
-    status: string;
-    mode: ScannerMode;
-    expiresAt: string;
-    lanIp?: string;
-  } | null>(null);
-  const [activeMode, setActiveMode] = useState<ScannerMode>(defaultMode);
-  const [deviceStatus, setDeviceStatus] = useState<
-    'WAITING_FOR_DEVICE' | 'CONNECTED' | 'CLOSED' | 'EXPIRED'
-  >('WAITING_FOR_DEVICE');
-  const [uiPhase, setUiPhase] = useState<UiSyncPhase>('WAITING_FOR_SCANNER');
-  const [deviceName, setDeviceName] = useState<string | undefined>();
-  const [scannedEvents, setScannedEvents] = useState<ScannerBridgeEventRecord[]>([]);
-  const [latestConfirmedBanner, setLatestConfirmedBanner] = useState<ScannerBridgeEventRecord | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
   const [customHost, setCustomHost] = useState('');
   const [showHostInput, setShowHostInput] = useState(false);
@@ -63,233 +49,31 @@ export function AdminInventoryScannerBridgeModal({
   const [liveLinkAvailable, setLiveLinkAvailable] = useState<boolean>(true);
   const [preferLocalFallback, setPreferLocalFallback] = useState<boolean>(false);
 
-  const pollIntervalRef = useRef<any>(null);
-  const autoCloseTimerRef = useRef<any>(null);
-  const nextSinceIndexRef = useRef<number>(0);
-  const processedEventIdsRef = useRef<Set<string>>(new Set());
-  const activeModeRef = useRef<ScannerMode>(defaultMode);
-  const isClosingRef = useRef<boolean>(false);
-  const onCloseRef = useRef(onClose);
-  const onBarcodeScannedRef = useRef(onBarcodeScanned);
-  const onScanRecordedRef = useRef(onScanRecorded);
-
   useEffect(() => {
-    onCloseRef.current = onClose;
-    onBarcodeScannedRef.current = onBarcodeScanned;
-    onScanRecordedRef.current = onScanRecorded;
-  }, [onClose, onBarcodeScanned, onScanRecorded]);
-
-  useEffect(() => {
-    activeModeRef.current = activeMode;
-  }, [activeMode]);
-
-  const playDesktopChime = useCallback(() => {
-    try {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioCtx) return;
-      const ctx = new AudioCtx();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(1046.5, ctx.currentTime);
-      gain.gain.setValueAtTime(0.2, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.15);
-    } catch {
-      // AudioContext unavailable
-    }
-  }, []);
-
-  const handleIncomingConfirmedEvents = useCallback(
-    (incoming: ScannerBridgeEventRecord[], sessId: string) => {
-      const fresh: ScannerBridgeEventRecord[] = [];
-      for (const ev of incoming) {
-        const key = ev.eventId || ev.id;
-        if (!key || processedEventIdsRef.current.has(key)) continue;
-        processedEventIdsRef.current.add(key);
-        fresh.push(ev);
-      }
-      if (fresh.length === 0) return;
-
-      setScannedEvents((prev) => [...prev, ...fresh]);
-      playDesktopChime();
-
-      for (const ev of fresh) {
-        setLatestConfirmedBanner(ev);
-        setUiPhase(ev.status === 'UNKNOWN_BARCODE' ? 'UNKNOWN_BARCODE' : 'RECORD_ADDED');
-        onBarcodeScannedRef.current?.(ev.barcode, ev);
-        onScanRecordedRef.current?.(ev);
-      }
-
-      if (activeModeRef.current === 'ONE_SCAN' && !isClosingRef.current) {
-        isClosingRef.current = true;
-        void closeScannerBridgeSessionApi(sessId).catch(() => {});
-        autoCloseTimerRef.current = setTimeout(() => {
-          onCloseRef.current();
-        }, 950);
-      }
-    },
-    [playDesktopChime]
-  );
-
-  function stopPolling() {
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
-    if (autoCloseTimerRef.current) {
-      clearTimeout(autoCloseTimerRef.current);
-      autoCloseTimerRef.current = null;
-    }
-  }
-
-  useEffect(() => {
-    if (!isOpen) {
-      stopPolling();
-      setSession(null);
-      setScannedEvents([]);
-      setLatestConfirmedBanner(null);
-      nextSinceIndexRef.current = 0;
-      processedEventIdsRef.current.clear();
-      isClosingRef.current = false;
-      return;
-    }
-
-    setActiveMode(defaultMode);
-    activeModeRef.current = defaultMode;
-    isClosingRef.current = false;
-    processedEventIdsRef.current.clear();
-    setScannedEvents([]);
-    setLatestConfirmedBanner(null);
-    setUiPhase('WAITING_FOR_SCANNER');
-
-    let unsubSess: (() => void) | null = null;
-    let unsubEvents: (() => void) | null = null;
-    let cancelled = false;
-
-    async function bootSession() {
-      try {
-        const sess = await createScannerBridgeSessionApi({
-          mode: defaultMode,
-          context: effectiveTitle,
-        });
-        if (cancelled) return;
-        setSession(sess);
-        setDeviceStatus('WAITING_FOR_DEVICE');
-
-        // Real-time Firestore listener for session status
-        try {
-          unsubSess = onSnapshot(doc(db, 'scannerPairingSessions', sess.sessionId), (snap) => {
-            if (!snap.exists()) return;
-            const d = snap.data() as any;
-            if (d.status) setDeviceStatus(d.status);
-            if (d.pairedDeviceName) setDeviceName(d.pairedDeviceName);
-            if (d.status === 'EXPIRED') {
-              setUiPhase('SESSION_EXPIRED');
-            } else if (d.status === 'CONNECTED') {
-              setUiPhase((prev) =>
-                prev === 'WAITING_FOR_SCANNER' ? 'MOBILE_CONNECTED' : prev
-              );
-            }
-          });
-
-          const evQ = query(
-            collection(db, 'scannerEvents'),
-            where('sessionId', '==', sess.sessionId)
-          );
-          unsubEvents = onSnapshot(evQ, (snap) => {
-            const docs = snap.docs
-              .map((d) => d.data() as ScannerBridgeEventRecord)
-              .sort((a, b) => String(a.scannedAt || '').localeCompare(String(b.scannedAt || '')));
-            if (docs.length > 0) {
-              handleIncomingConfirmedEvents(docs, sess.sessionId);
-            }
-          });
-        } catch {
-          // Polling fallback handles environments without live Firestore listener
-        }
-
-        // Polling fallback
-        pollIntervalRef.current = setInterval(async () => {
-          try {
-            const res = await fetchScannerBridgeEventsApi(sess.sessionId, nextSinceIndexRef.current);
-            setDeviceStatus(res.status);
-            if (res.pairedDeviceName) setDeviceName(res.pairedDeviceName);
-            if (res.status === 'EXPIRED') {
-              setUiPhase('SESSION_EXPIRED');
-              stopPolling();
-              return;
-            }
-            if (res.status === 'CONNECTED') {
-              setUiPhase((prev) =>
-                prev === 'WAITING_FOR_SCANNER' ? 'MOBILE_CONNECTED' : prev
-              );
-            }
-            if (res.events && res.events.length > 0) {
-              nextSinceIndexRef.current += res.events.length;
-              handleIncomingConfirmedEvents(res.events, sess.sessionId);
-            }
-          } catch {
-            // Silent retry
-          }
-        }, 900);
-      } catch (err) {
-        console.error('Failed to create scanner bridge session:', err);
-        setUiPhase('SYNC_FAILED');
-      }
-    }
-
-    void bootSession();
-
+    if (!isOpen) return;
     const localCheck =
       typeof window !== 'undefined' &&
       (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
     if (!localCheck) {
       setLiveLinkAvailable(true);
-    } else {
-      const ctrl = new AbortController();
-      const tid = setTimeout(() => ctrl.abort(), 2500);
-      fetch(`${LIVE_SCANNER_ORIGIN}/favicon.ico`, {
-        mode: 'no-cors',
-        cache: 'no-store',
-        signal: ctrl.signal,
+      return;
+    }
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 2500);
+    fetch(`${LIVE_SCANNER_ORIGIN}/favicon.ico`, {
+      mode: 'no-cors',
+      cache: 'no-store',
+      signal: ctrl.signal,
+    })
+      .then(() => {
+        clearTimeout(tid);
+        setLiveLinkAvailable(true);
       })
-        .then(() => {
-          clearTimeout(tid);
-          setLiveLinkAvailable(true);
-        })
-        .catch(() => {
-          clearTimeout(tid);
-          setLiveLinkAvailable(false);
-        });
-    }
-
-    return () => {
-      cancelled = true;
-      stopPolling();
-      unsubSess?.();
-      unsubEvents?.();
-    };
-  }, [isOpen, effectiveTitle]);
-
-  async function handleToggleMode(nextMode: ScannerMode) {
-    setActiveMode(nextMode);
-    activeModeRef.current = nextMode;
-    if (session?.sessionId) {
-      await updateScannerBridgeModeApi(session.sessionId, nextMode).catch(() => {});
-    }
-  }
-
-  async function handleFinishAndClose() {
-    if (session?.sessionId && !isClosingRef.current) {
-      isClosingRef.current = true;
-      await closeScannerBridgeSessionApi(session.sessionId).catch(() => {});
-    }
-    onClose();
-  }
+      .catch(() => {
+        clearTimeout(tid);
+        setLiveLinkAvailable(false);
+      });
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -323,7 +107,17 @@ export function AdminInventoryScannerBridgeModal({
     setTimeout(() => setCopiedLink(false), 2500);
   }
 
-  const statusConfig: Record<UiSyncPhase, { bg: string; border: string; text: string; label: string; icon: string }> = {
+  const statusConfig: Record<
+    PersistentScannerUiPhase,
+    { bg: string; border: string; text: string; label: string; icon: string }
+  > = {
+    IDLE: {
+      bg: '#EFF6FF',
+      border: '#BFDBFE',
+      text: '#1E40AF',
+      label: 'Waiting for Scanner...',
+      icon: '📡',
+    },
     WAITING_FOR_SCANNER: {
       bg: '#EFF6FF',
       border: '#BFDBFE',
@@ -344,7 +138,7 @@ export function AdminInventoryScannerBridgeModal({
       text: '#14532D',
       label:
         activeMode === 'ONE_SCAN'
-          ? 'Barcode Scanned Successfully • Record Added (Closing...)'
+          ? 'Barcode Scanned Successfully • Record Added (Closing Popup, Keeping Connected...)'
           : 'Barcode Scanned Successfully • Record Added',
       icon: '✅',
     },
@@ -354,7 +148,7 @@ export function AdminInventoryScannerBridgeModal({
       text: '#92400E',
       label:
         activeMode === 'ONE_SCAN'
-          ? 'Unknown Barcode Recorded (Closing...)'
+          ? 'Unknown Barcode Recorded (Closing Popup, Keeping Connected...)'
           : 'Unknown Barcode Recorded — Map item on inventory page',
       icon: '⚠️',
     },
@@ -362,7 +156,7 @@ export function AdminInventoryScannerBridgeModal({
       bg: '#FEE2E2',
       border: '#EF4444',
       text: '#991B1B',
-      label: 'Session Expired — Close and open a new scanner session',
+      label: 'Session Expired — Disconnect and start a new session',
       icon: '⏱️',
     },
     SYNC_FAILED: {
@@ -412,13 +206,14 @@ export function AdminInventoryScannerBridgeModal({
               <span>📷</span> Mobile Barcode Scanner Bridge
             </h3>
             <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#64748B' }}>
-              Scan with phone camera or Google Lens for <strong>{effectiveTitle}</strong>. Scans save automatically.
+              Once connected, your phone stays paired even after closing this popup — scans sync live to <strong>{effectiveTitle}</strong>.
             </p>
           </div>
           <button
             type="button"
-            onClick={() => void handleFinishAndClose()}
+            onClick={onClose}
             style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#94A3B8' }}
+            title="Hide popup (keep mobile connected)"
           >
             ✕
           </button>
@@ -426,11 +221,11 @@ export function AdminInventoryScannerBridgeModal({
 
         {/* Mode Selector: ONE-SCAN vs MULTI-SCAN */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '12px', fontWeight: 700, color: '#334155' }}>Scan Completion Mode:</span>
+          <span style={{ fontSize: '12px', fontWeight: 700, color: '#334155' }}>Popup Mode:</span>
           <div style={{ display: 'flex', gap: '6px' }}>
             <button
               type="button"
-              onClick={() => void handleToggleMode('ONE_SCAN')}
+              onClick={() => onSwitchMode('ONE_SCAN')}
               style={{
                 padding: '5px 12px',
                 borderRadius: '8px',
@@ -442,11 +237,11 @@ export function AdminInventoryScannerBridgeModal({
                 border: `1.5px solid ${activeMode === 'ONE_SCAN' ? '#0D9488' : '#CBD5E1'}`,
               }}
             >
-              One-Scan (Auto-Close)
+              Auto-Close Popup on Scan
             </button>
             <button
               type="button"
-              onClick={() => void handleToggleMode('MULTI_SCAN')}
+              onClick={() => onSwitchMode('MULTI_SCAN')}
               style={{
                 padding: '5px 12px',
                 borderRadius: '8px',
@@ -458,7 +253,7 @@ export function AdminInventoryScannerBridgeModal({
                 border: `1.5px solid ${activeMode === 'MULTI_SCAN' ? '#0D9488' : '#CBD5E1'}`,
               }}
             >
-              Multi-Scan (Keep Open)
+              Keep Popup Open (Multi-Scan)
             </button>
           </div>
         </div>
@@ -489,7 +284,7 @@ export function AdminInventoryScannerBridgeModal({
             ) : (
               <div style={{ fontSize: '11px', color: '#64748B' }}>
                 {deviceStatus === 'CONNECTED'
-                  ? 'Phone paired. Point camera at SKU, supplier, kit, or tube barcode.'
+                  ? 'Phone paired! All barcode scans sync automatically in real time.'
                   : 'Scan the QR code below using your phone camera or Google Lens.'}
               </div>
             )}
@@ -681,23 +476,43 @@ export function AdminInventoryScannerBridgeModal({
         </div>
 
         {/* Footer Actions */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginTop: '16px', flexWrap: 'wrap' }}>
+          {onDisconnect && session ? (
+            <button
+              type="button"
+              onClick={onDisconnect}
+              style={{
+                padding: '8px 14px',
+                fontSize: '12.5px',
+                fontWeight: 700,
+                backgroundColor: '#FEE2E2',
+                color: '#B91C1C',
+                border: '1px solid #FCA5A5',
+                borderRadius: '8px',
+                cursor: 'pointer',
+              }}
+            >
+              Disconnect Mobile
+            </button>
+          ) : (
+            <span />
+          )}
           <button
             type="button"
             className="btn-primary"
-            onClick={() => void handleFinishAndClose()}
+            onClick={onClose}
             style={{
               padding: '8px 18px',
               fontSize: '13px',
               fontWeight: 700,
-              backgroundColor: activeMode === 'MULTI_SCAN' ? '#0D9488' : '#475569',
+              backgroundColor: '#0D9488',
               color: '#FFFFFF',
               border: 'none',
               borderRadius: '8px',
               cursor: 'pointer',
             }}
           >
-            {activeMode === 'MULTI_SCAN' ? 'Finish Scanning' : 'Close'}
+            {deviceStatus === 'CONNECTED' ? 'Hide Popup (Keep Connected)' : 'Close'}
           </button>
         </div>
       </div>

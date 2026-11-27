@@ -29,6 +29,7 @@ import { AdminInventoryDashboardTab } from './inventory/AdminInventoryDashboardT
 import { AdminInventoryStockLedgerTab } from './inventory/AdminInventoryStockLedgerTab';
 import { AdminInventoryAdjustmentsTab } from './inventory/AdminInventoryAdjustmentsTab';
 import { AdminInventoryScannerBridgeModal } from './inventory/AdminInventoryScannerBridgeModal';
+import { usePersistentScannerBridge } from '../../hooks/usePersistentScannerBridge';
 
 interface AdminInventoryKitsTabProps {
   materials: InventoryMaterialItem[];
@@ -68,12 +69,23 @@ export function AdminInventoryKitsTab({
   onShowAlert,
 }: AdminInventoryKitsTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<InventorySubTab>('overview');
-  const [showScannerBridgeModal, setShowScannerBridgeModal] = useState(false);
   const [kitsViewMode, setKitsViewMode] = useState<'BOM_ASSEMBLY' | 'READY_STOCK'>('BOM_ASSEMBLY');
   const [recentScanRecords, setRecentScanRecords] = useState<ScannerBridgeEventRecord[]>([]);
   const [latestScanBanner, setLatestScanBanner] = useState<ScannerBridgeEventRecord | null>(null);
   const [mappingEventId, setMappingEventId] = useState<string | null>(null);
   const [selectedMapItemId, setSelectedMapItemId] = useState<string>('');
+
+  const scannerBridge = usePersistentScannerBridge({
+    contextTitle: 'Central Warehouse Inventory',
+    defaultMode: 'ONE_SCAN',
+    onScanConfirmed: (ev) => {
+      setLatestScanBanner(ev);
+      setRecentScanRecords((prev) => {
+        if (prev.some((p) => p.eventId === ev.eventId)) return prev;
+        return [ev, ...prev].slice(0, 30);
+      });
+    },
+  });
 
   // Enterprise Feature Activation State
   const [isFeatureActive, setIsFeatureActive] = useState<boolean>(false);
@@ -892,26 +904,53 @@ export function AdminInventoryKitsTab({
           </button>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setShowScannerBridgeModal(true)}
-          style={{
-            padding: '8px 14px',
-            borderRadius: '8px',
-            backgroundColor: '#0F172A',
-            color: '#FFFFFF',
-            border: 'none',
-            fontSize: '12px',
-            fontWeight: 700,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            marginBottom: '8px',
-          }}
-        >
-          <span>📱</span> Connect Mobile Scanner
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+          <button
+            type="button"
+            onClick={() => void scannerBridge.openScanner()}
+            style={{
+              padding: '8px 14px',
+              borderRadius: '8px',
+              backgroundColor:
+                scannerBridge.deviceStatus === 'CONNECTED' ? '#065F46' : '#0F172A',
+              color: '#FFFFFF',
+              border:
+                scannerBridge.deviceStatus === 'CONNECTED'
+                  ? '1.5px solid #10B981'
+                  : 'none',
+              fontSize: '12px',
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            <span>{scannerBridge.deviceStatus === 'CONNECTED' ? '🟢' : '📱'}</span>{' '}
+            {scannerBridge.deviceStatus === 'CONNECTED'
+              ? `Mobile Connected (${scannerBridge.deviceName || 'Scanner'})`
+              : 'Connect Mobile Scanner'}
+          </button>
+          {scannerBridge.deviceStatus === 'CONNECTED' && (
+            <button
+              type="button"
+              onClick={() => void scannerBridge.disconnectSession()}
+              style={{
+                padding: '8px 10px',
+                borderRadius: '8px',
+                backgroundColor: '#FEE2E2',
+                color: '#B91C1C',
+                border: '1px solid #FCA5A5',
+                fontSize: '11.5px',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+              title="Disconnect mobile scanner session"
+            >
+              Disconnect
+            </button>
+          )}
+        </div>
       </div>
 
       {/* LIVE MOBILE SCAN RESULT & PERSISTED SCAN RECORDS */}
@@ -2455,17 +2494,18 @@ export function AdminInventoryKitsTab({
 
       {/* MOBILE-TO-DESKTOP REMOTE SCANNER BRIDGE */}
       <AdminInventoryScannerBridgeModal
-        isOpen={showScannerBridgeModal}
-        onClose={() => setShowScannerBridgeModal(false)}
+        isOpen={scannerBridge.isModalOpen}
+        onClose={scannerBridge.closePopupOnly}
+        onDisconnect={() => void scannerBridge.disconnectSession()}
+        session={scannerBridge.session}
+        activeMode={scannerBridge.activeMode}
+        onSwitchMode={(m) => void scannerBridge.switchMode(m)}
+        deviceStatus={scannerBridge.deviceStatus}
+        uiPhase={scannerBridge.uiPhase}
+        deviceName={scannerBridge.deviceName}
+        scannedEvents={scannerBridge.sessionEvents}
+        latestConfirmedBanner={scannerBridge.latestConfirmedEvent}
         contextTitle="Central Warehouse Inventory"
-        defaultMode="ONE_SCAN"
-        onScanRecorded={(ev) => {
-          setLatestScanBanner(ev);
-          setRecentScanRecords((prev) => {
-            if (prev.some((p) => p.eventId === ev.eventId)) return prev;
-            return [ev, ...prev].slice(0, 30);
-          });
-        }}
       />
     </div>
   );

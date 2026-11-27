@@ -366,10 +366,8 @@ export function MobileScannerPage() {
 
         setLastScanned((prev) => (prev?.eventId === item.eventId ? updated : prev));
         setRecentScans((prev) => prev.map((s) => (s.eventId === item.eventId ? updated : s)));
-
-        if ((ack.sessionMode || scannerMode) === 'ONE_SCAN' && ack.success) {
-          setIsPaused(true);
-        }
+        // Keep camera active so subsequent scans continue syncing in real time
+        // even after the desktop popup closes!
       } catch (err: any) {
         const statusCode = err?.statusCode;
         const code = err?.code;
