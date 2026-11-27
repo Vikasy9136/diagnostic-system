@@ -134,6 +134,27 @@ export interface PhlebotomistProfile {
   unsettledCashSince?: string;
   serviceSuspended?: boolean;
   suspensionReason?: string;
+  dob?: string;
+  gender?: 'MALE' | 'FEMALE' | 'OTHER';
+  address?: string;
+  city?: string;
+  state?: string;
+  pinCode?: string;
+  kycRejectionReason?: string;
+  kycHistory?: Array<{
+    id: string;
+    documentType: string;
+    status: string;
+    submittedAt: string;
+    reviewedAt?: string;
+    note?: string;
+  }>;
+  notificationPreferences?: {
+    dispatchAlerts?: boolean;
+    payoutAlerts?: boolean;
+    coldChainAlerts?: boolean;
+    soundEnabled?: boolean;
+  };
   createdAt: string;
   updatedAt: string;
 }

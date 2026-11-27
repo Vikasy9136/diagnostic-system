@@ -100,6 +100,7 @@ import {
   requestKitRestock,
   subscribeMyKitAllocations,
   uploadPhleboSampleFile,
+  uploadPhleboSampleUri,
 } from './firebase';
 import {
   DynamicAlertModal,
@@ -145,6 +146,8 @@ import {
   PhleboQuickActionsModal,
 } from './components/PhleboModals';
 import {
+  AboutAppScreen,
+  BankingPayoutScreen,
   BookingDetailsScreen,
   BookingRequestsScreen,
   BookingsHistoryScreen,
@@ -154,9 +157,17 @@ import {
   EarningsScreen,
   HelpSupportScreen,
   KitsAndSuppliesScreen,
+  KycVerificationScreen,
+  LegalDocumentScreen,
+  MyDocumentsScreen,
+  NotificationsPreferencesScreen,
+  PersonalDetailsScreen,
   ProfileScreen,
   TodayCollectionsScreen,
   TrainingSopScreen,
+  type KycUploadPayload,
+  type NotificationPrefsPayload,
+  type PersonalDetailsPayload,
 } from './screens';
 import {
   checkPhleboPaymentLinkStatus,
@@ -4380,10 +4391,15 @@ function PhleboAppContent() {
       });
       if (!result.canceled && result.assets?.[0]?.uri) {
         const pickedUri = result.assets[0].uri;
-        setProfilePhotoUrl(pickedUri);
+        let finalPhotoUrl = pickedUri;
         if (effectivePhleboId) {
+          finalPhotoUrl = await uploadPhleboSampleUri(
+            `phlebo-kyc/${effectivePhleboId}/avatar_${Date.now()}.jpg`,
+            pickedUri,
+            'image/jpeg'
+          );
           await updateDoc(doc(db, 'phlebotomists', effectivePhleboId), {
-            livePhotoUrl: pickedUri,
+            livePhotoUrl: finalPhotoUrl,
             updatedAt: new Date().toISOString(),
           });
           showToast({
@@ -4392,6 +4408,7 @@ function PhleboAppContent() {
             subtitle: 'New profile photo saved in cloud.',
           });
         }
+        setProfilePhotoUrl(finalPhotoUrl);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Gallery error';
@@ -4485,6 +4502,155 @@ function PhleboAppContent() {
     setCurrentScreen('HELP_AND_SUPPORT');
   }, []);
 
+  const handleBackToProfile = useCallback(() => {
+    setBottomTab('profile');
+    setCurrentScreen('BOOKING_REQUESTS');
+  }, []);
+
+  const handleSavePersonalDetails = useCallback(
+    async (payload: PersonalDetailsPayload): Promise<boolean> => {
+      if (!effectivePhleboId) return false;
+      setSavingPayoutProfile(true);
+      try {
+        const now = new Date().toISOString();
+        await updateDoc(doc(db, 'phlebotomists', effectivePhleboId), {
+          name: payload.name,
+          dob: payload.dob,
+          gender: payload.gender,
+          address: payload.address,
+          city: payload.city,
+          state: payload.state,
+          pinCode: payload.pinCode,
+          ...(payload.address ? { currentLocation: payload.address } : {}),
+          ...(payload.city ? { assignedCity: payload.city } : {}),
+          updatedAt: now,
+        });
+        setProfileName(payload.name);
+        setProfileDob(payload.dob);
+        setProfileGender(payload.gender);
+        showToast({
+          variant: 'SUCCESS',
+          title: 'Personal Details Saved',
+          subtitle: 'Profile details updated for your account.',
+        });
+        return true;
+      } catch (err) {
+        showToast({
+          variant: 'WARNING',
+          title: 'Save Failed',
+          subtitle: err instanceof Error ? err.message : 'Unable to update personal details.',
+        });
+        return false;
+      } finally {
+        setSavingPayoutProfile(false);
+      }
+    },
+    [effectivePhleboId, showToast]
+  );
+
+  const handleUploadKycDocument = useCallback(
+    async (payload: KycUploadPayload): Promise<boolean> => {
+      if (!effectivePhleboId) return false;
+      try {
+        const now = new Date().toISOString();
+        const storagePath = `phlebo-kyc/${effectivePhleboId}/${payload.docKey.toLowerCase()}_${Date.now()}.jpg`;
+        const downloadUrl = await uploadPhleboSampleUri(storagePath, payload.localUri, 'image/jpeg');
+
+        const urlFieldMap = {
+          AADHAAR: 'aadhaarDocumentUrl',
+          PAN: 'panDocumentUrl',
+          DRIVING_LICENSE: 'dlDocumentUrl',
+          VEHICLE_RC: 'rcDocumentUrl',
+        } as const;
+
+        const numberFieldMap = {
+          AADHAAR: 'aadhaarNumber',
+          PAN: 'panNumber',
+          DRIVING_LICENSE: 'dlNumber',
+          VEHICLE_RC: 'vehicleNumber',
+        } as const;
+
+        const docTypeMap = {
+          AADHAAR: 'AADHAAR_CARD',
+          PAN: 'PAN_CARD',
+          DRIVING_LICENSE: 'DRIVING_LICENSE',
+          VEHICLE_RC: 'OTHER',
+        } as const;
+
+        const mappedDocType = docTypeMap[payload.docKey];
+        const existingDocs = Array.isArray(myPhleboProfile?.documents) ? [...myPhleboProfile.documents] : [];
+        const filteredDocs = existingDocs.filter((d) => d.type !== mappedDocType);
+        filteredDocs.push({
+          id: `kyc-${payload.docKey}-${Date.now()}`,
+          type: mappedDocType,
+          title: payload.docKey.replace('_', ' '),
+          url: downloadUrl,
+          uploadedAt: now,
+          verified: false,
+        });
+
+        const existingHistory = Array.isArray(myPhleboProfile?.kycHistory) ? [...myPhleboProfile.kycHistory] : [];
+        existingHistory.unshift({
+          id: `hist-${Date.now()}`,
+          documentType: payload.docKey.replace('_', ' '),
+          status: 'PENDING',
+          submittedAt: now,
+          note: payload.docNumber ? `Doc #: ${payload.docNumber}` : undefined,
+        });
+
+        await updateDoc(doc(db, 'phlebotomists', effectivePhleboId), {
+          [urlFieldMap[payload.docKey]]: downloadUrl,
+          ...(payload.docNumber ? { [numberFieldMap[payload.docKey]]: payload.docNumber } : {}),
+          documents: filteredDocs,
+          kycHistory: existingHistory.slice(0, 20),
+          verificationStatus: 'PENDING',
+          updatedAt: now,
+        });
+
+        showToast({
+          variant: 'SUCCESS',
+          title: 'KYC Document Submitted',
+          subtitle: 'Uploaded to secure storage for Admin review.',
+        });
+        return true;
+      } catch (err) {
+        showToast({
+          variant: 'WARNING',
+          title: 'KYC Upload Failed',
+          subtitle: err instanceof Error ? err.message : 'Unable to upload KYC document.',
+        });
+        return false;
+      }
+    },
+    [effectivePhleboId, myPhleboProfile, showToast]
+  );
+
+  const handleSaveNotificationPreferences = useCallback(
+    async (prefs: NotificationPrefsPayload): Promise<boolean> => {
+      if (!effectivePhleboId) return false;
+      try {
+        await updateDoc(doc(db, 'phlebotomists', effectivePhleboId), {
+          notificationPreferences: prefs,
+          updatedAt: new Date().toISOString(),
+        });
+        showToast({
+          variant: 'SUCCESS',
+          title: 'Preferences Saved',
+          subtitle: 'Notification settings updated.',
+        });
+        return true;
+      } catch (err) {
+        showToast({
+          variant: 'WARNING',
+          title: 'Could Not Save Preferences',
+          subtitle: err instanceof Error ? err.message : 'Please try again.',
+        });
+        return false;
+      }
+    },
+    [effectivePhleboId, showToast]
+  );
+
   const handleOpenMySupplies = useCallback(() => {
     setCurrentScreen('KITS_AND_SUPPLIES');
   }, []);
@@ -4540,6 +4706,23 @@ function PhleboAppContent() {
       }
       if (broadcastForceOpen) {
         setBroadcastForceOpen(false);
+        return true;
+      }
+      if (
+        currentScreen === 'PROFILE_PERSONAL_DETAILS' ||
+        currentScreen === 'PROFILE_BANKING_PAYOUT' ||
+        currentScreen === 'PROFILE_KYC_VERIFICATION' ||
+        currentScreen === 'PROFILE_MY_DOCUMENTS' ||
+        currentScreen === 'PROFILE_NOTIFICATIONS' ||
+        currentScreen === 'PROFILE_ABOUT_APP' ||
+        currentScreen === 'PROFILE_PRIVACY_POLICY' ||
+        currentScreen === 'PROFILE_TERMS_CONDITIONS'
+      ) {
+        handleBackToProfile();
+        return true;
+      }
+      if (currentScreen === 'HELP_AND_SUPPORT' && bottomTab === 'profile') {
+        handleBackToProfile();
         return true;
       }
       if (bottomTab !== 'home') {
@@ -4753,8 +4936,80 @@ function PhleboAppContent() {
                 }
                 supportContacts={supportContacts}
                 dynamicFaqs={platformFaqs}
-                onBack={handleNavigateBackHome}
+                onBack={bottomTab === 'profile' ? handleBackToProfile : handleNavigateBackHome}
                 onOpenTrainingSops={handleOpenTrainingSops}
+              />
+            ) : currentScreen === 'PROFILE_PERSONAL_DETAILS' ? (
+              <PersonalDetailsScreen
+                phleboInitial={phleboInitial}
+                phleboName={profileName || phleboName}
+                phleboEmail={phleboEmail}
+                phleboPhone={myPhleboProfile?.phone}
+                phleboDob={profileDob}
+                phleboGender={profileGender}
+                profilePhotoUrl={profilePhotoUrl || myPhleboProfile?.livePhotoUrl}
+                myPhleboProfile={myPhleboProfile}
+                saving={savingPayoutProfile}
+                onBack={handleBackToProfile}
+                onPickProfilePhoto={handlePickProfilePhoto}
+                onSavePersonalDetails={handleSavePersonalDetails}
+              />
+            ) : currentScreen === 'PROFILE_BANKING_PAYOUT' ? (
+              <BankingPayoutScreen
+                instantPayoutWindowMinutes={commissionConfig.instantPayoutWindowMinutes || 30}
+                onBack={handleBackToProfile}
+              />
+            ) : currentScreen === 'PROFILE_KYC_VERIFICATION' ? (
+              <KycVerificationScreen
+                myPhleboProfile={myPhleboProfile}
+                onBack={handleBackToProfile}
+                onUploadKycDocument={handleUploadKycDocument}
+              />
+            ) : currentScreen === 'PROFILE_MY_DOCUMENTS' ? (
+              <MyDocumentsScreen
+                myPhleboProfile={myPhleboProfile}
+                onBack={handleBackToProfile}
+                onOpenKycVerification={() => setCurrentScreen('PROFILE_KYC_VERIFICATION')}
+              />
+            ) : currentScreen === 'PROFILE_NOTIFICATIONS' ? (
+              <NotificationsPreferencesScreen
+                myPhleboProfile={myPhleboProfile}
+                dutyStatus={dutyStatus}
+                webNotifPerm={webNotifPerm}
+                hasOverlayPermission={hasOverlayPermission}
+                floatingSettings={floatingSettings}
+                onBack={handleBackToProfile}
+                onShiftUpdate={(next) => void handleShiftUpdate(next)}
+                onRequestBackgroundAlertPermission={() =>
+                  void handleRequestBackgroundAlertPermission()
+                }
+                onOpenFloatingSettings={() => setFloatingSettingsVisible(true)}
+                onSaveNotificationPreferences={handleSaveNotificationPreferences}
+              />
+            ) : currentScreen === 'PROFILE_ABOUT_APP' ? (
+              <AboutAppScreen
+                displayCourierId={displayCourierId}
+                myPhleboProfile={myPhleboProfile}
+                activeZoneName={
+                  riderFullAddress ||
+                  (assignedAdminZone
+                    ? `${assignedAdminZone.name} (${assignedAdminZone.city})`
+                    : undefined)
+                }
+                onBack={handleBackToProfile}
+                onCheckForUpdates={() => void handleCheckForUpdates(true)}
+                onOpenPrivacyPolicy={() => setCurrentScreen('PROFILE_PRIVACY_POLICY')}
+                onOpenTerms={() => setCurrentScreen('PROFILE_TERMS_CONDITIONS')}
+              />
+            ) : currentScreen === 'PROFILE_PRIVACY_POLICY' ? (
+              <LegalDocumentScreen
+                documentType="PRIVACY_POLICY"
+                onBack={handleBackToProfile}
+              />
+            ) : currentScreen === 'PROFILE_TERMS_CONDITIONS' ? (
+              <LegalDocumentScreen
+                documentType="TERMS_CONDITIONS"
+                onBack={handleBackToProfile}
               />
             ) : currentScreen === 'TRAINING_SOPS' ? (
               <TrainingSopScreen
@@ -4888,46 +5143,25 @@ function PhleboAppContent() {
                 displayCourierId={displayCourierId}
                 phleboEmail={phleboEmail}
                 phleboPhone={myPhleboProfile?.phone}
-                phleboDob={profileDob}
-                phleboGender={profileGender}
                 profilePhotoUrl={profilePhotoUrl || myPhleboProfile?.livePhotoUrl}
                 myPhleboProfile={myPhleboProfile}
                 completedDeliveriesCount={completedAssignedOrders.length}
                 dutyStatus={dutyStatus}
                 isOnline={isOnline}
-                riderCoverage={riderCoverage}
-                webNotifPerm={webNotifPerm}
-                floatingSettings={floatingSettings}
-                payoutMethod={payoutMethod}
-                payoutBankName={payoutBankName}
-                payoutAccountName={payoutAccountName}
-                payoutUpiId={payoutUpiId}
-                payoutBankAccount={payoutBankAccount}
-                payoutIfsc={payoutIfsc}
-                savingPayoutProfile={savingPayoutProfile}
                 isKitModuleActive={isKitModuleActive}
+                kitAllocationsCount={kitAllocations.length}
                 onBack={handleNavigateBackHome}
-                onShiftUpdate={(next) => void handleShiftUpdate(next)}
-                onRequestBackgroundAlertPermission={() =>
-                  void handleRequestBackgroundAlertPermission()
-                }
-                onOpenFloatingSettings={() => setFloatingSettingsVisible(true)}
+                onOpenPersonalDetails={() => setCurrentScreen('PROFILE_PERSONAL_DETAILS')}
+                onOpenBankingPayout={() => setCurrentScreen('PROFILE_BANKING_PAYOUT')}
+                onOpenKycVerification={() => setCurrentScreen('PROFILE_KYC_VERIFICATION')}
+                onOpenMyDocuments={() => setCurrentScreen('PROFILE_MY_DOCUMENTS')}
+                onOpenNotificationsPreferences={() => setCurrentScreen('PROFILE_NOTIFICATIONS')}
+                onOpenHelpSupport={handleOpenHelpSupport}
                 onOpenTrainingSops={handleOpenTrainingSops}
                 onOpenMySupplies={handleOpenMySupplies}
-                kitAllocationsCount={kitAllocations.length}
-                onOpenHelpSupport={handleOpenHelpSupport}
-                onCheckForUpdates={() => void handleCheckForUpdates(true)}
-                onChangeName={setProfileName}
-                onChangeDob={setProfileDob}
-                onChangeGender={setProfileGender}
-                onChangePayoutMethod={setPayoutMethod}
-                onChangePayoutBankName={setPayoutBankName}
-                onChangePayoutAccountName={setPayoutAccountName}
-                onChangePayoutUpiId={setPayoutUpiId}
-                onChangePayoutBankAccount={setPayoutBankAccount}
-                onChangePayoutIfsc={setPayoutIfsc}
-                onPickProfilePhoto={handlePickProfilePhoto}
-                onSaveProfile={() => void handleSavePayoutProfile()}
+                onOpenAboutApp={() => setCurrentScreen('PROFILE_ABOUT_APP')}
+                onOpenPrivacyPolicy={() => setCurrentScreen('PROFILE_PRIVACY_POLICY')}
+                onOpenTermsConditions={() => setCurrentScreen('PROFILE_TERMS_CONDITIONS')}
                 onTriggerSos={handleTriggerSos}
                 onSignOut={handleSignOut}
               />
