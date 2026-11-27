@@ -148,7 +148,11 @@ export function createCloudApiApp(): Application {
       req.url = req.url.replace('/api/verify-payment', '/api/v1/payments/verify-payment');
     } else if (req.url === '/verify-payment' || req.url.startsWith('/verify-payment?')) {
       req.url = req.url.replace('/verify-payment', '/api/v1/payments/verify-payment');
-    } else if (!req.url.startsWith('/api/v1')) {
+    } else if (
+      !req.url.startsWith('/api/v1') &&
+      !req.url.startsWith('/api/phlebo') &&
+      !req.url.startsWith('/api/large-lab')
+    ) {
       req.url = `/api/v1${req.url.startsWith('/') ? req.url : `/${req.url}`}`;
     }
     next();
@@ -1444,6 +1448,7 @@ export function createCloudApiApp(): Application {
   // 404 Not Found Handler
   app.use('/api/v1/branding', createBrandingRouter());
   app.use('/api/v1/phlebo-payouts', createPhleboPayoutsCloudRouter());
+  app.use('/api/v1', createLargeLabAndWalletCloudRouter());
   app.use('/api', createLargeLabAndWalletCloudRouter());
 
   app.use((req: Request, _res: Response, next: NextFunction) => {
