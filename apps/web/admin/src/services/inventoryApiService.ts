@@ -50,6 +50,25 @@ function getInventoryApiBase(): string {
   return base.endsWith('/api/v1') ? base : `${base}/api/v1`;
 }
 
+// Scanner bridge sessions are shared between Desktop (even on localhost) and Mobile Camera
+// (which opens https://labsetu-diagnostics.web.app/mobile-scanner for HTTPS camera permissions),
+// so scanner-bridge calls always target the Cloud Functions Firestore backend unless already on it.
+const CLOUD_SCANNER_API_BASE =
+  'https://us-central1-labsetu-diagnostics.cloudfunctions.net/api/api/v1';
+
+function getScannerBridgeApiBase(): string {
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host === 'labsetu-diagnostics.web.app' || host === 'labsetu-diagnostics.firebaseapp.com') {
+      return '/api/v1';
+    }
+    if (host === 'localhost' || host === '127.0.0.1') {
+      return CLOUD_SCANNER_API_BASE;
+    }
+  }
+  return getInventoryApiBase();
+}
+
 async function getAuthHeader(): Promise<HeadersInit> {
   const token = auth.currentUser ? await auth.currentUser.getIdToken() : '';
   const headers: Record<string, string> = {
@@ -566,7 +585,7 @@ export async function createScannerBridgeSessionApi(options?: {
   lanIp?: string;
 }> {
   const headers = await getAuthHeader();
-  const res = await fetch(`${getInventoryApiBase()}/inventory/scanner-bridge/session`, {
+  const res = await fetch(`${getScannerBridgeApiBase()}/inventory/scanner-bridge/session`, {
     method: 'POST',
     headers,
     body: JSON.stringify(options || {}),
@@ -585,7 +604,7 @@ export async function pairMobileScannerApi(
   }
 ): Promise<any> {
   const headers = await getAuthHeader();
-  const res = await fetch(`${getInventoryApiBase()}/inventory/scanner-bridge/${encodeURIComponent(sessionId)}/pair`, {
+  const res = await fetch(`${getScannerBridgeApiBase()}/inventory/scanner-bridge/${encodeURIComponent(sessionId)}/pair`, {
     method: 'POST',
     headers,
     body: JSON.stringify(payload),
@@ -619,7 +638,7 @@ export async function pushScannedBarcodeApi(
   barcode?: string;
 }> {
   const headers = await getAuthHeader();
-  const res = await fetch(`${getInventoryApiBase()}/inventory/scanner-bridge/${encodeURIComponent(sessionId)}/scan`, {
+  const res = await fetch(`${getScannerBridgeApiBase()}/inventory/scanner-bridge/${encodeURIComponent(sessionId)}/scan`, {
     method: 'POST',
     headers,
     body: JSON.stringify(payload),
@@ -648,7 +667,7 @@ export async function fetchScannerBridgeEventsApi(
 }> {
   const q = sinceIndex !== undefined ? `?since=${sinceIndex}` : '';
   const headers = await getAuthHeader();
-  const res = await fetch(`${getInventoryApiBase()}/inventory/scanner-bridge/${encodeURIComponent(sessionId)}/events${q}`, {
+  const res = await fetch(`${getScannerBridgeApiBase()}/inventory/scanner-bridge/${encodeURIComponent(sessionId)}/events${q}`, {
     headers,
   });
   if (!res.ok) throw new Error(`Failed fetching scanner events: ${res.statusText}`);
@@ -657,7 +676,7 @@ export async function fetchScannerBridgeEventsApi(
 
 export async function closeScannerBridgeSessionApi(sessionId: string): Promise<void> {
   const headers = await getAuthHeader();
-  await fetch(`${getInventoryApiBase()}/inventory/scanner-bridge/${encodeURIComponent(sessionId)}/close`, {
+  await fetch(`${getScannerBridgeApiBase()}/inventory/scanner-bridge/${encodeURIComponent(sessionId)}/close`, {
     method: 'POST',
     headers,
     body: JSON.stringify({}),
@@ -666,7 +685,7 @@ export async function closeScannerBridgeSessionApi(sessionId: string): Promise<v
 
 export async function updateScannerBridgeModeApi(sessionId: string, mode: ScannerMode): Promise<void> {
   const headers = await getAuthHeader();
-  await fetch(`${getInventoryApiBase()}/inventory/scanner-bridge/${encodeURIComponent(sessionId)}/mode`, {
+  await fetch(`${getScannerBridgeApiBase()}/inventory/scanner-bridge/${encodeURIComponent(sessionId)}/mode`, {
     method: 'PATCH',
     headers,
     body: JSON.stringify({ mode }),
@@ -675,7 +694,7 @@ export async function updateScannerBridgeModeApi(sessionId: string, mode: Scanne
 
 export async function fetchRecentScannerEventsApi(): Promise<ScannerBridgeEventRecord[]> {
   const headers = await getAuthHeader();
-  const res = await fetch(`${getInventoryApiBase()}/inventory/scanner-bridge/events/recent`, { headers });
+  const res = await fetch(`${getScannerBridgeApiBase()}/inventory/scanner-bridge/events/recent`, { headers });
   if (!res.ok) return [];
   const json = await res.json();
   return json.events || [];
@@ -687,7 +706,7 @@ export async function mapUnknownScannerEventApi(
 ): Promise<any> {
   const headers = await getAuthHeader();
   const res = await fetch(
-    `${getInventoryApiBase()}/inventory/scanner-bridge/events/${encodeURIComponent(eventId)}/map`,
+    `${getScannerBridgeApiBase()}/inventory/scanner-bridge/events/${encodeURIComponent(eventId)}/map`,
     {
       method: 'POST',
       headers,
