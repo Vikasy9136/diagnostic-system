@@ -103,11 +103,28 @@ export interface PhleboUpiAccountMasked {
   createdAt: string;
 }
 
+export type BeneficiaryType = 'PHLEBOTOMIST' | 'LARGE_LAB';
+
+export interface QrCodeMetadata {
+  available: boolean;
+  source: 'UPLOADED' | 'GENERATED_FROM_UPI' | 'NONE';
+  decodedUpiId?: string;
+  decodedPayeeName?: string;
+  consistencyStatus: 'MATCHED' | 'MISMATCH' | 'UNVERIFIED' | 'NOT_APPLICABLE';
+  verificationStatus: BankVerificationStatus;
+  mimeType?: string;
+  updatedAt?: string;
+}
+
 export interface PhleboPaymentMethodSummary {
   phleboId: string;
+  beneficiaryType?: BeneficiaryType;
+  beneficiaryId?: string;
+  profileVersion?: number;
   defaultMethod: 'BANK_ACCOUNT' | 'UPI' | 'NONE';
   bankAccount?: PhleboBankAccountMasked | null;
   upiAccount?: PhleboUpiAccountMasked | null;
+  qrCode?: QrCodeMetadata;
   linkedAccountStatus?: 'NOT_CREATED' | 'CREATED' | 'UNDER_REVIEW' | 'ACTIVATED' | 'SUSPENDED';
   linkedAccountId?: string;
   updatedAt: string;

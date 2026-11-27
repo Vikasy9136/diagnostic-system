@@ -80,8 +80,25 @@ export interface WalletTransaction {
   createdAt: string;
 }
 
+export interface WithdrawalPayoutSnapshot {
+  bankCode?: string;
+  bankName?: string;
+  branchName?: string;
+  ifsc?: string;
+  accountHolderName?: string;
+  maskedAccountNumber?: string;
+  maskedUpiId?: string;
+  preferredMethod?: 'BANK_ACCOUNT' | 'UPI' | 'NONE';
+  qrAvailable?: boolean;
+  verificationStatus?: string;
+  profileVersion?: number;
+}
+
 export interface WithdrawalRequest {
   id: string;
+  beneficiaryType?: 'PHLEBOTOMIST' | 'LARGE_LAB';
+  beneficiaryId?: string;
+  beneficiaryName?: string;
   phleboId: string;
   phleboName: string;
   phleboPhone?: string;
@@ -92,6 +109,7 @@ export interface WithdrawalRequest {
   maskedDestination: string;
   bankVerificationStatus: string;
   payoutProfileVersion: number;
+  payoutSnapshot?: WithdrawalPayoutSnapshot;
   status: WithdrawalStatus;
   requestedAt: string;
   weeklyCycleStart: string;

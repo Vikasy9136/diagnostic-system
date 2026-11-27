@@ -67,9 +67,25 @@ export async function submitWithdrawalRequest(payload: {
 export async function uploadPrivateQrImage(payload: {
   mimeType: string;
   base64Data: string;
-}): Promise<{ stored: boolean; storagePath: string; updatedAt: string }> {
+  source?: 'UPLOADED' | 'GENERATED_FROM_UPI';
+  decodedUpiUri?: string;
+}): Promise<unknown> {
   return callWalletApi('/phlebo/payout-profile/qr', {
     method: 'POST',
     body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchPrivateQrPreview(): Promise<{
+  available: boolean;
+  signedUrl?: string;
+  dataUrl?: string;
+}> {
+  return callWalletApi('/phlebo/payout-profile/qr');
+}
+
+export async function deletePrivateQrImage(): Promise<unknown> {
+  return callWalletApi('/phlebo/payout-profile/qr', {
+    method: 'DELETE',
   });
 }

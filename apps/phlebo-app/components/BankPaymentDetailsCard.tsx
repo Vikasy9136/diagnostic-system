@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
+  Image,
   Modal,
   ScrollView,
   Text,
@@ -12,6 +14,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import {
   type BankDirectoryEntry,
+  getBankBrandMeta,
   type IfscLookupResult,
   type PhleboPaymentMethodSummary,
 } from '@diagnostic/shared';
@@ -23,7 +26,11 @@ import {
   saveMyUpiAccount,
   setMyDefaultPayoutMethod,
 } from '../services/phleboPayoutService';
-import { uploadPrivateQrImage } from '../services/walletService';
+import {
+  deletePrivateQrImage,
+  fetchPrivateQrPreview,
+  uploadPrivateQrImage,
+} from '../services/walletService';
 import { styles } from '../styles/phleboStyles';
 
 function statusBadgeStyle(status?: string): { bg: string; fg: string; label: string } {
@@ -67,6 +74,52 @@ export function BankPaymentDetailsCard() {
   const [confirmUpiInput, setConfirmUpiInput] = useState('');
   const [savingUpi, setSavingUpi] = useState(false);
   const [uploadingQr, setUploadingQr] = useState(false);
+  const [qrPreviewUri, setQrPreviewUri] = useState<string | null>(null);
+
+  const refreshQrPreview = useCallback(async () => {
+    try {
+      const qr = await fetchPrivateQrPreview();
+      setQrPreviewUri(qr?.available ? qr.signedUrl || qr.dataUrl || null : null);
+    } catch {
+      // Non-fatal
+    }
+  }, []);
+
+  useEffect(() => {
+    if (summary?.qrCode?.available) {
+      void refreshQrPreview();
+    }
+  }, [summary?.qrCode?.available, refreshQrPreview]);
+
+  const handleDeleteQr = () => {
+    Alert.alert(
+      'Delete UPI QR Code',
+      'Remove your saved private UPI QR code?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              try {
+                setUploadingQr(true);
+                await deletePrivateQrImage();
+                setQrPreviewUri(null);
+                const fresh = await fetchMyPaymentMethods();
+                setSummary(fresh);
+                setStatusBanner({ type: 'ok', text: 'UPI QR code deleted.' });
+              } catch (err) {
+                setStatusBanner({ type: 'err', text: err instanceof Error ? err.message : 'Unable to delete QR.' });
+              } finally {
+                setUploadingQr(false);
+              }
+            })();
+          },
+        },
+      ]
+    );
+  };
 
   const handleUploadQr = async () => {
     setStatusBanner(null);
@@ -86,7 +139,10 @@ export function BankPaymentDetailsCard() {
       const asset = pick.assets[0];
       const mime = asset.mimeType || 'image/png';
       setUploadingQr(true);
-      await uploadPrivateQrImage({ mimeType: mime, base64Data: asset.base64! });
+      await uploadPrivateQrImage({ mimeType: mime, base64Data: asset.base64!, source: 'UPLOADED' });
+      const fresh = await fetchMyPaymentMethods();
+      setSummary(fresh);
+      await refreshQrPreview();
       setStatusBanner({
         type: 'ok',
         text: 'UPI QR uploaded to private encrypted storage (accessible only to authorised Finance Admins).',
@@ -228,9 +284,9 @@ export function BankPaymentDetailsCard() {
     <View style={styles.equipmentCard}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.sectionHeaderTitle}>Bank &amp; Payment Details</Text>
+          <Text style={styles.sectionHeaderTitle}>Banking &amp; Payout Settings</Text>
           <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
-            AES-256-GCM encrypted payout destination
+            AES-256-GCM encrypted Bank, UPI &amp; Private QR (Profile v{summary?.profileVersion || 1})
           </Text>
         </View>
         <TouchableOpacity onPress={() => void loadSummary()} style={{ padding: 6 }}>
@@ -298,7 +354,23 @@ export function BankPaymentDetailsCard() {
           {/* Masked Bank Summary */}
           <View style={{ padding: 12, borderRadius: 10, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 12 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontSize: 13.5, fontWeight: '700', color: '#0F172A' }}>Bank Account</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {summary?.bankAccount && (
+                  <View
+                    style={{
+                      paddingHorizontal: 7,
+                      paddingVertical: 3,
+                      borderRadius: 6,
+                      backgroundColor: getBankBrandMeta(summary.bankAccount.bankCode || summary.bankAccount.ifsc).accentColor,
+                    }}
+                  >
+                    <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#FFFFFF' }}>
+                      {getBankBrandMeta(summary.bankAccount.bankCode || summary.bankAccount.ifsc).shortName}
+                    </Text>
+                  </View>
+                )}
+                <Text style={{ fontSize: 13.5, fontWeight: '700', color: '#0F172A' }}>1. Bank Account</Text>
+              </View>
               <View style={{ backgroundColor: bankBadge.bg, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
                 <Text style={{ fontSize: 11, fontWeight: '700', color: bankBadge.fg }}>{bankBadge.label}</Text>
               </View>
@@ -356,14 +428,58 @@ export function BankPaymentDetailsCard() {
                   {activeEditor === 'UPI' ? 'Close UPI Form' : summary?.upiAccount ? '✎ Update UPI ID' : '+ Add UPI ID'}
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                disabled={uploadingQr}
-                onPress={() => void handleUploadQr()}
+            </View>
+          </View>
+
+          {/* 3. Private UPI QR Code Section */}
+          <View style={{ padding: 12, borderRadius: 10, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 12 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: 13.5, fontWeight: '700', color: '#0F172A' }}>3. UPI QR Code</Text>
+              <View
+                style={{
+                  backgroundColor: summary?.qrCode?.available ? '#DCFCE7' : '#F1F5F9',
+                  paddingHorizontal: 8,
+                  paddingVertical: 3,
+                  borderRadius: 6,
+                }}
               >
+                <Text style={{ fontSize: 11, fontWeight: '700', color: summary?.qrCode?.available ? '#15803D' : '#475569' }}>
+                  {summary?.qrCode?.available
+                    ? `${summary.qrCode.verificationStatus} • ${summary.qrCode.consistencyStatus}`
+                    : 'Not Uploaded'}
+                </Text>
+              </View>
+            </View>
+            {qrPreviewUri && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 10 }}>
+                <Image
+                  source={{ uri: qrPreviewUri }}
+                  style={{ width: 92, height: 92, borderRadius: 8, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF' }}
+                  resizeMode="contain"
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#1E293B' }}>Private Encrypted QR</Text>
+                  {summary?.qrCode?.decodedUpiId && (
+                    <Text style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>
+                      Payee: {summary.qrCode.decodedUpiId}
+                    </Text>
+                  )}
+                </View>
+              </View>
+            )}
+            <View style={{ flexDirection: 'row', gap: 16, marginTop: 10, flexWrap: 'wrap' }}>
+              <TouchableOpacity disabled={uploadingQr} onPress={() => void handleUploadQr()}>
                 <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#0369A1' }}>
-                  {uploadingQr ? 'Uploading QR...' : '📷 Upload Private UPI QR'}
+                  {uploadingQr ? 'Uploading QR...' : summary?.qrCode?.available ? '🔄 Replace UPI QR' : '📷 Upload Private UPI QR'}
                 </Text>
               </TouchableOpacity>
+              {summary?.qrCode?.available && (
+                <TouchableOpacity disabled={uploadingQr} onPress={handleDeleteQr}>
+                  <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#B91C1C' }}>
+                    🗑️ Delete QR
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
 

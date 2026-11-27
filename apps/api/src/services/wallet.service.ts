@@ -20,6 +20,7 @@ import { initializeFirebase } from '../config/firebase';
 import { AppError } from '../middleware/errorHandler';
 import { sendPlatformNotification } from './notification.service';
 import { getPhleboPaymentSummary } from './phleboBank.service';
+import { getBeneficiaryPayoutSummary } from './beneficiaryPayout.service';
 
 const DEFAULT_WITHDRAWAL_CONFIG: WithdrawalConfig = {
   minWithdrawalPaise: 10000, // ₹100
@@ -321,6 +322,7 @@ export async function creditBookingEarningAtomically(params: {
  * PHASE 4 & 5: Strict 7-Day Weekly Withdrawal Request
  */
 export async function requestPhleboWithdrawal(params: {
+  beneficiaryType?: 'PHLEBOTOMIST' | 'LARGE_LAB';
   phleboId: string;
   phleboName: string;
   phleboPhone?: string;
@@ -349,26 +351,51 @@ export async function requestPhleboWithdrawal(params: {
       );
     }
 
-    const payoutSummary = await getPhleboPaymentSummary(params.phleboId);
+    const beneficiaryType = params.beneficiaryType || 'PHLEBOTOMIST';
+    let payoutSummary = await getBeneficiaryPayoutSummary(beneficiaryType, params.phleboId);
+    if (
+      beneficiaryType === 'PHLEBOTOMIST' &&
+      !payoutSummary.bankAccount &&
+      !payoutSummary.upiAccount
+    ) {
+      payoutSummary = await getPhleboPaymentSummary(params.phleboId);
+    }
     const chosenMethod =
       params.paymentMethod ||
       (payoutSummary.defaultMethod !== 'NONE' ? payoutSummary.defaultMethod : 'BANK_ACCOUNT');
 
     if (chosenMethod === 'BANK_ACCOUNT') {
       if (!payoutSummary.bankAccount) {
-        throw new AppError('Add your bank account in Profile → Bank & Payment Details first.', 400, 'BANK_DETAILS_NOT_ADDED');
+        throw new AppError('Add your bank account in Banking & Payout Settings first.', 400, 'BANK_DETAILS_NOT_ADDED');
       }
       if (payoutSummary.bankAccount.verificationStatus !== 'VERIFIED') {
         throw new AppError('Your bank account must be verified before requesting a withdrawal.', 400, 'BANK_DETAILS_NOT_VERIFIED');
       }
     } else {
       if (!payoutSummary.upiAccount) {
-        throw new AppError('Add your UPI ID in Profile → Bank & Payment Details first.', 400, 'BANK_DETAILS_NOT_ADDED');
+        throw new AppError('Add your UPI ID in Banking & Payout Settings first.', 400, 'BANK_DETAILS_NOT_ADDED');
       }
       if (payoutSummary.upiAccount.verificationStatus !== 'VERIFIED') {
         throw new AppError('Your UPI ID must be verified before requesting a withdrawal.', 400, 'BANK_DETAILS_NOT_VERIFIED');
       }
     }
+
+    const payoutSnapshot = {
+      bankCode: payoutSummary.bankAccount?.bankCode,
+      bankName: payoutSummary.bankAccount?.bankName,
+      branchName: payoutSummary.bankAccount?.branchName,
+      ifsc: payoutSummary.bankAccount?.ifsc,
+      accountHolderName: payoutSummary.bankAccount?.accountHolderName,
+      maskedAccountNumber: payoutSummary.bankAccount?.maskedAccountNumber,
+      maskedUpiId: payoutSummary.upiAccount?.maskedUpiId,
+      preferredMethod: payoutSummary.defaultMethod,
+      qrAvailable: Boolean(payoutSummary.qrCode?.available),
+      verificationStatus:
+        chosenMethod === 'BANK_ACCOUNT'
+          ? payoutSummary.bankAccount?.verificationStatus
+          : payoutSummary.upiAccount?.verificationStatus,
+      profileVersion: payoutSummary.profileVersion || 1,
+    };
 
     const maskedDest =
       chosenMethod === 'BANK_ACCOUNT'
@@ -438,6 +465,9 @@ export async function requestPhleboWithdrawal(params: {
         };
         const newReq: WithdrawalRequest = {
           id: reqId,
+          beneficiaryType,
+          beneficiaryId: params.phleboId,
+          beneficiaryName: params.phleboName,
           phleboId: params.phleboId,
           phleboName: params.phleboName,
           phleboPhone: params.phleboPhone,
@@ -447,7 +477,8 @@ export async function requestPhleboWithdrawal(params: {
           paymentMethod: chosenMethod,
           maskedDestination: maskedDest,
           bankVerificationStatus: 'VERIFIED',
-          payoutProfileVersion: 1,
+          payoutProfileVersion: payoutSummary.profileVersion || 1,
+          payoutSnapshot,
           status: 'PENDING_ADMIN_SETTLEMENT',
           requestedAt: nowIso,
           weeklyCycleStart: nowIso,
@@ -497,6 +528,9 @@ export async function requestPhleboWithdrawal(params: {
       };
       createdReq = {
         id: reqId,
+        beneficiaryType,
+        beneficiaryId: params.phleboId,
+        beneficiaryName: params.phleboName,
         phleboId: params.phleboId,
         phleboName: params.phleboName,
         phleboPhone: params.phleboPhone,
@@ -506,7 +540,8 @@ export async function requestPhleboWithdrawal(params: {
         paymentMethod: chosenMethod,
         maskedDestination: maskedDest,
         bankVerificationStatus: 'VERIFIED',
-        payoutProfileVersion: 1,
+        payoutProfileVersion: payoutSummary.profileVersion || 1,
+        payoutSnapshot,
         status: 'PENDING_ADMIN_SETTLEMENT',
         requestedAt: nowIso,
         weeklyCycleStart: nowIso,
@@ -548,7 +583,7 @@ export async function requestPhleboWithdrawal(params: {
       message: `Your withdrawal request of ₹${(amt / 100).toLocaleString('en-IN')} has been submitted successfully. Your payment is pending settlement from LabSetu.`,
       category: NotificationCategory.PAYOUT_SETTLED,
       priority: NotificationPriority.NORMAL,
-      recipientRole: UserRole.PHLEBOTOMIST,
+      recipientRole: beneficiaryType === 'LARGE_LAB' ? UserRole.LARGE_LAB : UserRole.PHLEBOTOMIST,
       channels: [NotificationChannel.IN_APP],
     });
 
@@ -748,7 +783,7 @@ export async function transitionWithdrawalStatusByAdmin(params: {
       : `Your withdrawal request ${updatedReq.id} status is now ${params.targetStatus.replace(/_/g, ' ')}.`,
     category: NotificationCategory.PAYOUT_SETTLED,
     priority: NotificationPriority.NORMAL,
-    recipientRole: UserRole.PHLEBOTOMIST,
+    recipientRole: updatedReq.beneficiaryType === 'LARGE_LAB' ? UserRole.LARGE_LAB : UserRole.PHLEBOTOMIST,
     channels: [NotificationChannel.IN_APP],
   });
 
@@ -990,7 +1025,7 @@ export async function settleWithdrawalManuallyByAdmin(params: {
     message: `Your LabSetu withdrawal of ₹${(settledReq.requestedAmountPaise / 100).toLocaleString('en-IN')} has been marked as settled by LabSetu. Date: ${params.paymentDate} • Method: ${params.paymentMethod} • Ref: ${maskTrxRef(utr)} • Request: ${settledReq.id}.`,
     category: NotificationCategory.PAYOUT_SETTLED,
     priority: NotificationPriority.HIGH,
-    recipientRole: UserRole.PHLEBOTOMIST,
+    recipientRole: settledReq.beneficiaryType === 'LARGE_LAB' ? UserRole.LARGE_LAB : UserRole.PHLEBOTOMIST,
     channels: [NotificationChannel.IN_APP],
   });
 

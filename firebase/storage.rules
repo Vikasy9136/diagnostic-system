@@ -178,9 +178,12 @@ service firebase.storage {
         );
     }
 
-    // Private Phlebo UPI QR Images: private-phlebo-qr/{phleboId}/{fileName}
-    // Strictly denied for direct client access; served only via authenticated backend signed URLs.
+    // Private Phlebo & Large Lab UPI QR Images: strictly denied for direct client access; served only via authenticated backend signed URLs.
     match /private-phlebo-qr/{phleboId}/{fileName} {
+      allow read, write: if false;
+    }
+
+    match /private-large-lab-qr/{labId}/{fileName} {
       allow read, write: if false;
     }
 

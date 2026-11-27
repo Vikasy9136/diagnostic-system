@@ -468,7 +468,7 @@ export function AdminDashboard({
 
   useEffect(() => {
     if (!session.firebaseUser) return;
-    const noop = () => {};
+    const noop = () => { };
     const unsubs = [
       subscribeTestCatalog(setTestCatalog, noop),
       subscribeNotifications(session.profile, setNotifications, noop),
@@ -531,11 +531,11 @@ export function AdminDashboard({
       isSuperAdmin ||
       hasPermission(session.profile, 'VIEW_SUPER_ADMIN_DASHBOARD', rootAdminEmail);
     if (!canViewExec) return;
-    void bootstrapOrgStructureApi(session.bearerToken).catch(() => {});
+    void bootstrapOrgStructureApi(session.bearerToken).catch(() => { });
     if (activeTab === 'dashboard') {
       void getExecutiveSummaryApi(session.bearerToken)
         .then((res) => setExecSummary(res.data))
-        .catch(() => {});
+        .catch(() => { });
     }
   }, [
     session.firebaseUser,
@@ -715,9 +715,8 @@ export function AdminDashboard({
     onShowAlert({
       variant: 'success',
       title: input.itemType === 'PACKAGE' ? 'Health Package Saved' : 'Test Panel Saved',
-      message: `${input.code} (${input.name}) has been saved${
-        input.ownerOrgId ? ` for ${input.labName}` : ' to global catalogue'
-      }.`,
+      message: `${input.code} (${input.name}) has been saved${input.ownerOrgId ? ` for ${input.labName}` : ' to global catalogue'
+        }.`,
     });
   }
 
@@ -1526,31 +1525,31 @@ export function AdminDashboard({
           activeTab === 'labs-small' ||
           activeTab === 'labs-large' ||
           activeTab === 'labs-verify') && (
-          <AdminLabsTab
-            activeTab={activeTab}
-            labs={labs}
-            formatLabel={formatDashboardLabel}
-            onOpenAddUserModal={(r) => openAddUserModal(r)}
-            onVerifyLab={async (labId) => {
-              try {
-                await updateLabVerification(labId, 'VERIFIED');
-                onShowAlert({
-                  variant: 'success',
-                  title: 'Lab Verified & Credentials Dispatched',
-                  message: 'The lab facility has been successfully verified. An onboarding email with login steps and credentials has been dispatched to their registered email.',
-                });
-              } catch (err) {
-                onShowAlert({
-                  variant: 'error',
-                  title: 'Verification Blocked',
-                  message: (err as Error).message || 'Could not verify lab.',
-                });
-              }
-            }}
-            onOpenSetPasswordDialog={setPwdTarget}
-            onShowAlert={onShowAlert}
-          />
-        )}
+            <AdminLabsTab
+              activeTab={activeTab}
+              labs={labs}
+              formatLabel={formatDashboardLabel}
+              onOpenAddUserModal={(r) => openAddUserModal(r)}
+              onVerifyLab={async (labId) => {
+                try {
+                  await updateLabVerification(labId, 'VERIFIED');
+                  onShowAlert({
+                    variant: 'success',
+                    title: 'Lab Verified & Credentials Dispatched',
+                    message: 'The lab facility has been successfully verified. An onboarding email with login steps and credentials has been dispatched to their registered email.',
+                  });
+                } catch (err) {
+                  onShowAlert({
+                    variant: 'error',
+                    title: 'Verification Blocked',
+                    message: (err as Error).message || 'Could not verify lab.',
+                  });
+                }
+              }}
+              onOpenSetPasswordDialog={setPwdTarget}
+              onShowAlert={onShowAlert}
+            />
+          )}
 
         {activeTab === 'phlebotomists' && (
           <AdminPhlebotomistsTab

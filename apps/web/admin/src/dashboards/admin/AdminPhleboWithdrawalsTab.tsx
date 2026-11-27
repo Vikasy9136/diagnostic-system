@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   formatInr,
+  getBankBrandMeta,
   type ManualPaymentMethod,
   type ManualSettlementRecord,
   type PhleboPaymentMethodSummary,
@@ -56,8 +57,10 @@ export function AdminPhleboWithdrawalsTab() {
     qrAccess: { available: boolean; signedUrl?: string; dataUrl?: string };
     wallet: PhleboWallet;
     settlement: ManualSettlementRecord | null;
+    sensitiveDetails?: { accountNumber?: string; upiId?: string };
   } | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [revealingSensitive, setRevealingSensitive] = useState(false);
 
   // Manual settlement form state
   const [payMethod, setPayMethod] = useState<ManualPaymentMethod>('UPI');
@@ -390,12 +393,12 @@ export function AdminPhleboWithdrawalsTab() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
                   <div style={{ padding: '12px', borderRadius: '10px', backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0' }}>
-                    <strong>Phlebo Information</strong>
+                    <strong>Beneficiary Information ({detailData.request.beneficiaryType === 'LARGE_LAB' ? 'Large Reference Lab' : 'Phlebotomist'})</strong>
                     <div style={{ fontSize: '0.84rem', marginTop: '6px' }}>
-                      <div>Name: {detailData.request.phleboName}</div>
-                      <div>ID: {detailData.request.phleboId}</div>
+                      <div>Name: {detailData.request.beneficiaryName || detailData.request.phleboName}</div>
+                      <div>ID: {detailData.request.beneficiaryId || detailData.request.phleboId}</div>
                       <div>Mobile: {detailData.request.phleboPhone || 'N/A'}</div>
-                      <div>KYC: {detailData.request.kycVerified ? 'Verified' : 'Pending'}</div>
+                      <div>Payout Profile Version: <strong>v{detailData.request.payoutProfileVersion || detailData.payoutProfile.profileVersion || 1}</strong></div>
                     </div>
                   </div>
                   <div style={{ padding: '12px', borderRadius: '10px', backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0' }}>
@@ -410,23 +413,65 @@ export function AdminPhleboWithdrawalsTab() {
                 </div>
 
                 <div style={{ padding: '12px', borderRadius: '10px', backgroundColor: '#F0FDFA', border: '1px solid #99F6E4' }}>
-                  <strong>Verified Payment Details (Masked by Default)</strong>
-                  <div style={{ fontSize: '0.84rem', marginTop: '6px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                    <strong>Verified Beneficiary Payment Details (v{detailData.payoutProfile.profileVersion || detailData.request.payoutProfileVersion || 1})</strong>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+                      disabled={revealingSensitive}
+                      onClick={() => {
+                        void (async () => {
+                          setRevealingSensitive(true);
+                          try {
+                            const full = await callWalletAdminApi<typeof detailData>(`/admin/withdrawals/${selectedId}?reveal=1`);
+                            setDetailData(full);
+                          } finally {
+                            setRevealingSensitive(false);
+                          }
+                        })();
+                      }}
+                    >
+                      {revealingSensitive ? 'Decrypting...' : detailData.sensitiveDetails ? '🔓 Full Details Revealed (Audited)' : '🔒 Reveal Full Details (Audited)'}
+                    </button>
+                  </div>
+                  <div style={{ fontSize: '0.84rem', marginTop: '8px', display: 'grid', gap: '4px' }}>
+                    <div>Preferred Method: <strong>{detailData.payoutProfile.defaultMethod}</strong></div>
                     {detailData.payoutProfile.bankAccount && (
-                      <div>
-                        Bank: {detailData.payoutProfile.bankAccount.bankName} • {detailData.payoutProfile.bankAccount.maskedAccountNumber} • IFSC: {detailData.payoutProfile.bankAccount.ifsc} ({detailData.payoutProfile.bankAccount.accountHolderName})
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span
+                          style={{
+                            padding: '2px 7px',
+                            borderRadius: '6px',
+                            background: getBankBrandMeta(detailData.payoutProfile.bankAccount.bankCode || detailData.payoutProfile.bankAccount.ifsc).accentColor,
+                            color: '#FFFFFF',
+                            fontWeight: 800,
+                            fontSize: '0.7rem',
+                          }}
+                        >
+                          {getBankBrandMeta(detailData.payoutProfile.bankAccount.bankCode || detailData.payoutProfile.bankAccount.ifsc).shortName}
+                        </span>
+                        <span>
+                          {detailData.payoutProfile.bankAccount.bankName} ({detailData.payoutProfile.bankAccount.branchName}) •{' '}
+                          <strong>{detailData.sensitiveDetails?.accountNumber || detailData.payoutProfile.bankAccount.maskedAccountNumber}</strong> •{' '}
+                          IFSC: {detailData.payoutProfile.bankAccount.ifsc} ({detailData.payoutProfile.bankAccount.accountHolderName}) [{detailData.payoutProfile.bankAccount.verificationStatus}]
+                        </span>
                       </div>
                     )}
                     {detailData.payoutProfile.upiAccount && (
-                      <div>UPI: {detailData.payoutProfile.upiAccount.maskedUpiId}</div>
+                      <div>
+                        UPI: <strong>{detailData.sensitiveDetails?.upiId || detailData.payoutProfile.upiAccount.maskedUpiId}</strong> [{detailData.payoutProfile.upiAccount.verificationStatus}]
+                      </div>
                     )}
                     {detailData.qrAccess.available && (detailData.qrAccess.signedUrl || detailData.qrAccess.dataUrl) && (
                       <div style={{ marginTop: '8px' }}>
-                        <div style={{ fontSize: '0.75rem', color: '#0F766E', fontWeight: 700 }}>Private Verified UPI QR (Short-Lived Access):</div>
+                        <div style={{ fontSize: '0.75rem', color: '#0F766E', fontWeight: 700 }}>
+                          Private Verified UPI QR ({detailData.payoutProfile.qrCode?.consistencyStatus || 'VERIFIED'}):
+                        </div>
                         <img
                           src={detailData.qrAccess.signedUrl || detailData.qrAccess.dataUrl}
-                          alt="Phlebo UPI QR"
-                          style={{ width: '140px', height: '140px', objectFit: 'contain', marginTop: '4px', borderRadius: '8px', border: '1px solid #CBD5E1' }}
+                          alt="Beneficiary UPI QR"
+                          style={{ width: '140px', height: '140px', objectFit: 'contain', marginTop: '4px', borderRadius: '8px', border: '1px solid #CBD5E1', background: '#FFFFFF', padding: '4px' }}
                         />
                       </div>
                     )}

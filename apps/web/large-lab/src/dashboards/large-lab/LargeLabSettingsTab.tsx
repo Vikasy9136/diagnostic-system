@@ -1,5 +1,6 @@
 import { type FormEvent } from 'react';
 import { InteractiveMapPicker } from '../../components/InteractiveMapPicker';
+import { LargeLabBankingPayoutCard } from './LargeLabBankingPayoutCard';
 
 export interface LargeLabSettingsTabProps {
   settingsName: string;
@@ -186,9 +187,12 @@ export function LargeLabSettingsTab({
         </div>
 
         <button type="submit" className="btn-primary">
-          Save Facility &amp; Payout Profile
+          Save Facility Location &amp; Profile
         </button>
       </form>
+
+      <LargeLabBankingPayoutCard />
     </div>
   );
 }
+
