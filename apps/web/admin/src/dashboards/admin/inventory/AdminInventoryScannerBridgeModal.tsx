@@ -69,6 +69,15 @@ export function AdminInventoryScannerBridgeModal({
   const processedEventIdsRef = useRef<Set<string>>(new Set());
   const activeModeRef = useRef<ScannerMode>(defaultMode);
   const isClosingRef = useRef<boolean>(false);
+  const onCloseRef = useRef(onClose);
+  const onBarcodeScannedRef = useRef(onBarcodeScanned);
+  const onScanRecordedRef = useRef(onScanRecorded);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+    onBarcodeScannedRef.current = onBarcodeScanned;
+    onScanRecordedRef.current = onScanRecorded;
+  }, [onClose, onBarcodeScanned, onScanRecorded]);
 
   useEffect(() => {
     activeModeRef.current = activeMode;
@@ -111,19 +120,19 @@ export function AdminInventoryScannerBridgeModal({
       for (const ev of fresh) {
         setLatestConfirmedBanner(ev);
         setUiPhase(ev.status === 'UNKNOWN_BARCODE' ? 'UNKNOWN_BARCODE' : 'RECORD_ADDED');
-        onBarcodeScanned?.(ev.barcode, ev);
-        onScanRecorded?.(ev);
+        onBarcodeScannedRef.current?.(ev.barcode, ev);
+        onScanRecordedRef.current?.(ev);
       }
 
       if (activeModeRef.current === 'ONE_SCAN' && !isClosingRef.current) {
         isClosingRef.current = true;
         void closeScannerBridgeSessionApi(sessId).catch(() => {});
         autoCloseTimerRef.current = setTimeout(() => {
-          onClose();
+          onCloseRef.current();
         }, 950);
       }
     },
-    [onBarcodeScanned, onScanRecorded, onClose, playDesktopChime]
+    [playDesktopChime]
   );
 
   function stopPolling() {
@@ -264,7 +273,7 @@ export function AdminInventoryScannerBridgeModal({
       unsubSess?.();
       unsubEvents?.();
     };
-  }, [isOpen, defaultMode, effectiveTitle, handleIncomingConfirmedEvents]);
+  }, [isOpen, effectiveTitle]);
 
   async function handleToggleMode(nextMode: ScannerMode) {
     setActiveMode(nextMode);

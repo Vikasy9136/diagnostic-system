@@ -86,15 +86,14 @@ export function MobileScannerPage() {
     }
   }, []);
 
-  // Resilient Auto-Pairing with exponential background retry ("Baar baar retry na karna pade")
+  // Resilient Auto-Pairing with exponential background retry (no false optimistic CONNECTED state)
   async function pairWithDesktop(sId: string, tkn: string, attempt = 1) {
     if (attempt === 1) {
-      // Optimistically assume connected so user is never blocked
-      setConnectionStatus('CONNECTED');
+      setConnectionStatus('PAIRING');
     }
 
     try {
-      const deviceId = `MOB-${navigator.userAgent.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10)}-${Date.now().toString(36)}`;
+      const deviceId = deviceIdRef.current;
       const deviceName = `${getDeviceModelName()} (Google Lens / Web)`;
 
       await pairMobileScannerApi(sId, {
@@ -107,7 +106,13 @@ export function MobileScannerPage() {
       setErrorMessage('');
     } catch (err: any) {
       console.warn(`Pairing attempt ${attempt} failed:`, err);
-      // Auto-retry up to 5 times in background without annoying the user
+      const code = err?.code;
+      const statusCode = err?.statusCode;
+      if (statusCode === 410 || statusCode === 404 || code === 'SESSION_EXPIRED' || code === 'SESSION_CLOSED' || code === 'SESSION_NOT_FOUND') {
+        setConnectionStatus('EXPIRED');
+        setErrorMessage(err?.message || 'Scanner session expired or not found. Please scan a fresh QR code from desktop.');
+        return;
+      }
       if (attempt < 5) {
         setTimeout(() => {
           void pairWithDesktop(sId, tkn, attempt + 1);
